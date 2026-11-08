@@ -1,10 +1,10 @@
 import os
 import logging
-from datetime import datetime
-from typing import Dict, Any, List, Optional
+import uuid
+from datetime import datetime, timezone
+from typing import Dict, Any, List, Optional, Tuple
 import unicodedata
 import re
-from typing import Dict, Any, List, Optional, Tuple
 
 from app.db import (
     supabase,
@@ -453,13 +453,14 @@ def despachar_indicacion_por_whatsapp(
     pdf_url: str,
     emision_uuid: str,
     operador_id: Optional[str] = None,
-    operador_nombre: Optional[str] = None
+    operador_nombre: Optional[str] = None,
+    pdf_path: Optional[str] = None,
+    tipo_documento: str = "postquirurgico"
 ) -> Tuple[str, Dict[str, Any]]:
     """
-    Despacha la indicación médica u orden médica al WhatsApp del paciente:
-    1. Si la ventana de 24 horas está abierta, envía el mensaje formateado con enlace y registra en el Chat del CRM.
-    2. Si la ventana está cerrada (Meta error 131026 / 131047), envía la plantilla oficial UTILITY homologada
-       'comunicacion_asistencial_paciente_v1' con aviso y link de descarga, y registra en el Chat del CRM.
+    Despacha la indicacion medica u orden medica al WhatsApp del paciente:
+    1. Si la ventana de 24 horas esta abierta, envia el archivo PDF nativo adjunto con su caption explicativo.
+    2. Si la ventana esta cerrada, envia la plantilla oficial con encabezado DOCUMENT (o fallback asistencial homologado).
     """
     tel_norm = normalize_phone_number(paciente_telefono)
     if not tel_norm:
@@ -493,18 +494,22 @@ def despachar_indicacion_por_whatsapp(
     ).rstrip("/")
     full_pdf_link = f"{backend_base}{pdf_url}"
 
+    clean_pac_name = re.sub(r'[^a-zA-Z0-9]', '_', normalizar_texto(paciente_nombre or 'Paciente'))[:20]
+    pdf_filename = f"Indicaciones_{clean_pac_name}.pdf"
+
     win_info = check_patient_24h_window(paciente_id, tel_norm)
     is_window_open = bool(win_info.get("is_open", False))
 
     wa_send = None
     if is_window_open:
-        wa_send = whatsapp_manager.enviar_mensaje(
-            telefono_o_jid=tel_norm,
-            texto=mensaje_wa,
-            conversacion_id=conv_id,
-            emisor="operador",
-            usuario_id=operador_id,
-            usuario_nombre=operador_nombre
+        # Enviar directamente el documento PDF nativo adjunto con su caption explicativo
+        wa_send = whatsapp_manager.enviar_multimedia(
+            telefono=tel_norm,
+            media_url=full_pdf_link,
+            media_type="document",
+            caption=mensaje_wa,
+            filename=pdf_filename,
+            conversacion_id=conv_id
         )
         if wa_send and (wa_send.get("code") == "WINDOW_CLOSED" or not wa_send.get("enviado_real")):
             is_window_open = False
@@ -522,53 +527,94 @@ def despachar_indicacion_por_whatsapp(
             wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
 
             nombre_param = re.sub(r"[\r\n\t]+", " ", (paciente_nombre or "Estimado/a").strip().title())[:60]
-            aviso_param = re.sub(
-                r"[\r\n\t]+",
-                " ",
-                f"Tiene disponibles sus indicaciones y orden oficial de {practica_nombre}. Puede descargarlas en: {full_pdf_link}"
-            )[:400]
+            practica_param = re.sub(r"[\r\n\t]+", " ", (practica_nombre or "Cirugía Oftalmológica").strip())[:60]
 
-            components = [
+            components_doc = [
+                {
+                    "type": "header",
+                    "parameters": [
+                        {
+                            "type": "document",
+                            "document": {
+                                "link": full_pdf_link,
+                                "filename": pdf_filename
+                            }
+                        }
+                    ]
+                },
                 {
                     "type": "body",
                     "parameters": [
                         {"type": "text", "text": nombre_param},
-                        {"type": "text", "text": aviso_param}
+                        {"type": "text", "text": practica_param}
                     ]
                 }
             ]
 
-            async def _run_template():
-                try:
-                    return await wa_client.send_template(
-                        to_phone=norm_meta_phone,
-                        template_name="comunicacion_asistencial_paciente_v1",
-                        language_code="es_AR",
-                        components=components
-                    )
-                finally:
-                    await wa_client.close()
-
+            tpl_res = None
+            template_usada = "entrega_indicaciones_postquirurgicas_pdf"
             try:
-                tpl_res = whatsapp_manager._safe_run_async(_run_template())
+                async def _run_doc_template():
+                    try:
+                        return await wa_client.send_template(
+                            to_phone=norm_meta_phone,
+                            template_name="entrega_indicaciones_postquirurgicas_pdf",
+                            language_code="es_AR",
+                            components=components_doc
+                        )
+                    finally:
+                        await wa_client.close()
+
+                tpl_res = whatsapp_manager._safe_run_async(_run_doc_template())
+            except Exception as e_doc_tpl:
+                logger.warning(f"Plantilla con documento no disponible aún en Meta ({e_doc_tpl}). Activando fallback asistencial...")
+                template_usada = "comunicacion_asistencial_paciente_v1"
+                aviso_fallback = re.sub(
+                    r"[\r\n\t]+",
+                    " ",
+                    f"Tiene disponibles sus indicaciones y orden oficial de {practica_nombre}. Puede descargarlas en: {full_pdf_link}"
+                )[:400]
+                components_fb = [
+                    {
+                        "type": "body",
+                        "parameters": [
+                            {"type": "text", "text": nombre_param},
+                            {"type": "text", "text": aviso_fallback}
+                        ]
+                    }
+                ]
+                async def _run_fallback():
+                    c_fb = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+                    try:
+                        return await c_fb.send_template(
+                            to_phone=norm_meta_phone,
+                            template_name="comunicacion_asistencial_paciente_v1",
+                            language_code="es_AR",
+                            components=components_fb
+                        )
+                    finally:
+                        await c_fb.close()
+                tpl_res = whatsapp_manager._safe_run_async(_run_fallback())
+
+            if tpl_res and tpl_res.get("wamid"):
                 wamid = tpl_res.get("wamid")
                 wa_send = {
                     "success": True,
                     "enviado_real": True,
                     "message_id": wamid,
                     "wamid": wamid,
-                    "template": "comunicacion_asistencial_paciente_v1"
+                    "template": template_usada
                 }
-
-                if conv_id and wamid:
+                if conv_id:
                     meta_tpl: Dict[str, Any] = {
                         "tipo": "template",
-                        "template_name": "comunicacion_asistencial_paciente_v1",
+                        "template_name": template_usada,
                         "delivery_status": "enviado",
                         "provider": "meta_cloud_api",
                         "wamid": wamid,
                         "emision_indicacion_id": emision_uuid,
-                        "media_url": full_pdf_link
+                        "media_url": full_pdf_link,
+                        "filename": pdf_filename
                     }
                     if operador_id:
                         meta_tpl["operador_id"] = operador_id
@@ -578,13 +624,12 @@ def despachar_indicacion_por_whatsapp(
                     guardar_mensaje(
                         conversacion_id=conv_id,
                         emisor="operador",
-                        contenido=f"📋 [Plantilla Oficial Meta: comunicacion_asistencial_paciente_v1]\n{aviso_param}",
+                        contenido=f"📋 [Plantilla Oficial Meta: {template_usada}]\nIndicaciones Médicas Oficiales: {practica_nombre}",
                         whatsapp_message_id=wamid,
                         metadata_json=meta_tpl
                     )
-            except Exception as e_tpl:
-                logger.error(f"Error enviando plantilla asistencial a {tel_norm}: {e_tpl}")
-                wa_send = {"success": False, "error": str(e_tpl)}
+            elif not wa_send:
+                wa_send = {"success": False, "error": "No se pudo despachar la plantilla Meta"}
 
     if wa_send and (wa_send.get("success") or wa_send.get("status") in ["queued", "sent", "success"] or wa_send.get("enviado_real")):
         status = "enviado"
@@ -957,7 +1002,9 @@ def emitir_indicaciones_expediente(
                 pdf_url=pdf_url,
                 emision_uuid=emision_uuid,
                 operador_id=operador_id,
-                operador_nombre=operador_nombre or usu_alta
+                operador_nombre=operador_nombre or usu_alta,
+                pdf_path=pdf_path,
+                tipo_documento=tipo_documento
             )
             whatsapp_res = wa_send
 
@@ -1353,8 +1400,10 @@ def emitir_indicaciones_turno_quirofano(
                 "titulo_documento": "INDICACIONES MÉDICAS POSTQUIRÚRGICAS",
                 "modulos": modulos or []
             }
-            emision_uuid = str(uuid.uuid4())
-            pdf_path, pdf_url = generar_pdf_indicaciones_crm(datos_pdf, emision_uuid=emision_uuid)
+            pdf_res = generar_pdf_indicacion_medica(datos_pdf, guardar_en_disco=True)
+            pdf_path = pdf_res.get("file_path")
+            pdf_url = pdf_res.get("url")
+            emision_uuid = pdf_res.get("emision_id") or str(uuid.uuid4())
 
             mensaje_wa = (
                 f"Estimado/a *{pac_nom}*:\n\n"
@@ -1372,7 +1421,9 @@ def emitir_indicaciones_turno_quirofano(
                 pdf_url=pdf_url,
                 emision_uuid=emision_uuid,
                 operador_id=operador_id,
-                operador_nombre=operador_nombre or "Quirófano"
+                operador_nombre=operador_nombre or "Quirófano",
+                pdf_path=pdf_path,
+                tipo_documento="postquirurgico"
             )
 
             supabase.table("emisiones_indicaciones_geclisa").insert({
