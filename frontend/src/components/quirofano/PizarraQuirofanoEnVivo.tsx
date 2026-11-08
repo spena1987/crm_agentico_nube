@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react'
 import {
+  Pill,
   Activity,
   Clock,
   User,
@@ -54,6 +55,7 @@ import { useAuth } from '@/context/AuthContext'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
 import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
+import ModalEnviarIndicacionesQuirofano from '@/components/quirofano/ModalEnviarIndicacionesQuirofano'
 import ModalVerificacionQR from '@/components/quirofano/ModalVerificacionQR'
 import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
 import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
@@ -119,6 +121,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [justificacionExcepcion, setJustificacionExcepcion] = useState<string>('')
   const [reenviandoConsentimientoId, setReenviandoConsentimientoId] = useState<string | null>(null)
   const [consentimientoModalTurno, setConsentimientoModalTurno] = useState<any | null>(null)
+  const [indicacionesModalTurno, setIndicacionesModalTurno] = useState<any | null>(null)
   const [mostrarModalCartelesA4, setMostrarModalCartelesA4] = useState<boolean>(false)
   const [turnoParaCartel, setTurnoParaCartel] = useState<string | null>(null)
 
@@ -1760,13 +1763,60 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                       </div>
                     )}
 
-                    {/* Si ya está operado: Protocolo Quirúrgico y Sincronización Geclisa */}
+                    {/* Si ya está operado: Protocolo Quirúrgico, Indicaciones Post-Qx y Sincronización Geclisa */}
                     {esOperado && (
                       <div className="flex flex-wrap items-center gap-1.5 justify-end">
                         <span className="px-2.5 py-1 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
                           <Check size={13} />
                           <span>Concluido</span>
                         </span>
+
+                        {/* Píldora de Indicaciones Médicas Postquirúrgicas por WhatsApp */}
+                        {t.indicaciones_postqx_enviadas ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setIndicacionesModalTurno(t)
+                              }}
+                              className="px-2.5 py-1 rounded-xl bg-emerald-950/70 text-emerald-300 border border-emerald-700 text-[11px] font-bold flex items-center gap-1 hover:bg-emerald-900/60 transition shadow-xs"
+                              title="Indicaciones postoperatorias ya enviadas por WhatsApp (clic para reenviar o editar)"
+                            >
+                              <CheckCheck size={12} className="text-emerald-400" />
+                              <span>✔ Ind. Enviadas</span>
+                            </button>
+                            {t.indicaciones_postqx_pdf_url && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  const url = t.indicaciones_postqx_pdf_url.startsWith('http')
+                                    ? t.indicaciones_postqx_pdf_url
+                                    : `${BACKEND_URL}${t.indicaciones_postqx_pdf_url}`
+                                  window.open(url, '_blank')
+                                }}
+                                className="p-1 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition"
+                                title="Ver PDF oficial de Indicaciones Médicas Postquirúrgicas"
+                              >
+                                <Eye size={12} />
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setIndicacionesModalTurno(t)
+                            }}
+                            className="px-2.5 py-1 rounded-xl bg-cyan-950/80 hover:bg-cyan-900 text-cyan-200 border border-cyan-600 text-[11px] font-extrabold flex items-center gap-1 transition shadow-xs animate-pulse"
+                            title="Enviar Indicaciones Médicas Postquirúrgicas oficiales con firma del cirujano por WhatsApp"
+                          >
+                            <Pill size={12} className="text-cyan-400" />
+                            <span>💊 Enviar Ind. Post-Qx</span>
+                          </button>
+                        )}
 
                         <button
                           type="button"
@@ -2068,6 +2118,18 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           onConsentimientoEnviado={() => {
             fetchTurnosDia(true)
             setAlertaConsentimiento(null)
+          }}
+        />
+      )}
+
+      {/* 8. MODAL DE ENVÍO DE INDICACIONES MÉDICAS POSTQUIRÚRGICAS POR WHATSAPP */}
+      {indicacionesModalTurno && (
+        <ModalEnviarIndicacionesQuirofano
+          isOpen={!!indicacionesModalTurno}
+          onClose={() => setIndicacionesModalTurno(null)}
+          turnoId={indicacionesModalTurno.id}
+          onIndicacionesEnviadas={() => {
+            fetchTurnosDia(true)
           }}
         />
       )}

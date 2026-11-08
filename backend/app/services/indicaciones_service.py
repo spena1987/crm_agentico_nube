@@ -1185,3 +1185,229 @@ def reeditar_emision_indicaciones(
         "whatsapp_resultado": whatsapp_res,
         "mensaje": "Indicación médica actualizada exitosamente."
     }
+
+
+def preparar_indicaciones_postqx_turno(turno_id: str) -> Dict[str, Any]:
+    """
+    Recupera el turno de quirófano con su paciente, práctica y cirujano,
+    y resuelve automáticamente las indicaciones postquirúrgicas personalizadas
+    (o institucionales) listas para ser enviadas por WhatsApp desde la Pizarra.
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "error": "Identificador de turno inválido"}
+
+    try:
+        res = (
+            supabase.table("turnos_quirofano")
+            .select("*, pacientes(*), asesorias_quirurgicas(*)")
+            .eq("id", turno_id)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return {"success": False, "error": f"No se encontró el turno con ID {turno_id}"}
+        
+        t = res.data[0]
+        paciente = t.get("pacientes") or {}
+        asesoria = t.get("asesorias_quirurgicas") or {}
+
+        paciente_nombre = paciente.get("nombre") or t.get("paciente_nombre") or "Paciente"
+        paciente_dni = paciente.get("dni") or t.get("paciente_dni") or ""
+        paciente_telefono = paciente.get("telefono") or t.get("paciente_telefono") or ""
+        paciente_os = t.get("obra_social") or paciente.get("obra_social") or "-"
+        paciente_plan = t.get("plan_obra_social") or paciente.get("plan_cobertura") or ""
+
+        practica_nombre = t.get("practica_nombre") or asesoria.get("tipo_cirugia") or "Cirugía Oftalmológica"
+        practica_codigo = t.get("practica_codigo") or ""
+        cirujano_nombre = t.get("cirujano_nombre") or asesoria.get("medico_cirujano_nombre") or "Médico Cirujano"
+        cirujano_id = t.get("cirujano_id") or asesoria.get("medico_cirujano_id")
+
+        # Resolver plantilla sugerida postquirúrgica
+        sugerencia = resolver_plantilla_sugerida(
+            practica_nombre=practica_nombre,
+            practica_codigo=practica_codigo,
+            medico_nombre=cirujano_nombre,
+            prestador_id=cirujano_id,
+            tipo_fase="postquirurgico"
+        )
+
+        return {
+            "success": True,
+            "turno_id": turno_id,
+            "asesoria_id": t.get("asesoria_id"),
+            "paciente": {
+                "id": t.get("paciente_id") or paciente.get("id"),
+                "nombre": paciente_nombre,
+                "dni": paciente_dni,
+                "telefono": paciente_telefono,
+                "obra_social": paciente_os,
+                "plan": paciente_plan
+            },
+            "cirugia": {
+                "practica_nombre": practica_nombre,
+                "practica_codigo": practica_codigo,
+                "ojo": t.get("ojo") or "OI",
+                "fecha_cirugia": t.get("fecha_cirugia")
+            },
+            "cirujano": {
+                "id": cirujano_id,
+                "nombre": cirujano_nombre
+            },
+            "sugerencia": sugerencia.get("sugerencia"),
+            "origen_resolucion": sugerencia.get("origen_resolucion"),
+            "requiere_seleccion_manual": sugerencia.get("requiere_seleccion_manual", False),
+            "ya_enviado": bool(t.get("indicaciones_postqx_enviadas")),
+            "enviado_at": t.get("indicaciones_postqx_enviadas_at"),
+            "pdf_url": t.get("indicaciones_postqx_pdf_url")
+        }
+    except Exception as e:
+        logger.error(f"Error preparando indicaciones post-qx para turno {turno_id}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def emitir_indicaciones_turno_quirofano(
+    turno_id: str,
+    telefono_override: Optional[str] = None,
+    texto_override: Optional[str] = None,
+    medicamentos_override: Optional[List[Dict[str, Any]]] = None,
+    cuidados_override: Optional[str] = None,
+    pautas_alarma_override: Optional[str] = None,
+    modulos: Optional[List[Dict[str, Any]]] = None,
+    operador_id: Optional[str] = None,
+    operador_nombre: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Emite formalmente las indicaciones médicas postquirúrgicas para un turno de quirófano concluido:
+    1. Si tiene asesoria_id, ejecuta emitir_indicaciones_expediente.
+    2. Si no tiene asesoria_id, crea una emisión directa con branding oficial de Centro Visión.
+    3. Envía por WhatsApp y registra en el chat del CRM.
+    4. Actualiza turnos_quirofano con los flags de envío post-qx para la Pizarra.
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "error": "Identificador de turno inválido"}
+
+    try:
+        res = (
+            supabase.table("turnos_quirofano")
+            .select("*, pacientes(*), asesorias_quirurgicas(*)")
+            .eq("id", turno_id)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            return {"success": False, "error": f"No se encontró el turno {turno_id}"}
+
+        t = res.data[0]
+        paciente = t.get("pacientes") or {}
+        asesoria_id = t.get("asesoria_id")
+        
+        tel_dest = telefono_override or paciente.get("telefono") or t.get("paciente_telefono")
+
+        resultado = None
+        if asesoria_id and is_valid_uuid(asesoria_id):
+            resultado = emitir_indicaciones_expediente(
+                asesoria_id=asesoria_id,
+                enviar_whatsapp=True,
+                texto_override=texto_override,
+                medicamentos_override=medicamentos_override,
+                cuidados_override=cuidados_override,
+                pautas_alarma_override=pautas_alarma_override,
+                usu_alta=operador_nombre or "quirofano",
+                modulos=modulos,
+                tipo_documento="postquirurgico",
+                titulo_documento="INDICACIONES MÉDICAS POSTQUIRÚRGICAS",
+                medico_id_override=t.get("cirujano_id"),
+                medico_nombre_override=t.get("cirujano_nombre"),
+                practica_nombre_override=t.get("practica_nombre"),
+                practica_codigo_override=t.get("practica_codigo"),
+                operador_id=operador_id,
+                operador_nombre=operador_nombre
+            )
+        else:
+            from app.db import obtener_prestador_por_cirujano
+
+            cirujano_obj = obtener_prestador_por_cirujano(t.get("cirujano_nombre") or "")
+            pac_nom = paciente.get("nombre") or t.get("paciente_nombre") or "Paciente"
+            pac_dni = paciente.get("dni") or t.get("paciente_dni") or ""
+            pac_os = t.get("obra_social") or paciente.get("obra_social") or "-"
+
+            txt_cuerpo = texto_override or "Indicaciones postquirúrgicas oficiales."
+            meds = medicamentos_override or []
+            cuidados = cuidados_override or ""
+            alarmas = pautas_alarma_override or ""
+
+            datos_pdf = {
+                "paciente_nombre": pac_nom,
+                "paciente_dni": pac_dni,
+                "paciente_obra_social": pac_os,
+                "practica_nombre": t.get("practica_nombre") or "Cirugía Oftalmológica",
+                "medico_nombre": cirujano_obj.get("nombre_apellido") if cirujano_obj else (t.get("cirujano_nombre") or "Médico Cirujano"),
+                "medico_matricula": cirujano_obj.get("matricula") if cirujano_obj else "",
+                "medico_especialidad": cirujano_obj.get("especialidad") if cirujano_obj else "Especialista en Oftalmología",
+                "medico_firma_url": cirujano_obj.get("firma_url") if cirujano_obj else None,
+                "cuerpo_indicaciones": txt_cuerpo,
+                "medicamentos": meds,
+                "cuidados_generales": cuidados,
+                "pautas_alarma": alarmas,
+                "tipo_documento": "postquirurgico",
+                "titulo_documento": "INDICACIONES MÉDICAS POSTQUIRÚRGICAS",
+                "modulos": modulos or []
+            }
+            emision_uuid = str(uuid.uuid4())
+            pdf_path, pdf_url = generar_pdf_indicaciones_crm(datos_pdf, emision_uuid=emision_uuid)
+
+            mensaje_wa = (
+                f"Estimado/a *{pac_nom}*:\n\n"
+                f"Adjuntamos las *Indicaciones Médicas Postquirúrgicas* oficiales correspondientes a su intervención de *{t.get('practica_nombre', 'Cirugía Oftalmológica')}* realizada hoy en *Centro Visión*.\n\n"
+                f"📄 Puede visualizar y descargar sus indicaciones con esquema de colirios y cuidados en el siguiente enlace seguro:\n"
+                f"{pdf_url}\n\n"
+                f"Ante cualquier duda o signo de alarma, estamos a su disposición."
+            )
+            wa_status, wa_res = despachar_indicacion_por_whatsapp(
+                paciente_id=t.get("paciente_id"),
+                paciente_telefono=tel_dest,
+                paciente_nombre=pac_nom,
+                practica_nombre=t.get("practica_nombre") or "Cirugía Oftalmológica",
+                mensaje_wa=mensaje_wa,
+                pdf_url=pdf_url,
+                emision_uuid=emision_uuid,
+                operador_id=operador_id,
+                operador_nombre=operador_nombre or "Quirófano"
+            )
+
+            supabase.table("emisiones_indicaciones_geclisa").insert({
+                "id": emision_uuid,
+                "paciente_id": t.get("paciente_id"),
+                "medico_nombre": datos_pdf["medico_nombre"],
+                "medico_matricula": datos_pdf["medico_matricula"],
+                "practica_nombre": t.get("practica_nombre"),
+                "practica_codigo": t.get("practica_codigo"),
+                "texto_indicaciones": txt_cuerpo,
+                "pdf_path": pdf_path,
+                "pdf_url": pdf_url,
+                "whatsapp_status": wa_status,
+                "tipo_documento": "postquirurgico",
+                "titulo_documento": "INDICACIONES MÉDICAS POSTQUIRÚRGICAS",
+                "fecha_emision": datetime.now(timezone.utc).date().isoformat()
+            }).execute()
+
+            resultado = {
+                "success": True,
+                "emision_id": emision_uuid,
+                "pdf_url": pdf_url,
+                "whatsapp_status": wa_status,
+                "whatsapp_resultado": wa_res
+            }
+
+        if resultado and resultado.get("success"):
+            supabase.table("turnos_quirofano").update({
+                "indicaciones_postqx_enviadas": True,
+                "indicaciones_postqx_enviadas_at": datetime.now(timezone.utc).isoformat(),
+                "indicaciones_postqx_pdf_url": resultado.get("pdf_url"),
+                "indicaciones_postqx_emision_id": resultado.get("emision_id")
+            }).eq("id", turno_id).execute()
+
+        return resultado or {"success": False, "error": "No se pudo emitir la indicación"}
+    except Exception as e:
+        logger.error(f"Error emitiendo indicaciones post-qx para turno {turno_id}: {e}")
+        return {"success": False, "error": str(e)}

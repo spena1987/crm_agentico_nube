@@ -7505,6 +7505,52 @@ def obtener_o_generar_parte_quirurgico(turno_id: str):
         logger.error(f"Error generando Parte Quirúrgico para turno {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/turnos-quirofano/{turno_id}/preparar-indicaciones-postqx")
+def preparar_indicaciones_postqx_api(turno_id: str):
+    """
+    Prepara y resuelve las indicaciones postquirúrgicas personalizadas para el turno de quirófano,
+    incluyendo esquema de gotas por cirujano y paciente, listas para enviar por WhatsApp.
+    """
+    try:
+        from app.services.indicaciones_service import preparar_indicaciones_postqx_turno
+        res = preparar_indicaciones_postqx_turno(turno_id)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error", "Error preparando indicaciones"))
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error preparando indicaciones post-qx para turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/turnos-quirofano/{turno_id}/enviar-indicaciones-postqx")
+def enviar_indicaciones_postqx_api(turno_id: str, payload: Dict[str, Any] = Body(default={})):
+    """
+    Emite formalmente las indicaciones postquirúrgicas oficiales con firma digital del cirujano,
+    las envía por WhatsApp al paciente y actualiza la tarjeta de la Pizarra de Quirófano en tiempo real.
+    """
+    try:
+        from app.services.indicaciones_service import emitir_indicaciones_turno_quirofano
+        res = emitir_indicaciones_turno_quirofano(
+            turno_id=turno_id,
+            telefono_override=payload.get("telefono_override"),
+            texto_override=payload.get("texto_indicaciones"),
+            medicamentos_override=payload.get("medicamentos"),
+            cuidados_override=payload.get("cuidados_generales"),
+            pautas_alarma_override=payload.get("pautas_alarma"),
+            modulos=payload.get("modulos"),
+            operador_id=payload.get("operador_id"),
+            operador_nombre=payload.get("operador_nombre")
+        )
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error", "Error enviando indicaciones"))
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al enviar indicaciones post-qx para turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/turnos-quirofano/{turno_id}/checklist-seguridad")
 def registrar_checklist_seguridad(turno_id: str, payload: Dict[str, Any] = Body(...)):
     """
