@@ -385,19 +385,21 @@ export default function NomencladorSettingsCard() {
   }
 
 
-  // Helper para asignar o cambiar plantilla institucional base por fase
-  const handleSetProtocoloInstitucional = (tipoFase: string, plantillaId: string) => {
+  // Helper para agregar módulo institucional base (1 a N)
+  const handleAgregarModuloInstitucional = (tipoFase: string, plantillaId: string) => {
+    if (!plantillaId) return
+    const pObj = plantillasIndicacionesCrm.find((x) => x.id === plantillaId)
     setIndicacionesAsignadasModal((prev) => {
-      const filtered = prev.filter((i) => !( (!i.prestador_id || i.prestador_id === null) && i.tipo_fase === tipoFase ))
-      if (!plantillaId) return filtered
-      const pObj = plantillasIndicacionesCrm.find((x) => x.id === plantillaId)
+      if (prev.some((i) => (!i.prestador_id || i.prestador_id === null) && i.tipo_fase === tipoFase && i.plantilla_indicacion_id === plantillaId)) {
+        return prev
+      }
       return [
-        ...filtered,
+        ...prev,
         {
           plantilla_indicacion_id: plantillaId,
           prestador_id: null,
           tipo_fase: tipoFase,
-          orden: filtered.length + 1,
+          orden: prev.length + 1,
           es_obligatoria: true,
           activo: true,
           plantillas_indicaciones_crm: pObj
@@ -406,22 +408,29 @@ export default function NomencladorSettingsCard() {
     })
   }
 
-  // Helper para agregar una regla específica de cirujano
+  // Helper para quitar módulo institucional específico (1 a N)
+  const handleQuitarModuloInstitucional = (tipoFase: string, plantillaId: string) => {
+    setIndicacionesAsignadasModal((prev) =>
+      prev.filter((i) => !((!i.prestador_id || i.prestador_id === null) && i.tipo_fase === tipoFase && i.plantilla_indicacion_id === plantillaId))
+    )
+  }
+
+  // Helper para agregar una regla específica de cirujano (1 a N)
   const handleAgregarReglaCirujano = () => {
     if (!nuevaReglaCirujano.prestador_id || !nuevaReglaCirujano.plantilla_indicacion_id) return
     const pObj = plantillasIndicacionesCrm.find((x) => x.id === nuevaReglaCirujano.plantilla_indicacion_id)
     const prestObj = prestadoresLista.find((p) => p.id === nuevaReglaCirujano.prestador_id)
     setIndicacionesAsignadasModal((prev) => {
-      const filtered = prev.filter(
-        (i) => !(String(i.prestador_id) === String(nuevaReglaCirujano.prestador_id) && i.tipo_fase === nuevaReglaCirujano.tipo_fase)
-      )
+      if (prev.some((i) => String(i.prestador_id) === String(nuevaReglaCirujano.prestador_id) && i.tipo_fase === nuevaReglaCirujano.tipo_fase && i.plantilla_indicacion_id === nuevaReglaCirujano.plantilla_indicacion_id)) {
+        return prev
+      }
       return [
-        ...filtered,
+        ...prev,
         {
           plantilla_indicacion_id: nuevaReglaCirujano.plantilla_indicacion_id,
           prestador_id: nuevaReglaCirujano.prestador_id,
           tipo_fase: nuevaReglaCirujano.tipo_fase,
-          orden: filtered.length + 1,
+          orden: prev.length + 1,
           es_obligatoria: true,
           activo: true,
           plantillas_indicaciones_crm: pObj,
@@ -437,14 +446,14 @@ export default function NomencladorSettingsCard() {
     setMostrandoAgregarRegla(false)
   }
 
-  // Helper para eliminar una regla de cirujano
-  const handleEliminarReglaCirujano = (prestadorId: string, tipoFase: string) => {
+  // Helper para eliminar una regla de cirujano específica (1 a N)
+  const handleEliminarReglaCirujano = (prestadorId: string, tipoFase: string, plantillaId: string) => {
     setIndicacionesAsignadasModal((prev) =>
-      prev.filter((i) => !(String(i.prestador_id) === String(prestadorId) && i.tipo_fase === tipoFase))
+      prev.filter((i) => !(String(i.prestador_id) === String(prestadorId) && i.tipo_fase === tipoFase && i.plantilla_indicacion_id === plantillaId))
     )
   }
 
-  const loadIndicacionesPractica = async (practicaId?: string) => {
+    const loadIndicacionesPractica = async (practicaId?: string) => {
     if (!practicaId) {
       setIndicacionesAsignadasModal([])
       return
@@ -2576,11 +2585,11 @@ export default function NomencladorSettingsCard() {
                       <div className="flex items-center gap-2">
                         <Pill size={16} className="text-rose-600" />
                         <span className="font-bold text-rose-900 dark:text-rose-200 text-xs">
-                          Protocolo de Indicaciones Médicas Automatizado
+                          Protocolo de Indicaciones Médicas Automatizado (1 a N Modular)
                         </span>
                       </div>
                       <p className="text-[11px] text-rose-700/80 dark:text-rose-300/70">
-                        Si se activa, el expediente precargará de forma estricta las gotas, horarios y recomendaciones de esta práctica según cirujano y fase.
+                        Si se activa, el expediente precargará de forma estricta y modular las indicaciones de esta práctica según fase y cirujano.
                       </p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
@@ -2604,114 +2613,218 @@ export default function NomencladorSettingsCard() {
                     </div>
                   ) : (
                     <div className="space-y-5">
-                      {/* BLOQUE 1: PROTOCOLOS INSTITUCIONALES BASE */}
-                      <div className="p-3.5 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+                      {/* BLOQUE 1: PROTOCOLOS INSTITUCIONALES BASE (1 a N MODULARES) */}
+                      <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-xl space-y-4">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <Building size={15} className="text-blue-600" />
-                            <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                            <Building size={15} className="text-blue-400" />
+                            <span className="font-bold text-xs text-slate-100">
                               1. Protocolos Institucionales Base (Centro Visión)
                             </span>
                           </div>
-                          <span className="text-[10.5px] text-slate-500">
-                            Aplicados a todos los cirujanos sin regla personalizada
+                          <span className="text-[10.5px] text-slate-400">
+                            Módulos base aplicados por defecto (1 a N) a todos los cirujanos
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                          {/* Protocolo Preoperatorio Base */}
-                          <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-[var(--background)] space-y-1.5">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                          {/* FASE PREQUIRÚRGICA (1 a N) */}
+                          <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-950/60 space-y-2.5">
                             <div className="flex items-center justify-between">
-                              <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                                <Clock size={13} className="text-amber-500" /> Fase Prequirúrgica (Ayuno / Ingreso)
+                              <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                                <Clock size={13} className="text-amber-400" /> Fase Prequirúrgica (Ayuno / Ingreso)
+                              </span>
+                              <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60">
+                                {indicacionesAsignadasModal.filter((i) => (!i.prestador_id || i.prestador_id === null) && i.tipo_fase === 'prequirurgico').length} módulos
                               </span>
                             </div>
-                            {(() => {
-                              const instPre = indicacionesAsignadasModal.find(
-                                (i) => (!i.prestador_id || i.prestador_id === null) && i.tipo_fase === 'prequirurgico'
-                              )
-                              return (
-                                <select
-                                  value={instPre?.plantilla_indicacion_id || ''}
-                                  onChange={(e) => handleSetProtocoloInstitucional('prequirurgico', e.target.value)}
-                                  className="w-full text-xs p-2 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] text-[var(--foreground)]"
-                                >
-                                  <option value="">-- Sin protocolo prequirúrgico asignado --</option>
-                                  {plantillasIndicacionesCrm.map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                      {p.titulo} ({p.categoria || 'General'} - {p.tipo_fase || 'fase'})
-                                    </option>
-                                  ))}
-                                </select>
-                              )
-                            })()}
+
+                            {/* Lista de módulos prequirúrgicos asignados */}
+                            <div className="space-y-1.5 min-h-[40px]">
+                              {(() => {
+                                const modulosPre = indicacionesAsignadasModal.filter(
+                                  (i) => (!i.prestador_id || i.prestador_id === null) && i.tipo_fase === 'prequirurgico'
+                                )
+                                if (modulosPre.length === 0) {
+                                  return (
+                                    <p className="text-[11px] text-slate-500 italic p-2 bg-slate-900/40 rounded-lg border border-dashed border-slate-800 text-center">
+                                      Sin módulos prequirúrgicos asignados
+                                    </p>
+                                  )
+                                }
+                                return modulosPre.map((m, idx) => {
+                                  const plantilla = m.plantillas_indicaciones_crm || plantillasIndicacionesCrm.find((p) => p.id === m.plantilla_indicacion_id)
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800 text-[11.5px]"
+                                    >
+                                      <div className="flex items-center gap-2 truncate">
+                                        <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 text-[10px] flex items-center justify-center font-bold">
+                                          {idx + 1}
+                                        </span>
+                                        <span className="font-semibold text-slate-200 truncate">
+                                          {plantilla?.titulo || 'Plantilla'}
+                                        </span>
+                                        <span className="text-[10px] text-slate-400">
+                                          ({plantilla?.categoria || 'General'})
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleQuitarModuloInstitucional('prequirurgico', m.plantilla_indicacion_id)}
+                                        className="text-rose-400 hover:text-rose-300 p-1 hover:bg-rose-950/40 rounded transition"
+                                        title="Quitar módulo"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+                                  )
+                                })
+                              })()}
+                            </div>
+
+                            {/* Selector para agregar módulo prequirúrgico */}
+                            <div className="pt-1.5 border-t border-slate-800 flex gap-1.5">
+                              <select
+                                id="select-add-preop"
+                                defaultValue=""
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    handleAgregarModuloInstitucional('prequirurgico', e.target.value)
+                                    e.target.value = ''
+                                  }
+                                }}
+                                className="w-full text-xs p-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-100 dark:bg-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                              >
+                                <option value="" className="bg-slate-900 text-slate-100 py-1">＋ Agregar módulo prequirúrgico...</option>
+                                {plantillasIndicacionesCrm.map((p) => (
+                                  <option key={p.id} value={p.id} className="bg-slate-900 text-slate-100 py-1">
+                                    {p.titulo} ({p.categoria || 'General'})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                           </div>
 
-                          {/* Protocolo Postoperatorio Base */}
-                          <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-[var(--background)] space-y-1.5">
+                          {/* FASE POSTQUIRÚRGICA (1 a N) */}
+                          <div className="p-3.5 rounded-xl border border-slate-800 bg-slate-950/60 space-y-2.5">
                             <div className="flex items-center justify-between">
-                              <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                                <Pill size={13} className="text-emerald-500" /> Fase Postquirúrgica (Gotas / Cuidados)
+                              <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                                <Pill size={13} className="text-emerald-400" /> Fase Postquirúrgica (Gotas / Cuidados)
+                              </span>
+                              <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60">
+                                {indicacionesAsignadasModal.filter((i) => (!i.prestador_id || i.prestador_id === null) && i.tipo_fase === 'postquirurgico').length} módulos
                               </span>
                             </div>
-                            {(() => {
-                              const instPost = indicacionesAsignadasModal.find(
-                                (i) => (!i.prestador_id || i.prestador_id === null) && i.tipo_fase === 'postquirurgico'
-                              )
-                              return (
-                                <select
-                                  value={instPost?.plantilla_indicacion_id || ''}
-                                  onChange={(e) => handleSetProtocoloInstitucional('postquirurgico', e.target.value)}
-                                  className="w-full text-xs p-2 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] text-[var(--foreground)]"
-                                >
-                                  <option value="">-- Sin protocolo postquirúrgico asignado --</option>
-                                  {plantillasIndicacionesCrm.map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                      {p.titulo} ({p.categoria || 'General'} - {p.tipo_fase || 'fase'})
-                                    </option>
-                                  ))}
-                                </select>
-                              )
-                            })()}
+
+                            {/* Lista de módulos postquirúrgicos asignados */}
+                            <div className="space-y-1.5 min-h-[40px]">
+                              {(() => {
+                                const modulosPost = indicacionesAsignadasModal.filter(
+                                  (i) => (!i.prestador_id || i.prestador_id === null) && i.tipo_fase === 'postquirurgico'
+                                )
+                                if (modulosPost.length === 0) {
+                                  return (
+                                    <p className="text-[11px] text-slate-500 italic p-2 bg-slate-900/40 rounded-lg border border-dashed border-slate-800 text-center">
+                                      Sin módulos postquirúrgicos asignados
+                                    </p>
+                                  )
+                                }
+                                return modulosPost.map((m, idx) => {
+                                  const plantilla = m.plantillas_indicaciones_crm || plantillasIndicacionesCrm.find((p) => p.id === m.plantilla_indicacion_id)
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800 text-[11.5px]"
+                                    >
+                                      <div className="flex items-center gap-2 truncate">
+                                        <span className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] flex items-center justify-center font-bold">
+                                          {idx + 1}
+                                        </span>
+                                        <span className="font-semibold text-slate-200 truncate">
+                                          {plantilla?.titulo || 'Plantilla'}
+                                        </span>
+                                        {plantilla?.medicamentos && plantilla.medicamentos.length > 0 && (
+                                          <span className="text-[10px] text-blue-400 bg-blue-950/40 px-1 py-0.2 rounded border border-blue-900/50">
+                                            💊 {plantilla.medicamentos.length} gotas
+                                          </span>
+                                        )}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleQuitarModuloInstitucional('postquirurgico', m.plantilla_indicacion_id)}
+                                        className="text-rose-400 hover:text-rose-300 p-1 hover:bg-rose-950/40 rounded transition"
+                                        title="Quitar módulo"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+                                  )
+                                })
+                              })()}
+                            </div>
+
+                            {/* Selector para agregar módulo postquirúrgico */}
+                            <div className="pt-1.5 border-t border-slate-800 flex gap-1.5">
+                              <select
+                                id="select-add-postop"
+                                defaultValue=""
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    handleAgregarModuloInstitucional('postquirurgico', e.target.value)
+                                    e.target.value = ''
+                                  }
+                                }}
+                                className="w-full text-xs p-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-100 dark:bg-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                              >
+                                <option value="" className="bg-slate-900 text-slate-100 py-1">＋ Agregar módulo postquirúrgico...</option>
+                                {plantillasIndicacionesCrm.map((p) => (
+                                  <option key={p.id} value={p.id} className="bg-slate-900 text-slate-100 py-1">
+                                    {p.titulo} ({p.categoria || 'General'})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                           </div>
                         </div>
                       </div>
 
-                      {/* BLOQUE 2: REGLAS ESPECÍFICAS POR CIRUJANO (EXCEPCIONES CLÍNICAS) */}
-                      <div className="p-3.5 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+                      {/* BLOQUE 2: EXCEPCIONES Y PROTOCOLOS POR CIRUJANO (1 a N MODULAR) */}
+                      <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-xl space-y-4">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <Stethoscope size={15} className="text-emerald-600" />
-                            <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
-                              2. Excepciones & Protocolos por Cirujano ({indicacionesAsignadasModal.filter((i) => !!i.prestador_id).length})
+                            <Stethoscope size={15} className="text-emerald-400" />
+                            <span className="font-bold text-xs text-slate-100">
+                              2. Excepciones & Protocolos por Cirujano ({indicacionesAsignadasModal.filter((i) => !!i.prestador_id).length} asignaciones)
                             </span>
                           </div>
                           <button
                             type="button"
                             onClick={() => setMostrandoAgregarRegla(!mostrandoAgregarRegla)}
-                            className="px-2.5 py-1 text-[11px] font-bold text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg border border-emerald-300 dark:border-emerald-800 flex items-center gap-1 transition"
+                            className="px-3 py-1.5 text-xs font-bold text-emerald-400 bg-emerald-950/40 hover:bg-emerald-900/50 rounded-lg border border-emerald-800/80 flex items-center gap-1.5 transition"
                           >
-                            <Plus size={12} /> {mostrandoAgregarRegla ? 'Cancelar' : '+ Agregar Protocolo de Cirujano'}
+                            <Plus size={13} /> {mostrandoAgregarRegla ? 'Cancelar' : '＋ Asignar Módulo a Cirujano'}
                           </button>
                         </div>
 
                         {/* Formulario Inline para agregar excepción */}
                         {mostrandoAgregarRegla && (
-                          <div className="p-3 bg-[var(--card-bg)] border border-emerald-300 dark:border-emerald-800/80 rounded-xl space-y-2.5 animate-in fade-in text-xs">
-                            <span className="font-bold text-slate-800 dark:text-slate-200 block text-[11.5px]">
-                              Asignar Protocolo Personalizado a Cirujano:
+                          <div className="p-3.5 bg-slate-950 border border-emerald-500/40 rounded-xl space-y-3 animate-in fade-in text-xs">
+                            <span className="font-bold text-emerald-300 block text-xs">
+                              Asignar Módulo Clínico Personalizado a un Cirujano:
                             </span>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                               <div>
-                                <label className="text-[10.5px] text-slate-500 block mb-1">Médico Cirujano:</label>
+                                <label className="text-[11px] font-semibold text-slate-300 block mb-1">Médico Cirujano:</label>
                                 <select
                                   value={nuevaReglaCirujano.prestador_id}
                                   onChange={(e) => setNuevaReglaCirujano({ ...nuevaReglaCirujano, prestador_id: e.target.value })}
-                                  className="w-full text-xs p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]"
+                                  className="w-full text-xs p-2 rounded-lg border border-slate-700 bg-slate-900 text-slate-100 dark:bg-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                                 >
-                                  <option value="">-- Seleccionar Cirujano --</option>
+                                  <option value="" className="bg-slate-900 text-slate-100 py-1">-- Seleccionar Cirujano --</option>
                                   {prestadoresLista.map((p) => (
-                                    <option key={p.id} value={p.id}>
+                                    <option key={p.id} value={p.id} className="bg-slate-900 text-slate-100 py-1">
                                       {p.nombre_apellido} {p.matricula ? `(Mat: ${p.matricula})` : ''} - {p.rol || 'Cirujano'}
                                     </option>
                                   ))}
@@ -2719,29 +2832,29 @@ export default function NomencladorSettingsCard() {
                               </div>
 
                               <div>
-                                <label className="text-[10.5px] text-slate-500 block mb-1">Fase Quirúrgica:</label>
+                                <label className="text-[11px] font-semibold text-slate-300 block mb-1">Fase Quirúrgica:</label>
                                 <select
                                   value={nuevaReglaCirujano.tipo_fase}
                                   onChange={(e) => setNuevaReglaCirujano({ ...nuevaReglaCirujano, tipo_fase: e.target.value })}
-                                  className="w-full text-xs p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]"
+                                  className="w-full text-xs p-2 rounded-lg border border-slate-700 bg-slate-900 text-slate-100 dark:bg-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                                 >
-                                  <option value="postquirurgico">Postquirúrgico (Gotas & Colirios)</option>
-                                  <option value="prequirurgico">Prequirúrgico (Ayuno & Preparación)</option>
-                                  <option value="orden_medica">Orden Médica / Solicitud</option>
-                                  <option value="certificado">Certificado Médico</option>
+                                  <option value="postquirurgico" className="bg-slate-900 text-slate-100 py-1">Postquirúrgico (Gotas & Colirios)</option>
+                                  <option value="prequirurgico" className="bg-slate-900 text-slate-100 py-1">Prequirúrgico (Ayuno & Preparación)</option>
+                                  <option value="orden_medica" className="bg-slate-900 text-slate-100 py-1">Orden Médica / Solicitud</option>
+                                  <option value="certificado" className="bg-slate-900 text-slate-100 py-1">Certificado Médico</option>
                                 </select>
                               </div>
 
                               <div>
-                                <label className="text-[10.5px] text-slate-500 block mb-1">Plantilla Asignada:</label>
+                                <label className="text-[11px] font-semibold text-slate-300 block mb-1">Plantilla Asignada:</label>
                                 <select
                                   value={nuevaReglaCirujano.plantilla_indicacion_id}
                                   onChange={(e) => setNuevaReglaCirujano({ ...nuevaReglaCirujano, plantilla_indicacion_id: e.target.value })}
-                                  className="w-full text-xs p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]"
+                                  className="w-full text-xs p-2 rounded-lg border border-slate-700 bg-slate-900 text-slate-100 dark:bg-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                                 >
-                                  <option value="">-- Seleccionar Plantilla --</option>
+                                  <option value="" className="bg-slate-900 text-slate-100 py-1">-- Seleccionar Plantilla --</option>
                                   {plantillasIndicacionesCrm.map((p) => (
-                                    <option key={p.id} value={p.id}>
+                                    <option key={p.id} value={p.id} className="bg-slate-900 text-slate-100 py-1">
                                       {p.titulo} ({p.categoria || 'General'})
                                     </option>
                                   ))}
@@ -2754,21 +2867,21 @@ export default function NomencladorSettingsCard() {
                                 type="button"
                                 disabled={!nuevaReglaCirujano.prestador_id || !nuevaReglaCirujano.plantilla_indicacion_id}
                                 onClick={handleAgregarReglaCirujano}
-                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg font-bold text-xs flex items-center gap-1.5"
+                                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 transition"
                               >
-                                <Check size={13} /> Vincular Excepción
+                                <Check size={13} /> Vincular Módulo a Cirujano
                               </button>
                             </div>
                           </div>
                         )}
 
-                        {/* Listado de excepciones configuradas */}
+                        {/* Listado de excepciones configuradas (1 a N) */}
                         {(() => {
                           const reglasCirujanos = indicacionesAsignadasModal.filter((i) => !!i.prestador_id)
                           if (reglasCirujanos.length === 0) {
                             return (
-                              <div className="p-3 text-center border border-dashed rounded-xl bg-[var(--background)] text-xs text-slate-500">
-                                No hay protocolos específicos de cirujano configurados. Todos los médicos utilizarán los protocolos institucionales base.
+                              <div className="p-3 text-center border border-dashed rounded-xl border-slate-800 bg-slate-950/40 text-xs text-slate-400">
+                                No hay módulos específicos de cirujano configurados. Todos los médicos utilizarán los módulos institucionales base.
                               </div>
                             )
                           }
@@ -2784,32 +2897,32 @@ export default function NomencladorSettingsCard() {
                                 return (
                                   <div
                                     key={rIdx}
-                                    className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-[var(--background)] flex items-center justify-between gap-3 text-xs"
+                                    className="p-2.5 rounded-xl border border-slate-800 bg-slate-950/70 flex items-center justify-between gap-3 text-xs"
                                   >
                                     <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                                      <div className="w-7 h-7 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 flex items-center justify-center font-bold text-[11px] shrink-0">
+                                      <div className="w-7 h-7 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 flex items-center justify-center font-bold text-[11px] shrink-0">
                                         Dr
                                       </div>
                                       <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2 flex-wrap">
-                                          <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                                          <span className="font-bold text-slate-100 truncate">
                                             {prestadorNombre}
                                           </span>
                                           <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
                                             r.tipo_fase === 'prequirurgico'
-                                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
-                                              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                                              ? 'bg-amber-950/70 text-amber-300 border border-amber-800/60'
+                                              : 'bg-emerald-950/70 text-emerald-300 border border-emerald-800/60'
                                           }`}>
                                             {r.tipo_fase === 'prequirurgico' ? 'Pre-Qx' : r.tipo_fase === 'postquirurgico' ? 'Post-Qx' : r.tipo_fase}
                                           </span>
                                         </div>
-                                        <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-0.5 truncate">
-                                          <span className="font-medium text-slate-700 dark:text-slate-300">
-                                            📄 {plantilla?.titulo || 'Plantilla'}
+                                        <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5 truncate">
+                                          <span className="font-medium text-slate-200">
+                                            📋 {plantilla?.titulo || 'Plantilla'}
                                           </span>
                                           {plantilla?.medicamentos && plantilla.medicamentos.length > 0 && (
-                                            <span className="text-slate-400">
-                                              ({plantilla.medicamentos.length} medicamentos)
+                                            <span className="text-blue-400">
+                                              (💊 {plantilla.medicamentos.length} medicamentos)
                                             </span>
                                           )}
                                         </div>
@@ -2818,9 +2931,9 @@ export default function NomencladorSettingsCard() {
 
                                     <button
                                       type="button"
-                                      onClick={() => handleEliminarReglaCirujano(r.prestador_id, r.tipo_fase)}
-                                      className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg transition shrink-0"
-                                      title="Eliminar excepción"
+                                      onClick={() => handleEliminarReglaCirujano(r.prestador_id, r.tipo_fase, r.plantilla_indicacion_id)}
+                                      className="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 rounded-lg transition shrink-0"
+                                      title="Quitar módulo de este cirujano"
                                     >
                                       <Trash2 size={14} />
                                     </button>

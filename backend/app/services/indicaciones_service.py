@@ -187,74 +187,131 @@ def resolver_plantilla_sugerida(
         activas_rel = [r for r in indicaciones_rel if r.get("activo") and r.get("plantillas_indicaciones_crm")]
 
         # =========================================================================
-        # NIVEL 1: Regla Específica por Cirujano + Fase (Máxima Prioridad)
+        # NIVEL 1: Reglas Específicas por Cirujano + Fase (1 a N Modular - Máxima Prioridad)
         # =========================================================================
         if resolved_prestador_id and fase_norm:
-            for r in activas_rel:
-                r_prest_id = str(r.get("prestador_id") or "")
-                r_fase = str(r.get("tipo_fase") or "").strip().lower()
-                if r_prest_id == str(resolved_prestador_id) and r_fase == fase_norm:
-                    p = r["plantillas_indicaciones_crm"]
-                    med_nombre_display = r.get("prestadores", {}).get("nombre_apellido") if r.get("prestadores") else (cirujano_obj.get("nombre_apellido") if cirujano_obj else "Cirujano")
+            cirujano_fase_rel = [
+                r for r in activas_rel
+                if str(r.get("prestador_id") or "") == str(resolved_prestador_id)
+                and str(r.get("tipo_fase") or "").strip().lower() == fase_norm
+            ]
+            if cirujano_fase_rel:
+                plantillas_crm_lista = [r["plantillas_indicaciones_crm"] for r in cirujano_fase_rel if r["plantillas_indicaciones_crm"].get("activo")]
+                if plantillas_crm_lista:
+                    todos_meds = []
+                    for p in plantillas_crm_lista:
+                        for m in (p.get("medicamentos") or []):
+                            if not any(x.get("droga") == m.get("droga") for x in todos_meds):
+                                todos_meds.append(m)
+
+                    titulos = [p.get("titulo", "") for p in plantillas_crm_lista]
+                    textos = [p.get("cuerpo_indicaciones", "") for p in plantillas_crm_lista if p.get("cuerpo_indicaciones")]
+                    cuidados = [p.get("cuidados_generales", "") for p in plantillas_crm_lista if p.get("cuidados_generales")]
+                    alarmas = [p.get("pautas_alarma", "") for p in plantillas_crm_lista if p.get("pautas_alarma")]
+
+                    med_nombre_display = (
+                        cirujano_fase_rel[0].get("prestadores", {}).get("nombre_apellido")
+                        if cirujano_fase_rel[0].get("prestadores")
+                        else (cirujano_obj.get("nombre_apellido") if cirujano_obj else "Cirujano")
+                    )
+
                     plantilla_seleccionada = {
-                        "crm_plantilla_id": p.get("id"),
-                        "titulo": p.get("titulo"),
-                        "texto_indicaciones": p.get("cuerpo_indicaciones"),
-                        "medicamentos": p.get("medicamentos") or [],
-                        "cuidados_generales": p.get("cuidados_generales"),
-                        "pautas_alarma": p.get("pautas_alarma"),
-                        "config_diseno": p.get("config_diseno") or {},
+                        "crm_plantilla_id": plantillas_crm_lista[0].get("id"),
+                        "titulo": " + ".join(titulos),
+                        "texto_indicaciones": "\n\n---\n\n".join(textos),
+                        "medicamentos": todos_meds,
+                        "cuidados_generales": "\n".join(cuidados),
+                        "pautas_alarma": "\n".join(alarmas),
+                        "config_diseno": plantillas_crm_lista[0].get("config_diseno") or {},
+                        "modulos_asignados": plantillas_crm_lista,
+                        "total_modulos": len(plantillas_crm_lista),
                         "origen": "regla_cirujano_fase",
                         "cirujano_nombre": med_nombre_display,
-                        "tipo_fase": r_fase
+                        "tipo_fase": fase_norm
                     }
                     origen = "regla_cirujano_fase"
-                    break
 
         # =========================================================================
-        # NIVEL 2: Regla Específica por Cirujano (sin restricción estricta de fase)
+        # NIVEL 2: Reglas Específicas por Cirujano (sin restricción de fase)
         # =========================================================================
         if not plantilla_seleccionada and resolved_prestador_id:
-            for r in activas_rel:
-                r_prest_id = str(r.get("prestador_id") or "")
-                if r_prest_id == str(resolved_prestador_id):
-                    p = r["plantillas_indicaciones_crm"]
-                    med_nombre_display = r.get("prestadores", {}).get("nombre_apellido") if r.get("prestadores") else (cirujano_obj.get("nombre_apellido") if cirujano_obj else "Cirujano")
+            cirujano_all_rel = [
+                r for r in activas_rel
+                if str(r.get("prestador_id") or "") == str(resolved_prestador_id)
+            ]
+            if cirujano_all_rel:
+                plantillas_crm_lista = [r["plantillas_indicaciones_crm"] for r in cirujano_all_rel if r["plantillas_indicaciones_crm"].get("activo")]
+                if plantillas_crm_lista:
+                    todos_meds = []
+                    for p in plantillas_crm_lista:
+                        for m in (p.get("medicamentos") or []):
+                            if not any(x.get("droga") == m.get("droga") for x in todos_meds):
+                                todos_meds.append(m)
+
+                    titulos = [p.get("titulo", "") for p in plantillas_crm_lista]
+                    textos = [p.get("cuerpo_indicaciones", "") for p in plantillas_crm_lista if p.get("cuerpo_indicaciones")]
+                    cuidados = [p.get("cuidados_generales", "") for p in plantillas_crm_lista if p.get("cuidados_generales")]
+                    alarmas = [p.get("pautas_alarma", "") for p in plantillas_crm_lista if p.get("pautas_alarma")]
+
+                    med_nombre_display = (
+                        cirujano_all_rel[0].get("prestadores", {}).get("nombre_apellido")
+                        if cirujano_all_rel[0].get("prestadores")
+                        else (cirujano_obj.get("nombre_apellido") if cirujano_obj else "Cirujano")
+                    )
+
                     plantilla_seleccionada = {
-                        "crm_plantilla_id": p.get("id"),
-                        "titulo": p.get("titulo"),
-                        "texto_indicaciones": p.get("cuerpo_indicaciones"),
-                        "medicamentos": p.get("medicamentos") or [],
-                        "cuidados_generales": p.get("cuidados_generales"),
-                        "pautas_alarma": p.get("pautas_alarma"),
-                        "config_diseno": p.get("config_diseno") or {},
+                        "crm_plantilla_id": plantillas_crm_lista[0].get("id"),
+                        "titulo": " + ".join(titulos),
+                        "texto_indicaciones": "\n\n---\n\n".join(textos),
+                        "medicamentos": todos_meds,
+                        "cuidados_generales": "\n".join(cuidados),
+                        "pautas_alarma": "\n".join(alarmas),
+                        "config_diseno": plantillas_crm_lista[0].get("config_diseno") or {},
+                        "modulos_asignados": plantillas_crm_lista,
+                        "total_modulos": len(plantillas_crm_lista),
                         "origen": "regla_cirujano",
                         "cirujano_nombre": med_nombre_display,
-                        "tipo_fase": r.get("tipo_fase")
+                        "tipo_fase": cirujano_all_rel[0].get("tipo_fase")
                     }
                     origen = "regla_cirujano"
-                    break
 
         # =========================================================================
-        # NIVEL 3: Protocolo Institucional Base para la Fase solicitada
+        # NIVEL 3: Protocolos Institucionales Base para la Fase solicitada (1 a N Modular)
         # =========================================================================
         if not plantilla_seleccionada and fase_norm:
-            for r in activas_rel:
-                if not r.get("prestador_id") and str(r.get("tipo_fase") or "").strip().lower() == fase_norm:
-                    p = r["plantillas_indicaciones_crm"]
+            inst_fase_rel = [
+                r for r in activas_rel
+                if not r.get("prestador_id")
+                and str(r.get("tipo_fase") or "").strip().lower() == fase_norm
+            ]
+            if inst_fase_rel:
+                plantillas_crm_lista = [r["plantillas_indicaciones_crm"] for r in inst_fase_rel if r["plantillas_indicaciones_crm"].get("activo")]
+                if plantillas_crm_lista:
+                    todos_meds = []
+                    for p in plantillas_crm_lista:
+                        for m in (p.get("medicamentos") or []):
+                            if not any(x.get("droga") == m.get("droga") for x in todos_meds):
+                                todos_meds.append(m)
+
+                    titulos = [p.get("titulo", "") for p in plantillas_crm_lista]
+                    textos = [p.get("cuerpo_indicaciones", "") for p in plantillas_crm_lista if p.get("cuerpo_indicaciones")]
+                    cuidados = [p.get("cuidados_generales", "") for p in plantillas_crm_lista if p.get("cuidados_generales")]
+                    alarmas = [p.get("pautas_alarma", "") for p in plantillas_crm_lista if p.get("pautas_alarma")]
+
                     plantilla_seleccionada = {
-                        "crm_plantilla_id": p.get("id"),
-                        "titulo": p.get("titulo"),
-                        "texto_indicaciones": p.get("cuerpo_indicaciones"),
-                        "medicamentos": p.get("medicamentos") or [],
-                        "cuidados_generales": p.get("cuidados_generales"),
-                        "pautas_alarma": p.get("pautas_alarma"),
-                        "config_diseno": p.get("config_diseno") or {},
+                        "crm_plantilla_id": plantillas_crm_lista[0].get("id"),
+                        "titulo": " + ".join(titulos),
+                        "texto_indicaciones": "\n\n---\n\n".join(textos),
+                        "medicamentos": todos_meds,
+                        "cuidados_generales": "\n".join(cuidados),
+                        "pautas_alarma": "\n".join(alarmas),
+                        "config_diseno": plantillas_crm_lista[0].get("config_diseno") or {},
+                        "modulos_asignados": plantillas_crm_lista,
+                        "total_modulos": len(plantillas_crm_lista),
                         "origen": "institucional_practica_fase",
                         "tipo_fase": fase_norm
                     }
                     origen = "institucional_practica_fase"
-                    break
 
         # =========================================================================
         # NIVEL 4: Protocolos Institucionales Generales (1 a N modulares)

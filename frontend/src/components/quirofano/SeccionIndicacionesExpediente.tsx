@@ -1033,12 +1033,15 @@ export default function SeccionIndicacionesExpediente({
                 <select
                   value={currentSelectValue}
                   onChange={(e) => handleSelectPlantilla(e.target.value)}
-                  className="flex-1 p-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-medium text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 p-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-100 dark:bg-slate-900 dark:text-slate-100 font-medium text-xs outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {plantillaSeleccionada?.origen === 'nomenclador_modular_1_a_n' && (
-                    <optgroup label="⚡ Nomenclador (Protocolo Asignado a esta Práctica)">
-                      <option value="nomenclador">
-                        ✓ {plantillaSeleccionada.titulo} ({plantillaSeleccionada.total_modulos || 1} protocolos activos)
+                  {(plantillaSeleccionada?.origen === 'nomenclador_modular_1_a_n' ||
+                    plantillaSeleccionada?.origen === 'regla_cirujano_fase' ||
+                    plantillaSeleccionada?.origen === 'institucional_practica_fase' ||
+                    plantillaSeleccionada?.origen === 'regla_cirujano') && (
+                    <optgroup label="⚡ Nomenclador (Protocolo Clínico Asignado)" className="bg-slate-900 text-slate-300 font-bold">
+                      <option value="nomenclador" className="bg-slate-900 text-slate-100 py-1">
+                        ✓ {plantillaSeleccionada.titulo} ({plantillaSeleccionada.total_modulos || 1} {(plantillaSeleccionada.total_modulos || 1) === 1 ? 'módulo activo' : 'módulos activos'})
                       </option>
                     </optgroup>
                   )}
