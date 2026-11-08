@@ -166,7 +166,7 @@ export default function CasoFichaResumen({
               </div>
               <div className="text-xs font-mono font-bold text-white mt-1">
                 {Number(caso.monto_extra || 0) > 0 ? (
-                  caso.moneda_extra === 'USD' ? (
+                  (caso.moneda_extra === 'USD' && Number(caso.monto_extra) <= 15000) ? (
                     <span className="text-amber-400">USD {Number(caso.monto_extra).toLocaleString('es-AR')}</span>
                   ) : (
                     <span className="text-emerald-400">${Number(caso.monto_extra).toLocaleString('es-AR')} ARS</span>

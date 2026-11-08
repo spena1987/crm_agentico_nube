@@ -113,7 +113,10 @@ def obtener_resumen_gerencial(dias: int = 30, fecha_inicio: Optional[str] = None
         rechazados = [p for p in presupuestos if p.get("estado") == "rechazado"]
         pendientes = [p for p in presupuestos if p.get("estado") in ("borrador", "enviado")]
 
-        total_facturado_ars = sum(float(p.get("total_ars") or p.get("total") or 0) for p in aprobados)
+        total_facturado_ars = sum(
+            float(p.get("total_ars") if p.get("total_ars") is not None else (0 if float(p.get("total_usd") or 0) > 0 else (p.get("total") or 0))) or 0
+            for p in aprobados
+        )
         total_facturado_usd = sum(float(p.get("total_usd") or 0) for p in aprobados)
 
         tasa_conversion_presupuestos = round((len(aprobados) / total_emitidos * 100), 1) if total_emitidos > 0 else 0
@@ -127,17 +130,28 @@ def obtener_resumen_gerencial(dias: int = 30, fecha_inicio: Optional[str] = None
                 tendencia_map[c_date]["emitidos"] += 1
                 if p.get("estado") in ("aprobado", "operado"):
                     tendencia_map[c_date]["aprobados"] += 1
-                    tendencia_map[c_date]["monto_ars"] += float(p.get("total_ars") or p.get("total") or 0)
+                    m_ars = float(p.get("total_ars") if p.get("total_ars") is not None else (0 if float(p.get("total_usd") or 0) > 0 else (p.get("total") or 0))) or 0
+                    tendencia_map[c_date]["monto_ars"] += m_ars
 
         tendencia_list = sorted(tendencia_map.values(), key=lambda x: x["fecha"])
 
         # 2. Asesorías Quirúrgicas y Pipeline
         casos_res = supabase.table("asesorias_quirurgicas")\
-            .select("id, estado, monto_extra, moneda_extra, practica_nombre, medico_cirujano_nombre, created_at, ultimo_contacto_at, proxima_accion_fecha")\
+            .select("id, estado, monto_extra, moneda_extra, practica_nombre, medico_cirujano_nombre, created_at, ultimo_contacto_at, proxima_accion_fecha, presupuesto_id")\
             .gte("created_at", iso_inicio)\
             .lte("created_at", iso_fin)\
             .execute()
         casos = casos_res.data or []
+
+        # Precargar presupuestos vinculados para resolver montos bimonetarios con exactitud
+        p_ids = list({c["presupuesto_id"] for c in casos if c.get("presupuesto_id")})
+        pres_map = {}
+        if p_ids:
+            for i in range(0, len(p_ids), 100):
+                chunk = p_ids[i:i+100]
+                p_res = supabase.table("presupuestos").select("id, total, total_ars, total_usd, estado").in_("id", chunk).execute()
+                for p_item in (p_res.data or []):
+                    pres_map[p_item["id"]] = p_item
 
         etapas_conteo = defaultdict(int)
         etapas_monto_ars = defaultdict(float)
@@ -148,14 +162,36 @@ def obtener_resumen_gerencial(dias: int = 30, fecha_inicio: Optional[str] = None
 
         for c in casos:
             est = c.get("estado") or "derivado"
-            monto = float(c.get("monto_extra") or 0)
-            moneda = (c.get("moneda_extra") or "ARS").upper()
-            
             etapas_conteo[est] += 1
-            if moneda == "USD":
-                etapas_monto_usd[est] += monto
+
+            # Resolución robusta de montos multimoneda (priorizando presupuesto oficial vinculado)
+            p_vinc = pres_map.get(c.get("presupuesto_id"))
+            if p_vinc:
+                c_ars = float(p_vinc.get("total_ars") or 0)
+                c_usd = float(p_vinc.get("total_usd") or 0)
+                if c_ars == 0 and c_usd == 0:
+                    tot = float(p_vinc.get("total") or 0)
+                    if (c.get("moneda_extra") or "ARS").upper() == "USD" and tot <= 15000:
+                        c_usd = tot
+                    else:
+                        c_ars = tot
             else:
-                etapas_monto_ars[est] += monto
+                raw_monto = float(c.get("monto_extra") or 0)
+                raw_mon = (c.get("moneda_extra") or "ARS").upper()
+                if raw_mon == "USD":
+                    # Sanidad: si un monto marcado como USD supera 15.000, es ARS mal etiquetado
+                    if raw_monto <= 15000:
+                        c_usd = raw_monto
+                        c_ars = 0.0
+                    else:
+                        c_ars = raw_monto
+                        c_usd = 0.0
+                else:
+                    c_ars = raw_monto
+                    c_usd = 0.0
+
+            etapas_monto_ars[est] += c_ars
+            etapas_monto_usd[est] += c_usd
 
             # Control SLA (>3 días sin contacto en etapas activas)
             if est in ("derivado", "en_asesoramiento", "en_analisis", "confirmado", "programado"):
@@ -166,10 +202,8 @@ def obtener_resumen_gerencial(dias: int = 30, fecha_inicio: Optional[str] = None
                         dias_sin_contacto = (datetime.now(timezone.utc) - f_dt).days
                         if dias_sin_contacto >= 3:
                             casos_riesgo_count += 1
-                            if moneda == "USD":
-                                capital_riesgo_usd += monto
-                            else:
-                                capital_riesgo_ars += monto
+                            capital_riesgo_ars += c_ars
+                            capital_riesgo_usd += c_usd
                     except Exception:
                         pass
 
@@ -727,11 +761,20 @@ def obtener_metricas_modulo(modulo: str, dias: int = 30, fecha_inicio: Optional[
         if modulo == "asesoramiento":
             # Embudo Lead-to-Surgery, tiempos en etapa y ranking por cirujano
             casos_res = supabase.table("asesorias_quirurgicas")\
-                .select("id, estado, monto_extra, moneda_extra, practica_nombre, medico_cirujano_nombre, created_at, ultimo_contacto_at")\
+                .select("id, estado, monto_extra, moneda_extra, practica_nombre, medico_cirujano_nombre, created_at, ultimo_contacto_at, presupuesto_id")\
                 .gte("created_at", iso_inicio)\
                 .lte("created_at", iso_fin)\
                 .execute()
             casos = casos_res.data or []
+
+            p_ids = list({c["presupuesto_id"] for c in casos if c.get("presupuesto_id")})
+            pres_map = {}
+            if p_ids:
+                for i in range(0, len(p_ids), 100):
+                    chunk = p_ids[i:i+100]
+                    p_res = supabase.table("presupuestos").select("id, total, total_ars, total_usd, estado").in_("id", chunk).execute()
+                    for p_item in (p_res.data or []):
+                        pres_map[p_item["id"]] = p_item
 
             etapas = ["derivado", "en_asesoramiento", "en_analisis", "confirmado", "programado", "operado", "cancelado"]
             funnel_datos = {e: {"conteo": 0, "monto_ars": 0.0, "monto_usd": 0.0} for e in etapas}
@@ -742,21 +785,39 @@ def obtener_metricas_modulo(modulo: str, dias: int = 30, fecha_inicio: Optional[
                 est = c.get("estado") or "derivado"
                 if est not in funnel_datos:
                     funnel_datos[est] = {"conteo": 0, "monto_ars": 0.0, "monto_usd": 0.0}
-                monto = float(c.get("monto_extra") or 0)
-                moneda = (c.get("moneda_extra") or "ARS").upper()
+
+                p_vinc = pres_map.get(c.get("presupuesto_id"))
+                if p_vinc:
+                    c_ars = float(p_vinc.get("total_ars") or 0)
+                    c_usd = float(p_vinc.get("total_usd") or 0)
+                    if c_ars == 0 and c_usd == 0:
+                        tot = float(p_vinc.get("total") or 0)
+                        if (c.get("moneda_extra") or "ARS").upper() == "USD" and tot <= 15000:
+                            c_usd = tot
+                        else:
+                            c_ars = tot
+                else:
+                    raw_monto = float(c.get("monto_extra") or 0)
+                    raw_mon = (c.get("moneda_extra") or "ARS").upper()
+                    if raw_mon == "USD":
+                        if raw_monto <= 15000:
+                            c_usd = raw_monto
+                            c_ars = 0.0
+                        else:
+                            c_ars = raw_monto
+                            c_usd = 0.0
+                    else:
+                        c_ars = raw_monto
+                        c_usd = 0.0
 
                 funnel_datos[est]["conteo"] += 1
-                if moneda == "USD":
-                    funnel_datos[est]["monto_usd"] += monto
-                else:
-                    funnel_datos[est]["monto_ars"] += monto
+                funnel_datos[est]["monto_usd"] += c_usd
+                funnel_datos[est]["monto_ars"] += c_ars
 
                 cir = c.get("medico_cirujano_nombre") or "Sin Asignar"
                 cirujanos_volumen[cir]["casos"] += 1
-                if moneda == "USD":
-                    cirujanos_volumen[cir]["monto_usd"] += monto
-                else:
-                    cirujanos_volumen[cir]["monto_ars"] += monto
+                cirujanos_volumen[cir]["monto_usd"] += c_usd
+                cirujanos_volumen[cir]["monto_ars"] += c_ars
 
                 prac = c.get("practica_nombre") or "Consulta General"
                 practicas_demanda[prac] += 1

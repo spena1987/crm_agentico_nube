@@ -1712,7 +1712,7 @@ export default function PipelineQuirurgicoPage() {
                               {/* Monto de la Cirugía */}
                               <span className="text-[11px] font-mono font-bold truncate">
                                 {Number(caso.monto_extra || 0) > 0 ? (
-                                  caso.moneda_extra === 'USD' ? (
+                                  (caso.moneda_extra === 'USD' && Number(caso.monto_extra) <= 15000) ? (
                                     <span className="text-amber-400">USD {Number(caso.monto_extra).toLocaleString('es-AR')}</span>
                                   ) : (
                                     <span className="text-emerald-400">${Number(caso.monto_extra).toLocaleString('es-AR')} ARS</span>

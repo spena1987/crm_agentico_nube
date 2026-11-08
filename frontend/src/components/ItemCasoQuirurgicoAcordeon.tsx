@@ -462,7 +462,8 @@ export default function ItemCasoQuirurgicoAcordeon({
       if (nom && nom !== 'Prestación médica') nomPrac = nom
     }
 
-    const moneda = (nuevoPresupuesto.total_usd && nuevoPresupuesto.total_usd > 0) ? 'USD' : 'ARS'
+    const tieneArs = Number(nuevoPresupuesto.total_ars || 0) > 0
+    const moneda = (Number(nuevoPresupuesto.total_usd || 0) > 0 && !tieneArs) ? 'USD' : 'ARS'
     const monto = moneda === 'USD' ? Number(nuevoPresupuesto.total_usd) : Number(nuevoPresupuesto.total_ars || nuevoPresupuesto.total || 0)
 
     const payloadActualizacion: Partial<AsesoriaQuirurgica> = {
@@ -496,7 +497,8 @@ export default function ItemCasoQuirurgicoAcordeon({
     )
 
     if (caso.presupuesto_id === presActualizado.id) {
-      const moneda = presActualizado.total_usd && Number(presActualizado.total_usd) > 0 ? 'USD' : 'ARS'
+      const tieneArs = Number(presActualizado.total_ars || 0) > 0
+      const moneda = (Number(presActualizado.total_usd || 0) > 0 && !tieneArs) ? 'USD' : 'ARS'
       const monto = moneda === 'USD' ? Number(presActualizado.total_usd) : Number(presActualizado.total_ars || presActualizado.total || 0)
       await handleGuardarCambios({
         monto_extra: monto,

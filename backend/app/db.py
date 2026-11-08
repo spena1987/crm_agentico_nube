@@ -4996,10 +4996,12 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
                 except Exception:
                     pass
 
+            moneda_as = "USD" if (total_usd > 0 and total_ars == 0) else "ARS"
+            monto_as = total_usd if moneda_as == "USD" else (total_ars if total_ars > 0 else total_escalar)
             upd_as = {
                 "presupuesto_id": presupuesto_id,
-                "monto_extra": total_escalar,
-                "moneda_extra": "USD" if total_usd > 0 else "ARS",
+                "monto_extra": monto_as,
+                "moneda_extra": moneda_as,
                 "updated_at": "now()"
             }
             # Solo si el caso estaba en etapas iniciales se pasa a en_analisis, preservando estados avanzados
@@ -5208,10 +5210,12 @@ def actualizar_presupuesto_rapido(presupuesto_id: str, payload: dict) -> Dict[st
         # 8. Sincronizar montos en la asesoría vinculada si correspondía
         if asesoria_id:
             try:
+                moneda_as = "USD" if (total_usd > 0 and total_ars == 0) else "ARS"
+                monto_as = total_usd if moneda_as == "USD" else (total_ars if total_ars > 0 else total_escalar)
                 supabase.table("asesorias_quirurgicas") \
                     .update({
-                        "monto_extra": total_escalar,
-                        "moneda_extra": "USD" if total_usd > 0 else "ARS",
+                        "monto_extra": monto_as,
+                        "moneda_extra": moneda_as,
                         "updated_at": "now()"
                     }) \
                     .eq("id", asesoria_id) \
@@ -5776,7 +5780,7 @@ def enviar_presupuesto_por_whatsapp(
             .update({
                 "estado": "en_analisis",
                 "presupuesto_id": presupuesto_id,
-                "monto_extra": float(presupuesto.get("total") or 0.0),
+                "monto_extra": float(presupuesto.get("total_ars") or 0.0) if float(presupuesto.get("total_ars") or 0.0) > 0 else float(presupuesto.get("total_usd") or presupuesto.get("total") or 0.0),
                 "moneda_extra": "USD" if float(presupuesto.get("total_usd") or 0.0) > 0 and float(presupuesto.get("total_ars") or 0.0) == 0 else "ARS",
                 "ultimo_contacto_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": "now()"

@@ -193,9 +193,14 @@ export default function Dashboard() {
     const desglosePorCirujano: Record<string, { casos: number; montoARS: number; montoUSD: number }> = {}
 
     casosFiltrados.forEach((c) => {
-      const monto = Number(c.monto_extra || 0)
-      const monedaStr = (c.moneda_extra || 'ARS').toUpperCase()
+      let monto = Number(c.monto_extra || 0)
+      let monedaStr = (c.moneda_extra || 'ARS').toUpperCase()
       const estado = c.estado || 'derivado'
+
+      // Sanidad financiera: ningún procedimiento oftalmológico supera USD 15.000; si es mayor, es ARS
+      if (monedaStr === 'USD' && monto > 15000) {
+        monedaStr = 'ARS'
+      }
 
       if (!desglosePorEtapa[estado]) {
         desglosePorEtapa[estado] = { casos: 0, montoARS: 0, montoUSD: 0 }

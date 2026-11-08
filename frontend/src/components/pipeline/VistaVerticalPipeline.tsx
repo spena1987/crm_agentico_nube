@@ -486,7 +486,7 @@ export default function VistaVerticalPipeline({
                                 Presupuesto:
                               </span>
                               {Number(caso.monto_extra || 0) > 0 ? (
-                                caso.moneda_extra === 'USD' ? (
+                                (caso.moneda_extra === 'USD' && Number(caso.monto_extra) <= 15000) ? (
                                   <span className="text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/30 truncate">
                                     USD {Number(caso.monto_extra).toLocaleString('es-AR')}
                                   </span>
