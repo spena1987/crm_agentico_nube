@@ -31,6 +31,8 @@ import {
 import TurneroGrid from '@/components/quirofano/TurneroGrid'
 import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
 import ModalCartelesPechoA4 from '@/components/quirofano/modal/ModalCartelesPechoA4'
+import ModalEnvioAgendasPrestadores from '@/components/quirofano/ModalEnvioAgendasPrestadores'
+import { AlertTriangle } from 'lucide-react'
 import { Printer } from 'lucide-react'
 import PizarraQuirofanoEnVivo from '@/components/quirofano/PizarraQuirofanoEnVivo'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
@@ -104,6 +106,34 @@ function ProgramacionQuirurgicaContent() {
   const [drawerCasosAbierto, setDrawerCasosAbierto] = useState(false)
   const [mostrarDiasInhabiles, setMostrarDiasInhabiles] = useState(false)
   const [mostrarModalCartelesA4, setMostrarModalCartelesA4] = useState(false)
+  const [mostrarModalAgendasWA, setMostrarModalAgendasWA] = useState(false)
+  const [destinatariosWarning, setDestinatariosWarning] = useState<{ sinTelefono: number; derivadoresNoResolubles: number } | null>(null)
+
+
+  // Verificación de destinatarios para alerta visual preventiva
+  useEffect(() => {
+    let isMounted = true
+    async function checkDestinatarios() {
+      try {
+        const res = await apiFetch(`/api/turnos-quirofano/notificaciones-prestadores/destinatarios-status?fecha=${fechaSeleccionada}`)
+        if (isMounted && res.ok) {
+          const data = await res.json()
+          if (data && (data.sin_telefono > 0 || data.derivadores_no_resolubles > 0)) {
+            setDestinatariosWarning({
+              sinTelefono: data.sin_telefono,
+              derivadoresNoResolubles: data.derivadores_no_resolubles
+            })
+          } else {
+            setDestinatariosWarning(null)
+          }
+        }
+      } catch (e) {
+        // Silencioso si falla
+      }
+    }
+    checkDestinatarios()
+    return () => { isMounted = false }
+  }, [fechaSeleccionada, actualizandoTurnos])
 
   // Quirófano actualmente activo y sus días operativos
   const quirofanoActual = quirofanos.find((q) => q.id === quirofanoSeleccionadoId) || quirofanos[0]
@@ -447,6 +477,18 @@ function ProgramacionQuirurgicaContent() {
               </button>
 
               <button
+                onClick={() => setMostrarModalAgendasWA(true)}
+                className="px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-300 dark:border-sky-800 shadow-sm hover:bg-sky-100 transition-all"
+                title="Enviar agendas quirúrgicas en PDF por WhatsApp a los prestadores"
+              >
+                <Send size={14} className="text-sky-600 dark:text-sky-400" />
+                <span className="hidden sm:inline">Agendas WA</span>
+                {destinatariosWarning && (
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                )}
+              </button>
+
+              <button
                 onClick={refrescarTodo}
                 disabled={actualizandoTurnos || cargandoInicial || cargandoCasos}
                 className="p-2 rounded-xl border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-[var(--foreground)] transition-all"
@@ -499,6 +541,28 @@ function ProgramacionQuirurgicaContent() {
           )}
         </div>
       </div>
+
+      {/* Alerta Preventiva de Notificaciones a Prestadores */}
+      {destinatariosWarning && vistaPrincipal === 'agenda' && (
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3 text-amber-200 text-xs animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <b>Atención Quirófano:</b> Para el día {formatDateArg(fechaSeleccionada)}, hay{' '}
+              {destinatariosWarning.sinTelefono > 0 && <b>{destinatariosWarning.sinTelefono} prestador(es) sin WhatsApp</b>}
+              {destinatariosWarning.sinTelefono > 0 && destinatariosWarning.derivadoresNoResolubles > 0 && ' y '}
+              {destinatariosWarning.derivadoresNoResolubles > 0 && <b>{destinatariosWarning.derivadoresNoResolubles} derivador(es) no asociados</b>}.
+              No recibirán su cronograma automático.
+            </span>
+          </div>
+          <button
+            onClick={() => setMostrarModalAgendasWA(true)}
+            className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs border border-amber-500/40 transition shrink-0"
+          >
+            Revisar y Enviar
+          </button>
+        </div>
+      )}
 
       {/* Selector de Quirófano (Pestañas cuando está en Vista Semanal) */}
       {modoVista === 'semana' && (
@@ -805,7 +869,16 @@ function ProgramacionQuirurgicaContent() {
         />
       )}
 
-      {/* Modal Carteles de Pecho A4 */}
+            {/* Modal Enviar Agendas Prestadores */}
+      {mostrarModalAgendasWA && (
+        <ModalEnvioAgendasPrestadores
+          isOpen={mostrarModalAgendasWA}
+          onClose={() => setMostrarModalAgendasWA(false)}
+          fechaInicial={fechaSeleccionada}
+        />
+      )}
+
+{/* Modal Carteles de Pecho A4 */}
       {mostrarModalCartelesA4 && (
         <ModalCartelesPechoA4
           isOpen={mostrarModalCartelesA4}

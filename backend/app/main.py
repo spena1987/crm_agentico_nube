@@ -378,6 +378,39 @@ async def cron_seguimiento_automatico_quirurgico():
         await asyncio.sleep(2 * 3600) # Cada 2 horas
 
 # Ciclo de vida de la aplicación FastAPI
+
+async def cron_notificaciones_agendas_prestadores():
+    """
+    Tarea en segundo plano que comprueba periódicamente (cada 45 segundos)
+    la hora local en Buenos Aires (America/Argentina/Buenos_Aires).
+    Cuando coincide con la hora_corte configurada (predeterminado 19:00 hs),
+    ejecuta el corte diario de agendas quirúrgicas a prestadores de forma idempotente.
+    """
+    from zoneinfo import ZoneInfo
+    tz_ba = ZoneInfo("America/Argentina/Buenos_Aires")
+    ultimo_disparo_fecha = None
+
+    while True:
+        try:
+            from app.db import get_configuracion_notificaciones_prestadores
+            from app.services.notificacion_prestadores_service import NotificacionPrestadoresService
+
+            cfg = get_configuracion_notificaciones_prestadores()
+            if cfg.get("enabled", True):
+                ahora_ba = datetime.now(tz_ba)
+                hora_corte = str(cfg.get("hora_corte", "19:00")).strip()
+                hoy_str = ahora_ba.strftime("%Y-%m-%d")
+                hora_actual_str = ahora_ba.strftime("%H:%M")
+
+                if hora_actual_str == hora_corte and ultimo_disparo_fecha != hoy_str:
+                    logger.info(f"[CronAgendasPrestadores] Disparando corte automático a las {hora_actual_str} ({hoy_str}).")
+                    ultimo_disparo_fecha = hoy_str
+                    await NotificacionPrestadoresService.ejecutar_corte_automatico()
+        except Exception as e:
+            logger.error(f"[CronAgendasPrestadores] Error en ciclo de evaluación: {e}")
+
+        await asyncio.sleep(45)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Iniciando aplicación CRM Médico + WhatsApp Baileys Gateway...")
@@ -385,6 +418,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(cron_limpieza_diaria_media())
     asyncio.create_task(cron_envio_automatico_consentimientos_anticipados())
     asyncio.create_task(cron_seguimiento_automatico_quirurgico())
+    asyncio.create_task(cron_notificaciones_agendas_prestadores())
     try:
         from app.services.optica_vortix_service import cron_automatismos_optica_vortix
         asyncio.create_task(cron_automatismos_optica_vortix())
@@ -437,6 +471,13 @@ app.include_router(whatsapp_cloud_router)
 # Módulo de Estudios Oftalmológicos (Técnicos) y Gestión Multi-Línea de WhatsApp
 from app.services.estudios_tecnicos_service import estudios_router
 app.include_router(estudios_router)
+
+# Módulo de Notificaciones Automatizadas de Agendas Quirúrgicas a Prestadores
+try:
+    from app.routers.notificaciones_prestadores_router import router as notificaciones_prestadores_router
+    app.include_router(notificaciones_prestadores_router)
+except Exception as e:
+    logger.warning(f"Aviso al cargar router de notificaciones prestadores: {e}")
 
 # Módulo Independiente Óptica Vortix (Línea 3 de WhatsApp Cloud API)
 try:

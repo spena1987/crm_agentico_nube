@@ -1835,3 +1835,263 @@ def generar_pdf_parte_quirurgico(turno: dict, paciente: dict) -> str:
     return pdf_filename
 
 
+
+
+import hashlib
+import io
+from reportlab.lib.pagesizes import A4
+
+def enmascarar_dni(dni_val: Any) -> str:
+    """Enmascara el DNI por protección de datos de salud (Ley 25.326), ej: XX.XXX.123"""
+    if not dni_val:
+        return "S/D"
+    s = re.sub(r'\D', '', str(dni_val))
+    if len(s) < 3:
+        return "***"
+    return f"XX.XXX.{s[-3:]}"
+
+def generar_pdf_agenda_prestadores(
+    prestador_info: Dict[str, Any],
+    cirugias_list: List[Dict[str, Any]],
+    fecha_cirugia_str: str,
+    config_override: Optional[Dict[str, Any]] = None
+) -> tuple[bytes, str]:
+    """
+    Genera en memoria un documento PDF A4 formal con la agenda quirúrgica consolidada
+    del prestador para una fecha determinada.
+    Reutiliza membretes, estilos y paletas de colores de Centrovisión.
+    Enmascara DNIs según Ley 25.326 y excluye notas internas no clínicas.
+    Retorna (pdf_bytes, sha256_hash).
+    """
+    settings = config_override or load_settings()
+    nombre_inst = settings.get("nombre_institucion", "Centrovisión - Cirugía Oftalmológica")
+    buffer = io.BytesIO()
+
+    # Márgenes de 24 puntos para optimizar ancho de página
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=24,
+        rightMargin=24,
+        topMargin=24,
+        bottomMargin=24
+    )
+
+    styles = getSampleStyleSheet()
+    style_normal = styles["Normal"]
+
+    style_title = ParagraphStyle(
+        'AgendaTitle',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=15,
+        leading=18,
+        textColor=colors.HexColor('#0F172A')
+    )
+    style_sub = ParagraphStyle(
+        'AgendaSub',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=11,
+        leading=14,
+        textColor=colors.HexColor('#0284C7')
+    )
+    style_doctor = ParagraphStyle(
+        'AgendaDoctor',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=12,
+        leading=15,
+        textColor=colors.HexColor('#1E293B')
+    )
+    style_cell = ParagraphStyle(
+        'AgendaCell',
+        parent=style_normal,
+        fontName='Helvetica',
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#334155')
+    )
+    style_cell_bold = ParagraphStyle(
+        'AgendaCellBold',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#0F172A')
+    )
+    style_header_th = ParagraphStyle(
+        'AgendaTH',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        leading=10,
+        textColor=colors.white,
+        alignment=1
+    )
+    style_badge_cirujano = ParagraphStyle(
+        'BadgeCirujano',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=7,
+        leading=9,
+        textColor=colors.HexColor('#0369A1')
+    )
+    style_badge_derivador = ParagraphStyle(
+        'BadgeDerivador',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=7,
+        leading=9,
+        textColor=colors.HexColor('#7C3AED')
+    )
+
+    story = []
+
+    # 1. Membrete con Logo
+    logo_path = obtener_o_cachear_logo_local()
+    logo_flowable = None
+    if logo_path and os.path.exists(logo_path):
+        try:
+            logo_flowable = RLImage(logo_path, width=120, height=36)
+        except Exception as e:
+            logger.warning(f"No se pudo cargar logo en agenda PDF: {e}")
+
+    header_col_der = [
+        Paragraph(nombre_inst.upper(), style_title),
+        Spacer(1, 2),
+        Paragraph("PARTE DE CIRUGÍAS PROGRAMADAS - CORTE DIARIO", style_sub),
+    ]
+
+    if logo_flowable:
+        t_header = Table([[logo_flowable, header_col_der]], colWidths=[130, 417])
+    else:
+        t_header = Table([[header_col_der]], colWidths=[547])
+
+    t_header.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(t_header)
+    story.append(Spacer(1, 8))
+
+    # 2. Información del Prestador y Fecha
+    medico_nombre = prestador_info.get("nombre", "Prestador Médico")
+    roles_list = prestador_info.get("roles", [])
+    roles_str = " / ".join(roles_list) if roles_list else "Cirujano / Derivador"
+    cant_total = len(cirugias_list)
+
+    info_data = [
+        [
+            Paragraph(f"<b>Destinatario:</b> Dr/a. {medico_nombre} ({roles_str})", style_doctor),
+            Paragraph(f"<b>Fecha Quirúrgica:</b> {fecha_cirugia_str}", style_doctor)
+        ],
+        [
+            Paragraph(f"<b>Total de Pacientes Asignados:</b> {cant_total}", style_cell_bold),
+            Paragraph(f"<b>Emisión:</b> {parsear_fecha_hora_argentina()} hs (UTC-3)", style_cell)
+        ]
+    ]
+    t_info = Table(info_data, colWidths=[330, 217])
+    t_info.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F1F5F9')),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#CBD5E1')),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('LEFTPADDING', (0,0), (-1,-1), 8),
+        ('RIGHTPADDING', (0,0), (-1,-1), 8),
+    ]))
+    story.append(t_info)
+    story.append(Spacer(1, 10))
+
+    # 3. Tabla Cronológica de Cirugías
+    # Ancho total A4 imprimible: 547 pt
+    # ColWidths: Horario (45), Quirófano (55), Paciente & DNI (115), Procedimiento & Ojo (122), Rol (65), Detalles LIO & Notas (145)
+    tabla_rows = [
+        [
+            Paragraph("Hora", style_header_th),
+            Paragraph("Sala", style_header_th),
+            Paragraph("Paciente / DNI", style_header_th),
+            Paragraph("Ojo y Práctica", style_header_th),
+            Paragraph("Rol Médico", style_header_th),
+            Paragraph("LIO / Incisión / Indicaciones", style_header_th),
+        ]
+    ]
+
+    for c in cirugias_list:
+        hora = parsear_hora_argentina(c.get("hora_inicio"), fallback="--:--")
+        quirofano = c.get("quirofano_nombre") or c.get("quirofano") or "Q1"
+        paciente = c.get("paciente_nombre", "Sin Nombre")
+        dni_mask = enmascarar_dni(c.get("paciente_dni") or c.get("dni"))
+        
+        ojo = c.get("ojo", "OD")
+        practica = c.get("practica_nombre") or c.get("practica") or "Cirugía Oftalmológica"
+        
+        rol_turno = c.get("rol_en_turno", "Cirujano Principal")
+        style_rol = style_badge_derivador if "Derivador" in rol_turno else style_badge_cirujano
+
+        # Detalles de Lente Intraocular
+        lio_parts = []
+        if c.get("lente_intraocular") or c.get("lente_modelo"):
+            mod = c.get("lente_modelo") or c.get("lente_marca") or "LIO"
+            diop = f"P: {c.get('lente_dioptria')} D" if c.get("lente_dioptria") else ""
+            toric = f"Tórico: {c.get('lente_toric_val', '')} (Eje {c.get('lente_eje', '')}°)" if c.get("lente_torico") else ""
+            inc = f"Incisión: {c.get('lente_incision_grados')}°" if c.get("lente_incision_grados") else ""
+            detalles_lio = " | ".join(filter(bool, [mod, diop, toric, inc]))
+            lio_parts.append(f"<b>LIO:</b> {detalles_lio}")
+
+        # Observaciones médicas específicas (excluyendo notas de uso interno estricto)
+        obs_med = c.get("observaciones_medicas") or c.get("observaciones_prequirurgicas") or ""
+        if obs_med:
+            lio_parts.append(f"<b>Obs:</b> {obs_med[:140]}")
+
+        lio_text = "<br/>".join(lio_parts) if lio_parts else "<font color='#94A3B8'>Sin LIO / Sin obs especiales</font>"
+
+        row = [
+            Paragraph(f"<b>{hora}</b>", style_cell_bold),
+            Paragraph(quirofano, style_cell),
+            Paragraph(f"<b>{paciente}</b><br/><font color='#64748B'>{dni_mask}</font>", style_cell),
+            Paragraph(f"<b>{ojo}</b> — {practica}", style_cell),
+            Paragraph(f"<b>{rol_turno}</b>", style_rol),
+            Paragraph(lio_text, style_cell)
+        ]
+        tabla_rows.append(row)
+
+    t_cirugias = Table(
+        tabla_rows,
+        colWidths=[45, 55, 115, 122, 65, 145],
+        repeatRows=1
+    )
+    t_cirugias.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0F172A')),
+        ('ALIGN', (0,0), (-1,0), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#F8FAFC')]),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('LEFTPADDING', (0,0), (-1,-1), 4),
+        ('RIGHTPADDING', (0,0), (-1,-1), 4),
+    ]))
+    story.append(t_cirugias)
+    story.append(Spacer(1, 14))
+
+    # 4. Pie de Página Legal y Operativo
+    legal_text = (
+        "<b>CONFIDENCIALIDAD MÉDICA (Ley 25.326):</b> Este documento contiene información médica protegida destinada "
+        "exclusivamente al profesional interviniente. Queda prohibida su reproducción o divulgación a terceros. "
+        "El presente cronograma representa el corte informativo oficial de quirófano. Ante cualquier discrepancia "
+        "o necesidad de coordinación clínica, comuníquese con la guardia de quirófano de Centrovisión."
+    )
+    p_legal = Paragraph(
+        f"<font size=6.5 color='#64748B'>{legal_text}</font>",
+        ParagraphStyle('LegalFoot', parent=style_normal, alignment=4, leading=8)
+    )
+    story.append(KeepTogether([p_legal]))
+
+    # Construcción del documento
+    doc.build(story)
+    pdf_bytes = buffer.getvalue()
+    buffer.close()
+
+    sha256_hash = hashlib.sha256(pdf_bytes).hexdigest()
+    return pdf_bytes, sha256_hash

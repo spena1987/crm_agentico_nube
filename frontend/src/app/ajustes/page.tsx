@@ -32,6 +32,8 @@ import WhatsAppConfigCard from '@/components/settings/WhatsAppConfigCard'
 import WhatsAppTemplatesSettingsCard from '@/components/settings/WhatsAppTemplatesSettingsCard'
 import BotSettingsCard from '@/components/settings/BotSettingsCard'
 import AutomatismosSettingsCard from '@/components/settings/AutomatismosSettingsCard'
+import ConfiguracionNotificacionesCirugiasCard from '@/components/settings/ConfiguracionNotificacionesCirugiasCard'
+
 import ClinicProfileCard from '@/components/settings/ClinicProfileCard'
 import SystemLogsCard from '@/components/settings/SystemLogsCard'
 import NomencladorSettingsCard from '@/components/settings/NomencladorSettingsCard'
@@ -479,7 +481,12 @@ function AjustesContent() {
 
           {/* Componente Activo Renderizado con doble verificación de permisos */}
           <div className="transition-all duration-300">
-            {activeTab === 'automatismos' && isTabAllowed('automatismos') && <AutomatismosSettingsCard />}
+            {activeTab === 'automatismos' && isTabAllowed('automatismos') && (
+              <div className="space-y-6">
+                <AutomatismosSettingsCard />
+                <ConfiguracionNotificacionesCirugiasCard />
+              </div>
+            )}
             {activeTab === 'whatsapp' && isTabAllowed('whatsapp') && <WhatsAppConfigCard />}
             {activeTab === 'plantillas_whatsapp' && isTabAllowed('plantillas_whatsapp') && <WhatsAppTemplatesSettingsCard />}
             {activeTab === 'bot' && isTabAllowed('bot') && <BotSettingsCard />}

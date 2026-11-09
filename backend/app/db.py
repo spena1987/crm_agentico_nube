@@ -10404,3 +10404,114 @@ def registrar_quick_recontacto_asesoria(asesoria_id: str, payload: Dict[str, Any
         raise
 
 
+
+
+# ==============================================================================
+# NOTIFICACIONES AUTOMATIZADAS DE AGENDAS A PRESTADORES
+# ==============================================================================
+
+DEFAULT_NOTIFICACIONES_PRESTADORES_CONFIG = {
+    "enabled": True,
+    "anticipacion_dias_habiles": 2,
+    "hora_corte": "19:00",
+    "timezone": "America/Argentina/Buenos_Aires",
+    "linea_waba": "estudios",
+    "plantilla_nombre": "agenda_quirurgica_prestador",
+    "idioma_plantilla": "es_AR",
+    "incluir_sabados": False
+}
+
+def get_configuracion_notificaciones_prestadores() -> Dict[str, Any]:
+    """
+    Recupera la configuración de notificación de agendas quirúrgicas a prestadores desde configuracion_sistema.
+    """
+    config = dict(DEFAULT_NOTIFICACIONES_PRESTADORES_CONFIG)
+    if not supabase:
+        return config
+    try:
+        resp = supabase.table("configuracion_sistema").select("valor").eq("clave", "notificaciones_cirugias_prestadores").limit(1).execute()
+        if resp.data and len(resp.data) > 0 and resp.data[0].get("valor"):
+            stored = resp.data[0]["valor"]
+            if isinstance(stored, dict):
+                config.update(stored)
+        return config
+    except Exception as e:
+        logger.error(f"Error al obtener configuracion_notificaciones_prestadores: {e}")
+        return config
+
+def update_configuracion_notificaciones_prestadores(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Actualiza la configuración de notificación de agendas quirúrgicas a prestadores.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    try:
+        actual = get_configuracion_notificaciones_prestadores()
+        for k in DEFAULT_NOTIFICACIONES_PRESTADORES_CONFIG.keys():
+            if k in payload:
+                actual[k] = payload[k]
+
+        supabase.table("configuracion_sistema").upsert({
+            "clave": "notificaciones_cirugias_prestadores",
+            "valor": actual,
+            "updated_at": "now()"
+        }, on_conflict="clave").execute()
+
+        return actual
+    except Exception as e:
+        logger.error(f"Error al actualizar configuracion_notificaciones_prestadores: {e}")
+        raise
+
+def registrar_log_notificacion_prestador(datos: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Registra un intento de notificación (exitoso o fallido) en notificaciones_prestadores_logs.
+    """
+    if not supabase:
+        return {}
+    try:
+        resp = supabase.table("notificaciones_prestadores_logs").insert(datos).execute()
+        return resp.data[0] if resp.data else datos
+    except Exception as e:
+        logger.error(f"Error al registrar log de notificación de prestador: {e}")
+        return datos
+
+def obtener_logs_notificaciones_prestadores(
+    fecha_cirugia: Optional[str] = None,
+    fecha_corte: Optional[str] = None,
+    limit: int = 50
+) -> List[Dict[str, Any]]:
+    """
+    Consulta los logs de notificación de agendas quirúrgicas ordenados descendentemente.
+    """
+    if not supabase:
+        return []
+    try:
+        query = supabase.table("notificaciones_prestadores_logs").select("*").order("created_at", desc=True).limit(limit)
+        if fecha_cirugia:
+            query = query.eq("fecha_cirugia", fecha_cirugia)
+        if fecha_corte:
+            query = query.eq("fecha_corte", fecha_corte)
+        resp = query.execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener logs de notificaciones de prestadores: {e}")
+        return []
+
+def verificar_envio_previo_prestador(fecha_cirugia: str, fecha_corte: str, prestador_id: str) -> bool:
+    """
+    Verifica si ya existe un envío exitoso previo para la misma fecha_cirugia, fecha_corte y prestador_id.
+    """
+    if not supabase:
+        return False
+    try:
+        resp = supabase.table("notificaciones_prestadores_logs").select("id")\
+            .eq("fecha_cirugia", fecha_cirugia)\
+            .eq("fecha_corte", fecha_corte)\
+            .eq("prestador_id", prestador_id)\
+            .eq("estado", "ENVIADO")\
+            .limit(1)\
+            .execute()
+        return bool(resp.data and len(resp.data) > 0)
+    except Exception as e:
+        logger.warning(f"Error al verificar envío previo para prestador {prestador_id}: {e}")
+        return False

@@ -66,6 +66,7 @@ import { formatearHoraDesdeIso, calcularMinutosTranscurridos, formatearHoraConFe
 import ModalDetalleCirugiaEnVivo from './ModalDetalleCirugiaEnVivo'
 import ModalPausaQuirurgicaOms from './modal/ModalPausaQuirurgicaOms'
 import ModalCartelesPechoA4 from './modal/ModalCartelesPechoA4'
+import ModalEnvioAgendasPrestadores from './ModalEnvioAgendasPrestadores'
 
 interface PizarraQuirofanoEnVivoProps {
   onEditarTurno?: (turno: any) => void
@@ -123,6 +124,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [consentimientoModalTurno, setConsentimientoModalTurno] = useState<any | null>(null)
   const [indicacionesModalTurno, setIndicacionesModalTurno] = useState<any | null>(null)
   const [mostrarModalCartelesA4, setMostrarModalCartelesA4] = useState<boolean>(false)
+  const [mostrarModalAgendasWA, setMostrarModalAgendasWA] = useState<boolean>(false)
   const [turnoParaCartel, setTurnoParaCartel] = useState<string | null>(null)
 
   // Cargar preferencia de modo oscuro clínico y listener de fullscreen
@@ -979,6 +981,16 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               className={`w-2 h-2 rounded-full ${estaEscaneando ? 'bg-emerald-400 scale-125' : 'bg-emerald-500 animate-pulse'}`}
               title="Escáner listo y escuchando ráfagas"
             />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMostrarModalAgendasWA(true)}
+            className="px-3 py-2 bg-sky-500/10 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300 rounded-xl border border-sky-500/30 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
+            title="Enviar agendas quirúrgicas en PDF por WhatsApp a los prestadores"
+          >
+            <Send size={15} />
+            <span className="hidden sm:inline">Agendas WA</span>
           </button>
 
           <button
@@ -2089,6 +2101,15 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODAL DE ENVÍO DE AGENDAS A PRESTADORES VÍA WHATSAPP */}
+      {mostrarModalAgendasWA && (
+        <ModalEnvioAgendasPrestadores
+          isOpen={mostrarModalAgendasWA}
+          onClose={() => setMostrarModalAgendasWA(false)}
+          fechaInicial={fecha}
+        />
       )}
 
       {/* 8. MODAL DE IMPRESIÓN DE CARTELES AUTOADHESIVOS DE PECHO A4 */}
