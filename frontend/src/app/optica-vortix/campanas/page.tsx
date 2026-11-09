@@ -19,6 +19,7 @@ import {
   Calendar,
   Filter,
   CheckSquare,
+  ChevronDown,
   Square,
   User,
   Clock,
@@ -133,14 +134,75 @@ export default function OpticaCampanasPage() {
   const [turnosGeclisa, setTurnosGeclisa] = useState<PacienteTurnoGeclisa[]>([])
   const [selectedTurnoIds, setSelectedTurnoIds] = useState<Set<string>>(new Set())
 
-  // Filtros locales en memoria (no resetean selección)
+  // Filtros locales en memoria con multi-selección complementaria (lógica AND entre categorías, OR interna)
   const [prestadoresDisponibles, setPrestadoresDisponibles] = useState<PrestadorFiltro[]>([])
-  const [prestadorFiltroId, setPrestadorFiltroId] = useState<string>('TODOS')
+  const [selectedPrestadores, setSelectedPrestadores] = useState<string[]>([])
   const [ubicacionesDisponibles, setUbicacionesDisponibles] = useState<UbicacionFiltro[]>([])
-  const [ubicacionFiltroId, setUbicacionFiltroId] = useState<string>('TODAS')
+  const [selectedUbicaciones, setSelectedUbicaciones] = useState<string[]>([])
   const [serviciosDisponibles, setServiciosDisponibles] = useState<ServicioFiltro[]>([])
-  const [servicioFiltroId, setServicioFiltroId] = useState<string>('TODOS')
+  const [selectedServicios, setSelectedServicios] = useState<string[]>([])
+  const [activeDropdown, setActiveDropdown] = useState<'sede' | 'servicio' | 'prestador' | null>(null)
+  const [searchPrestadorInput, setSearchPrestadorInput] = useState<string>('')
   const [searchPaciente, setSearchPaciente] = useState<string>('')
+  const filterDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Cerrar popovers de multi-selección al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(e.target as Node)) {
+        setActiveDropdown(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const toggleUbicacion = (id: string) => {
+    setSelectedUbicaciones((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+  const toggleAllUbicaciones = () => {
+    if (selectedUbicaciones.length === ubicacionesDisponibles.length) {
+      setSelectedUbicaciones([])
+    } else {
+      setSelectedUbicaciones(ubicacionesDisponibles.map((u) => u.id))
+    }
+  }
+
+  const toggleServicio = (id: string) => {
+    setSelectedServicios((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+  const toggleAllServicios = () => {
+    if (selectedServicios.length === serviciosDisponibles.length) {
+      setSelectedServicios([])
+    } else {
+      setSelectedServicios(serviciosDisponibles.map((s) => s.id))
+    }
+  }
+
+  const togglePrestador = (id: string) => {
+    setSelectedPrestadores((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+  const toggleAllPrestadores = () => {
+    if (selectedPrestadores.length === prestadoresDisponibles.length) {
+      setSelectedPrestadores([])
+    } else {
+      setSelectedPrestadores(prestadoresDisponibles.map((p) => p.id))
+    }
+  }
+
+  const limpiarTodosLosFiltros = () => {
+    setSelectedUbicaciones([])
+    setSelectedServicios([])
+    setSelectedPrestadores([])
+    setSearchPaciente('')
+    setActiveDropdown(null)
+  }
   const [loadingTurnos, setLoadingTurnos] = useState(false)
   const [errorTurnos, setErrorTurnos] = useState<string | null>(null)
   const [pacientePreview, setPacientePreview] = useState<PacienteTurnoGeclisa | null>(null)
@@ -456,24 +518,28 @@ export default function OpticaCampanasPage() {
     }
   }, [step, fechaTurnoFiltro, campSegmento, diasRecetasFiltro])
 
-  // Filtrado Instantáneo en Memoria (0 ms y SIN perder selecciones previas)
+  // Filtrado Instantáneo en Memoria con Multi-Selección Complementaria (AND entre categorías, OR interna)
   const turnosFiltrados = useMemo(() => {
     return turnosGeclisa.filter((t) => {
-      if (ubicacionFiltroId !== 'TODAS') {
-        const uMatch =
-          t.ubicacion_id === ubicacionFiltroId ||
-          (t.ubicacion && t.ubicacion.toLowerCase().includes(ubicacionFiltroId.toLowerCase()))
-        if (!uMatch) return false
+      // 1. Filtro Sede: Multi-selección estricta por ID
+      if (selectedUbicaciones.length > 0) {
+        if (!t.ubicacion_id || !selectedUbicaciones.includes(t.ubicacion_id)) {
+          return false
+        }
       }
-      if (servicioFiltroId !== 'TODOS') {
-        const sMatch =
-          t.servicio_id === servicioFiltroId ||
-          (t.servicio && t.servicio.toLowerCase().includes(servicioFiltroId.toLowerCase()))
-        if (!sMatch) return false
+      // 2. Filtro Servicio: Multi-selección estricta por ID
+      if (selectedServicios.length > 0) {
+        if (!t.servicio_id || !selectedServicios.includes(t.servicio_id)) {
+          return false
+        }
       }
-      if (prestadorFiltroId !== 'TODOS') {
-        if (t.prestador_id !== prestadorFiltroId) return false
+      // 3. Filtro Profesional: Multi-selección estricta por ID
+      if (selectedPrestadores.length > 0) {
+        if (!t.prestador_id || !selectedPrestadores.includes(t.prestador_id)) {
+          return false
+        }
       }
+      // 4. Búsqueda de texto global
       if (searchPaciente.trim()) {
         const s = searchPaciente.toLowerCase()
         return (
@@ -490,7 +556,7 @@ export default function OpticaCampanasPage() {
       }
       return true
     })
-  }, [turnosGeclisa, ubicacionFiltroId, servicioFiltroId, prestadorFiltroId, searchPaciente])
+  }, [turnosGeclisa, selectedUbicaciones, selectedServicios, selectedPrestadores, searchPaciente])
 
   // Operaciones de Selección Persistente
   const toggleSeleccionarPaciente = (turnoId: string) => {
@@ -516,11 +582,12 @@ export default function OpticaCampanasPage() {
   }
 
   const seleccionarSoloSedeCentral = () => {
+    setSelectedUbicaciones(['3'])
     setSelectedTurnoIds((prev) => {
       const next = new Set(prev)
       turnosGeclisa.forEach((p) => {
         if (p.estado_envio === 'ELEGIBLE') {
-          const esCentral = (p.ubicacion || '').includes('540') || p.ubicacion_id === '3'
+          const esCentral = p.ubicacion_id === '3' || (p.ubicacion || '').includes('540')
           if (esCentral) next.add(p.turno_id)
           else next.delete(p.turno_id)
         }
@@ -885,52 +952,322 @@ export default function OpticaCampanasPage() {
                     </div>
                   </div>
 
-                  {/* Fila 2: Selectores de Sede, Servicio y Prestador (Filtrado Instantáneo en React) */}
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 pt-1.5 border-t border-[var(--border)]/60">
-                    <div className="sm:col-span-4">
-                      <select
-                        value={ubicacionFiltroId}
-                        onChange={(e) => setUbicacionFiltroId(e.target.value)}
-                        className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold truncate"
-                      >
-                        <option value="TODAS">🏢 Todas las Sedes</option>
-                        {ubicacionesDisponibles.map((u) => (
-                          <option key={u.id} value={u.id}>
-                            🏢 {u.nombre.split('-')[0].trim()} {u.cantidad_turnos !== undefined ? `(${u.cantidad_turnos})` : ''}
-                          </option>
-                        ))}
-                      </select>
+                  {/* Fila 2: Selectores Multi-Selección de Sede, Servicio y Prestador (Complementarios e interactivos) */}
+                  <div ref={filterDropdownRef} className="space-y-2 pt-1.5 border-t border-[var(--border)]/60">
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                      {/* 1. Selector Multi-Sede */}
+                      <div className="sm:col-span-4 relative">
+                        <button
+                          type="button"
+                          onClick={() => setActiveDropdown(activeDropdown === 'sede' ? null : 'sede')}
+                          className={`w-full px-2.5 py-1.5 rounded-lg text-xs border font-semibold flex items-center justify-between gap-1.5 transition-all text-left ${
+                            selectedUbicaciones.length > 0
+                              ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-400 text-indigo-700 dark:text-indigo-300 shadow-sm'
+                              : 'bg-white dark:bg-slate-800 border-[var(--border)] text-[var(--foreground)]'
+                          }`}
+                        >
+                          <span className="truncate">
+                            🏢 {selectedUbicaciones.length === 0
+                              ? `Todas las Sedes (${ubicacionesDisponibles.length})`
+                              : selectedUbicaciones.length === 1
+                              ? ubicacionesDisponibles.find((u) => u.id === selectedUbicaciones[0])?.nombre.split('-')[0].trim() || '1 Sede'
+                              : `${selectedUbicaciones.length} Sedes seleccionadas`}
+                          </span>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            {selectedUbicaciones.length > 0 && (
+                              <span
+                                role="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSelectedUbicaciones([])
+                                }}
+                                className="hover:text-red-500 p-0.5 rounded"
+                                title="Limpiar filtro de sedes"
+                              >
+                                <X size={12} />
+                              </span>
+                            )}
+                            <ChevronDown size={13} className={`transition-transform ${activeDropdown === 'sede' ? 'rotate-180' : ''}`} />
+                          </div>
+                        </button>
+
+                        {activeDropdown === 'sede' && (
+                          <div className="absolute top-full left-0 mt-1 w-full min-w-[240px] z-50 bg-white dark:bg-slate-900 border border-[var(--border)] rounded-xl shadow-2xl p-2 space-y-1.5 text-xs animate-in fade-in zoom-in-95 duration-100">
+                            <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border)] font-bold text-[var(--secondary)]">
+                              <span>Sedes Disponibles</span>
+                              <button
+                                type="button"
+                                onClick={toggleAllUbicaciones}
+                                className="text-indigo-600 dark:text-indigo-400 hover:underline text-[11px]"
+                              >
+                                {selectedUbicaciones.length === ubicacionesDisponibles.length ? 'Deseleccionar todas' : 'Marcar todas'}
+                              </button>
+                            </div>
+                            <div className="max-h-52 overflow-y-auto space-y-1 pr-1">
+                              {ubicacionesDisponibles.map((u) => {
+                                const checked = selectedUbicaciones.includes(u.id)
+                                return (
+                                  <label
+                                    key={u.id}
+                                    className="flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 cursor-pointer select-none transition-colors"
+                                  >
+                                    <div className="flex items-center gap-2 truncate">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={() => toggleUbicacion(u.id)}
+                                        className="rounded border-[var(--border)] text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                      />
+                                      <span className={`truncate ${checked ? 'font-bold text-indigo-600 dark:text-indigo-300' : 'text-[var(--foreground)]'}`}>
+                                        {u.nombre.split('-')[0].trim()}
+                                      </span>
+                                    </div>
+                                    <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] font-mono">
+                                      {u.cantidad_turnos ?? 0}
+                                    </span>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 2. Selector Multi-Servicio */}
+                      <div className="sm:col-span-4 relative">
+                        <button
+                          type="button"
+                          onClick={() => setActiveDropdown(activeDropdown === 'servicio' ? null : 'servicio')}
+                          className={`w-full px-2.5 py-1.5 rounded-lg text-xs border font-semibold flex items-center justify-between gap-1.5 transition-all text-left ${
+                            selectedServicios.length > 0
+                              ? 'bg-purple-50 dark:bg-purple-950/60 border-purple-400 text-purple-700 dark:text-purple-300 shadow-sm'
+                              : 'bg-white dark:bg-slate-800 border-[var(--border)] text-[var(--foreground)]'
+                          }`}
+                        >
+                          <span className="truncate">
+                            🩺 {selectedServicios.length === 0
+                              ? `Todos los Servicios (${serviciosDisponibles.length})`
+                              : selectedServicios.length === 1
+                              ? serviciosDisponibles.find((s) => s.id === selectedServicios[0])?.nombre || '1 Servicio'
+                              : `${selectedServicios.length} Servicios seleccionados`}
+                          </span>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            {selectedServicios.length > 0 && (
+                              <span
+                                role="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSelectedServicios([])
+                                }}
+                                className="hover:text-red-500 p-0.5 rounded"
+                                title="Limpiar filtro de servicios"
+                              >
+                                <X size={12} />
+                              </span>
+                            )}
+                            <ChevronDown size={13} className={`transition-transform ${activeDropdown === 'servicio' ? 'rotate-180' : ''}`} />
+                          </div>
+                        </button>
+
+                        {activeDropdown === 'servicio' && (
+                          <div className="absolute top-full left-0 mt-1 w-full min-w-[260px] z-50 bg-white dark:bg-slate-900 border border-[var(--border)] rounded-xl shadow-2xl p-2 space-y-1.5 text-xs animate-in fade-in zoom-in-95 duration-100">
+                            <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border)] font-bold text-[var(--secondary)]">
+                              <span>Servicios Clínicos</span>
+                              <button
+                                type="button"
+                                onClick={toggleAllServicios}
+                                className="text-purple-600 dark:text-purple-400 hover:underline text-[11px]"
+                              >
+                                {selectedServicios.length === serviciosDisponibles.length ? 'Deseleccionar todos' : 'Marcar todos'}
+                              </button>
+                            </div>
+                            <div className="max-h-52 overflow-y-auto space-y-1 pr-1">
+                              {serviciosDisponibles.map((s) => {
+                                const checked = selectedServicios.includes(s.id)
+                                return (
+                                  <label
+                                    key={s.id}
+                                    className="flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 cursor-pointer select-none transition-colors"
+                                  >
+                                    <div className="flex items-center gap-2 truncate">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={() => toggleServicio(s.id)}
+                                        className="rounded border-[var(--border)] text-purple-600 focus:ring-purple-500 cursor-pointer"
+                                      />
+                                      <span className={`truncate ${checked ? 'font-bold text-purple-600 dark:text-purple-300' : 'text-[var(--foreground)]'}`}>
+                                        {s.nombre}
+                                      </span>
+                                    </div>
+                                    <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] font-mono">
+                                      {s.cantidad_turnos ?? 0}
+                                    </span>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 3. Selector Multi-Profesional con Buscador */}
+                      <div className="sm:col-span-4 relative">
+                        <button
+                          type="button"
+                          onClick={() => setActiveDropdown(activeDropdown === 'prestador' ? null : 'prestador')}
+                          className={`w-full px-2.5 py-1.5 rounded-lg text-xs border font-semibold flex items-center justify-between gap-1.5 transition-all text-left ${
+                            selectedPrestadores.length > 0
+                              ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-400 text-amber-700 dark:text-amber-300 shadow-sm'
+                              : 'bg-white dark:bg-slate-800 border-[var(--border)] text-[var(--foreground)]'
+                          }`}
+                        >
+                          <span className="truncate">
+                            👨‍⚕️ {selectedPrestadores.length === 0
+                              ? `Todos los Profesionales (${prestadoresDisponibles.length})`
+                              : selectedPrestadores.length === 1
+                              ? prestadoresDisponibles.find((p) => p.id === selectedPrestadores[0])?.nombre || '1 Profesional'
+                              : `${selectedPrestadores.length} Profesionales seleccionados`}
+                          </span>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            {selectedPrestadores.length > 0 && (
+                              <span
+                                role="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSelectedPrestadores([])
+                                }}
+                                className="hover:text-red-500 p-0.5 rounded"
+                                title="Limpiar filtro de profesionales"
+                              >
+                                <X size={12} />
+                              </span>
+                            )}
+                            <ChevronDown size={13} className={`transition-transform ${activeDropdown === 'prestador' ? 'rotate-180' : ''}`} />
+                          </div>
+                        </button>
+
+                        {activeDropdown === 'prestador' && (
+                          <div className="absolute top-full right-0 mt-1 w-full sm:min-w-[300px] z-50 bg-white dark:bg-slate-900 border border-[var(--border)] rounded-xl shadow-2xl p-2.5 space-y-2 text-xs animate-in fade-in zoom-in-95 duration-100">
+                            <div className="flex items-center justify-between font-bold text-[var(--secondary)]">
+                              <span>Profesionales Médicos</span>
+                              <button
+                                type="button"
+                                onClick={toggleAllPrestadores}
+                                className="text-amber-600 dark:text-amber-400 hover:underline text-[11px]"
+                              >
+                                {selectedPrestadores.length === prestadoresDisponibles.length ? 'Deseleccionar todos' : 'Marcar todos'}
+                              </button>
+                            </div>
+
+                            {/* Buscador de Médico dentro del Dropdown */}
+                            <div className="relative">
+                              <Search size={12} className="absolute left-2.5 top-2.5 text-[var(--secondary)]" />
+                              <input
+                                type="text"
+                                placeholder="Filtrar por apellido..."
+                                value={searchPrestadorInput}
+                                onChange={(e) => setSearchPrestadorInput(e.target.value)}
+                                className="w-full pl-7 pr-2 py-1 rounded-lg text-xs bg-slate-50 dark:bg-slate-800 border border-[var(--border)]"
+                              />
+                            </div>
+
+                            <div className="max-h-52 overflow-y-auto space-y-1 pr-1">
+                              {prestadoresDisponibles
+                                .filter((p) => !searchPrestadorInput.trim() || p.nombre.toLowerCase().includes(searchPrestadorInput.toLowerCase()))
+                                .map((p) => {
+                                  const checked = selectedPrestadores.includes(p.id)
+                                  return (
+                                    <label
+                                      key={p.id}
+                                      className="flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/80 cursor-pointer select-none transition-colors"
+                                    >
+                                      <div className="flex items-center gap-2 truncate">
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={() => togglePrestador(p.id)}
+                                          className="rounded border-[var(--border)] text-amber-600 focus:ring-amber-500 cursor-pointer"
+                                        />
+                                        <span className={`truncate ${checked ? 'font-bold text-amber-600 dark:text-amber-300' : 'text-[var(--foreground)]'}`}>
+                                          {p.nombre}
+                                        </span>
+                                      </div>
+                                      <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] font-mono">
+                                        {p.cantidad_turnos ?? 0}
+                                      </span>
+                                    </label>
+                                  )
+                                })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="sm:col-span-4">
-                      <select
-                        value={servicioFiltroId}
-                        onChange={(e) => setServicioFiltroId(e.target.value)}
-                        className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold truncate"
-                      >
-                        <option value="TODOS">🩺 Todos los Servicios</option>
-                        {serviciosDisponibles.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            🩺 {s.nombre} {s.cantidad_turnos !== undefined ? `(${s.cantidad_turnos})` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="sm:col-span-4">
-                      <select
-                        value={prestadorFiltroId}
-                        onChange={(e) => setPrestadorFiltroId(e.target.value)}
-                        className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold truncate"
-                      >
-                        <option value="TODOS">👨‍⚕️ Todos los Profesionales</option>
-                        {prestadoresDisponibles.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.nombre} {p.cantidad_turnos !== undefined ? `(${p.cantidad_turnos})` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    {/* Chips de Filtros Activos con Botón de Limpiar */}
+                    {(selectedUbicaciones.length > 0 || selectedServicios.length > 0 || selectedPrestadores.length > 0 || searchPaciente.trim()) && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[10px] font-bold text-[var(--secondary)] mr-0.5">Filtros activos:</span>
+                        {selectedUbicaciones.map((uid) => {
+                          const u = ubicacionesDisponibles.find((x) => x.id === uid)
+                          return (
+                            <span
+                              key={uid}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20"
+                            >
+                              🏢 {u ? u.nombre.split('-')[0].trim() : uid}
+                              <button type="button" onClick={() => toggleUbicacion(uid)} className="hover:opacity-75">
+                                <X size={10} />
+                              </button>
+                            </span>
+                          )
+                        })}
+                        {selectedServicios.map((sid) => {
+                          const s = serviciosDisponibles.find((x) => x.id === sid)
+                          return (
+                            <span
+                              key={sid}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20"
+                            >
+                              🩺 {s ? s.nombre : sid}
+                              <button type="button" onClick={() => toggleServicio(sid)} className="hover:opacity-75">
+                                <X size={10} />
+                              </button>
+                            </span>
+                          )
+                        })}
+                        {selectedPrestadores.map((pid) => {
+                          const p = prestadoresDisponibles.find((x) => x.id === pid)
+                          return (
+                            <span
+                              key={pid}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                            >
+                              👨‍⚕️ {p ? p.nombre : pid}
+                              <button type="button" onClick={() => togglePrestador(pid)} className="hover:opacity-75">
+                                <X size={10} />
+                              </button>
+                            </span>
+                          )
+                        })}
+                        {searchPaciente.trim() && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20">
+                            🔍 &quot;{searchPaciente}&quot;
+                            <button type="button" onClick={() => setSearchPaciente('')} className="hover:opacity-75">
+                              <X size={10} />
+                            </button>
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={limpiarTodosLosFiltros}
+                          className="text-[10px] text-rose-500 hover:text-rose-600 underline font-semibold ml-1 inline-flex items-center gap-0.5"
+                        >
+                          <X size={10} /> Limpiar todos
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
