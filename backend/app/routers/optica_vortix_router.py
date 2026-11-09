@@ -654,12 +654,54 @@ async def listar_plantillas_optica():
     }
 
 
+def _extraer_componentes_plantilla_meta(components: list) -> Dict[str, Any]:
+    """
+    Parsea los componentes devueltos por Meta Graph API v21+ para extraer
+    header_type, header_content, body_text, footer_text y buttons de forma estructurada.
+    """
+    header_type = "NONE"
+    header_content = None
+    body_text = ""
+    footer_text = None
+    buttons: List[Dict[str, Any]] = []
+
+    for comp in (components or []):
+        c_type = str(comp.get("type") or "").upper()
+        if c_type == "HEADER":
+            header_type = str(comp.get("format") or "NONE").upper()
+            header_content = comp.get("text")
+        elif c_type == "BODY":
+            body_text = comp.get("text") or ""
+        elif c_type == "FOOTER":
+            footer_text = comp.get("text")
+        elif c_type == "BUTTONS":
+            raw_buttons = comp.get("buttons") or []
+            buttons = []
+            for b in raw_buttons:
+                b_type = str(b.get("type") or "QUICK_REPLY").upper()
+                btn_dict: Dict[str, Any] = {"type": b_type, "text": b.get("text") or ""}
+                if b_type == "URL" and b.get("url"):
+                    btn_dict["url"] = b["url"]
+                elif b_type == "PHONE_NUMBER" and b.get("phone_number"):
+                    btn_dict["phone_number"] = b["phone_number"]
+                buttons.append(btn_dict)
+
+    return {
+        "header_type": header_type,
+        "header_content": header_content,
+        "body_text": body_text,
+        "footer_text": footer_text,
+        "buttons": buttons,
+    }
+
+
 @optica_vortix_router.post("/plantillas/sincronizar")
 async def sincronizar_plantillas_meta_optica():
     """
     Sincroniza en tiempo real contra Meta Graph API (GET /{waba_id}/message_templates)
     las plantillas correspondientes a Óptica Vortix (prefijos vortix_ u optica_).
-    Actualiza su estado (APPROVED, PENDING, REJECTED, motivo) en public.whatsapp_templates.
+    Actualiza su estado (APPROVED, PENDING, REJECTED, motivo), categoría oficial reclasificada,
+    y componentes reales (header, body_text, footer, buttons) en public.whatsapp_templates.
     """
     waba_id = get_whatsapp_waba_id() or os.getenv("META_WA_WABA_ID") or "3731563350343089"
     _, token = get_whatsapp_cloud_credentials()
@@ -685,15 +727,78 @@ async def sincronizar_plantillas_meta_optica():
             rejection = mt.get("rejected_reason") or mt.get("quality_score", {}).get("reasons")
             cat_info = catalog_by_name.get(tpl_name, {})
 
+            parsed_comps = _extraer_componentes_plantilla_meta(mt.get("components") or [])
+
+            # Buscar si ya existe la plantilla en Supabase para preservar campos locales y no sobreescribir
+            existing_row = None
+            if supabase:
+                try:
+                    res_exist = supabase.table("whatsapp_templates").select("id, titulo_amigable, body_text, variable_mappings, buttons, header_type, header_content, footer_text, category").eq("name", tpl_name).limit(1).execute()
+                    if res_exist.data and len(res_exist.data) > 0:
+                        existing_row = res_exist.data[0]
+                except Exception as ex_db:
+                    logger.debug(f"[OpticaTemplates] Error buscando existente {tpl_name}: {ex_db}")
+
+            # Determinar body_text garantizando no violar restricción NOT NULL
+            final_body_text = (
+                parsed_comps["body_text"]
+                or (existing_row and existing_row.get("body_text"))
+                or cat_info.get("body_text")
+                or f"Mensaje oficial de Óptica Vortix ({tpl_name})"
+            )
+
+            # Resolver título amigable: existente en BD > catálogo > nombre formateado
+            friendly_title = (
+                (existing_row and existing_row.get("titulo_amigable"))
+                or cat_info.get("titulo_amigable")
+                or tpl_name.replace("vortix_", "").replace("optica_", "").replace("_", " ").title()
+            )
+
+            # Resolver categoría de Meta (ej: MARKETING si Meta la reclasificó)
+            final_cat = (mt.get("category") or (existing_row and existing_row.get("category")) or cat_info.get("category") or "MARKETING").upper()
+
+            # Resolver botones: los de Meta si los tiene, o los existentes/catálogo
+            final_buttons = (
+                parsed_comps["buttons"]
+                if parsed_comps["buttons"]
+                else ((existing_row and existing_row.get("buttons")) or cat_info.get("buttons") or [])
+            )
+
+            # Resolver cabecera: Meta > existente > catálogo
+            final_header_type = parsed_comps["header_type"]
+            if final_header_type == "NONE" and existing_row and existing_row.get("header_type"):
+                final_header_type = existing_row.get("header_type")
+            elif final_header_type == "NONE" and cat_info.get("header_type"):
+                final_header_type = cat_info.get("header_type")
+
+            final_header_content = (
+                parsed_comps["header_content"]
+                or (existing_row and existing_row.get("header_content"))
+                or cat_info.get("header_content")
+            )
+
+            # Resolver footer: Meta > existente > catálogo
+            final_footer = (
+                parsed_comps["footer_text"]
+                or (existing_row and existing_row.get("footer_text"))
+                or cat_info.get("footer_text")
+            )
+
             if supabase:
                 try:
                     upsert_data = {
                         "waba_id": waba_id,
                         "meta_template_id": mt.get("id"),
                         "name": tpl_name,
-                        "category": mt.get("category") or cat_info.get("category") or "UTILITY",
+                        "titulo_amigable": friendly_title,
+                        "category": final_cat,
                         "language": mt.get("language") or "es_AR",
                         "status": status_meta,
+                        "header_type": final_header_type or "NONE",
+                        "header_content": final_header_content,
+                        "body_text": final_body_text,
+                        "footer_text": final_footer,
+                        "buttons": final_buttons,
                         "rejection_reason": str(rejection) if rejection else None,
                         "grupo_crm": "Óptica Vortix",
                         "visible_en_chat": False,
@@ -701,12 +806,10 @@ async def sincronizar_plantillas_meta_optica():
                         "activo": status_meta == "APPROVED",
                         "updated_at": now_iso
                     }
-                    if cat_info.get("titulo_amigable"):
-                        upsert_data["titulo_amigable"] = cat_info["titulo_amigable"]
-                    if cat_info.get("body_text"):
-                        upsert_data["body_text"] = cat_info["body_text"]
                     if cat_info.get("variable_mappings"):
                         upsert_data["variable_mappings"] = cat_info["variable_mappings"]
+                    elif existing_row and existing_row.get("variable_mappings"):
+                        upsert_data["variable_mappings"] = existing_row["variable_mappings"]
 
                     supabase.table("whatsapp_templates").upsert(upsert_data, on_conflict="name").execute()
                     actualizadas += 1
@@ -715,7 +818,7 @@ async def sincronizar_plantillas_meta_optica():
 
     return {
         "success": True,
-        "mensaje": f"Sincronización completada. Se verificaron {len(meta_templates)} plantillas en Meta ({actualizadas} de Óptica Vortix reconocidas).",
+        "mensaje": f"Sincronización completada. Se verificaron {len(meta_templates)} plantillas en Meta ({actualizadas} de Óptica Vortix actualizadas con éxito).",
         "total_meta": len(meta_templates),
         "actualizadas_optica": actualizadas
     }
