@@ -107,10 +107,13 @@ _CREDENTIALS_CACHE: Dict[str, Any] = {
     "waba_id": None,
     "phone_id": None,
     "token": None,
+    "line1_expires_at": 0.0,
     "estudios_phone_id": None,
     "estudios_config": None,
+    "estudios_expires_at": 0.0,
     "optica_phone_id": None,
     "optica_config": None,
+    "optica_expires_at": 0.0,
     "expires_at": 0.0
 }
 
@@ -129,13 +132,16 @@ def invalidate_whatsapp_credentials_cache():
     """
     global _CREDENTIALS_CACHE, _APP_SECRET_CACHE
     _CREDENTIALS_CACHE["expires_at"] = 0.0
+    _CREDENTIALS_CACHE["line1_expires_at"] = 0.0
     _CREDENTIALS_CACHE["waba_id"] = None
     _CREDENTIALS_CACHE["phone_id"] = None
     _CREDENTIALS_CACHE["token"] = None
     _CREDENTIALS_CACHE["estudios_phone_id"] = None
     _CREDENTIALS_CACHE["estudios_config"] = None
+    _CREDENTIALS_CACHE["estudios_expires_at"] = 0.0
     _CREDENTIALS_CACHE["optica_phone_id"] = None
     _CREDENTIALS_CACHE["optica_config"] = None
+    _CREDENTIALS_CACHE["optica_expires_at"] = 0.0
     _APP_SECRET_CACHE["expires_at"] = 0.0
     _APP_SECRET_CACHE["secret"] = None
     logger.info("[Credentials Cache] Memoria caché de credenciales WABA invalidada.")
@@ -151,7 +157,7 @@ def get_whatsapp_optica_config() -> Dict[str, Any]:
     global _CREDENTIALS_CACHE
 
     now = time.time()
-    if _CREDENTIALS_CACHE["expires_at"] > now and _CREDENTIALS_CACHE.get("optica_config") is not None:
+    if _CREDENTIALS_CACHE.get("optica_expires_at", 0.0) > now and _CREDENTIALS_CACHE.get("optica_config") is not None:
         return _CREDENTIALS_CACHE["optica_config"]
 
     cfg: Dict[str, Any] = {
@@ -190,8 +196,7 @@ def get_whatsapp_optica_config() -> Dict[str, Any]:
 
     _CREDENTIALS_CACHE["optica_config"] = cfg
     _CREDENTIALS_CACHE["optica_phone_id"] = str(cfg.get("optica_phone_number_id") or "").strip() or None
-    if _CREDENTIALS_CACHE["expires_at"] <= now:
-        _CREDENTIALS_CACHE["expires_at"] = now + CREDENTIALS_CACHE_TTL_SECONDS
+    _CREDENTIALS_CACHE["optica_expires_at"] = now + CREDENTIALS_CACHE_TTL_SECONDS
     return cfg
 
 

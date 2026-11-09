@@ -330,13 +330,13 @@ def es_telefono_whitelist_prueba(telefono: str, cfg: Optional[Dict[str, Any]] = 
     return False
 
 _OPTICA_CONFIG_CACHE: Dict[str, Any] = {"config": None, "expires_at": 0.0}
-OPTICA_CONFIG_CACHE_TTL_SECONDS = 60.0  # 1 minuto de caché en memoria para ráfagas de turnos
+OPTICA_CONFIG_CACHE_TTL_SECONDS = 120.0  # 2 minutos de caché en memoria para ráfagas y concurrencia
 
 def get_optica_vortix_full_config(force_refresh: bool = False) -> Dict[str, Any]:
     """
     Obtiene la configuración integral de Óptica Vortix desde `configuracion_sistema`
     (`clave = 'optica_vortix_config'`) combinada con los valores por defecto.
-    Implementa caché en memoria con TTL de 60s para evitar tormentas de consultas N+1.
+    Implementa caché en memoria con TTL de 120s para evitar tormentas de consultas N+1.
     """
     global _OPTICA_CONFIG_CACHE
     import time
@@ -352,7 +352,8 @@ def get_optica_vortix_full_config(force_refresh: bool = False) -> Dict[str, Any]
         elif isinstance(v, (bool, int, float, list, dict)):
             cfg[k] = v
 
-    if supabase:
+    # Solo si forzamos refresco o raw_line_cfg no trajo las placas/parámetros extendidos, consultamos BD
+    if supabase and (force_refresh or not cfg.get("placas_galeria")):
         try:
             res = supabase.table("configuracion_sistema").select("valor").eq("clave", "optica_vortix_config").limit(1).execute()
             if res.data and len(res.data) > 0:
