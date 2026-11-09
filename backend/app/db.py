@@ -10518,11 +10518,23 @@ def update_configuracion_notificaciones_prestadores(payload: Dict[str, Any]) -> 
 def registrar_log_notificacion_prestador(datos: Dict[str, Any]) -> Dict[str, Any]:
     """
     Registra un intento de notificación (exitoso o fallido) en notificaciones_prestadores_logs.
+    Si ya existen registros previos para la misma fecha y prestador (por reintentos),
+    los purga previamente para respetar la unicidad del corte diario.
     """
     if not supabase:
         return {}
     try:
-        resp = supabase.table("notificaciones_prestadores_logs").upsert(datos, on_conflict="fecha_cirugia,fecha_corte,prestador_id").execute()
+        f_cir = datos.get("fecha_cirugia")
+        f_cor = datos.get("fecha_corte")
+        p_id = datos.get("prestador_id")
+        if f_cir and f_cor and p_id:
+            supabase.table("notificaciones_prestadores_logs")\
+                .delete()\
+                .eq("fecha_cirugia", f_cir)\
+                .eq("fecha_corte", f_cor)\
+                .eq("prestador_id", p_id)\
+                .execute()
+        resp = supabase.table("notificaciones_prestadores_logs").insert(datos).execute()
         return resp.data[0] if resp.data else datos
     except Exception as e:
         logger.error(f"Error al registrar log de notificación de prestador: {e}")
