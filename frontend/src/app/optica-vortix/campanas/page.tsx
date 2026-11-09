@@ -412,6 +412,7 @@ export default function OpticaCampanasPage() {
       // completa del día/período y el frontend pueda filtrarla instantáneamente (0ms) sin borrar selecciones.
       const res = await apiFetch(`/api/optica-vortix/campanas/audiencia-geclisa?${q.toString()}`, {
         cache: 'no-store',
+        timeoutMs: 45000,
       })
       if (res.ok) {
         const data = await res.json()

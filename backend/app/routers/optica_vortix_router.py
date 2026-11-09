@@ -822,8 +822,17 @@ async def _construir_header_component_con_example(
     elif h_type_clean in ("IMAGE", "DOCUMENT"):
         h_comp: Dict[str, Any] = {"type": "HEADER", "format": h_type_clean}
         handle = await _upload_sample_media_for_template_header(token, h_type_clean)
+        if not handle:
+            import asyncio
+            await asyncio.sleep(0.5)
+            handle = await _upload_sample_media_for_template_header(token, h_type_clean)
         if handle:
             h_comp["example"] = {"header_handle": [handle]}
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Meta exige obligatoriamente un archivo de muestra (header_handle) para encabezados de tipo '{h_type_clean}'. No se pudo generar la muestra vía Resumable Upload API. Verifica los permisos del System User Token de WhatsApp o reintenta."
+            )
         return h_comp
     return None
 
@@ -2565,6 +2574,29 @@ def _enriquecer_oportunidad_optica_frontend(r: Dict[str, Any]) -> Dict[str, Any]
     }
 
 
+def _parse_fecha_flexible(fecha_str: Optional[str]) -> Optional[str]:
+    """
+    Parsea fechas en formato YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY o variantes
+    garantizando retorno estandarizado ISO 'YYYY-MM-DD'.
+    """
+    if not fecha_str or hasattr(fecha_str, "default"):
+        return None
+    s = str(fecha_str).strip()
+    m_iso = re.match(r"^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$", s)
+    if m_iso:
+        try:
+            return datetime(int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    m_dmy = re.match(r"^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$", s)
+    if m_dmy:
+        try:
+            return datetime(int(m_dmy.group(3)), int(m_dmy.group(2)), int(m_dmy.group(1))).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return None
+
+
 @optica_vortix_router.get("/oportunidades")
 async def listar_oportunidades_optica(
     fecha: Optional[str] = Query(None),
@@ -2581,9 +2613,9 @@ async def listar_oportunidades_optica(
 
     try:
         query = supabase.table("optica_oportunidades_geclisa").select("*")
-        if fecha and re.match(r"^\d{4}-\d{2}-\d{2}$", fecha.strip()):
-            f_clean = fecha.strip()
-            query = query.gte("fecha_turno", f"{f_clean}T00:00:00").lte("fecha_turno", f"{f_clean}T23:59:59")
+        parsed_f = _parse_fecha_flexible(fecha)
+        if parsed_f:
+            query = query.gte("fecha_turno", f"{parsed_f}T00:00:00").lte("fecha_turno", f"{parsed_f}T23:59:59")
         if tipo_oportunidad and tipo_oportunidad not in ("TODOS", "TODAS", "ALL", ""):
             db_tipo = _MAP_TIPO_OP_FE_TO_DB.get(tipo_oportunidad.strip().upper(), tipo_oportunidad.strip())
             query = query.eq("tipo_oportunidad", db_tipo)
@@ -2830,8 +2862,9 @@ async def obtener_audiencia_geclisa_campana(
     if force_refresh is not None and not hasattr(force_refresh, "default"):
         f_refresh = bool(force_refresh)
 
-    if fecha and not hasattr(fecha, "default") and re.match(r"^\d{4}-\d{2}-\d{2}$", str(fecha).strip()):
-        fecha_obj = str(fecha).strip()
+    parsed_f = _parse_fecha_flexible(fecha)
+    if parsed_f:
+        fecha_obj = parsed_f
     else:
         fecha_obj = (now_mza.date() + timedelta(days=d_anticipacion)).isoformat()
 

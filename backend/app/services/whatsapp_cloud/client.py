@@ -190,6 +190,8 @@ def get_whatsapp_optica_config() -> Dict[str, Any]:
 
     _CREDENTIALS_CACHE["optica_config"] = cfg
     _CREDENTIALS_CACHE["optica_phone_id"] = str(cfg.get("optica_phone_number_id") or "").strip() or None
+    if _CREDENTIALS_CACHE["expires_at"] <= now:
+        _CREDENTIALS_CACHE["expires_at"] = now + CREDENTIALS_CACHE_TTL_SECONDS
     return cfg
 
 

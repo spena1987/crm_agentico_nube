@@ -329,11 +329,21 @@ def es_telefono_whitelist_prueba(telefono: str, cfg: Optional[Dict[str, Any]] = 
             return True
     return False
 
-def get_optica_vortix_full_config() -> Dict[str, Any]:
+_OPTICA_CONFIG_CACHE: Dict[str, Any] = {"config": None, "expires_at": 0.0}
+OPTICA_CONFIG_CACHE_TTL_SECONDS = 60.0  # 1 minuto de caché en memoria para ráfagas de turnos
+
+def get_optica_vortix_full_config(force_refresh: bool = False) -> Dict[str, Any]:
     """
     Obtiene la configuración integral de Óptica Vortix desde `configuracion_sistema`
     (`clave = 'optica_vortix_config'`) combinada con los valores por defecto.
+    Implementa caché en memoria con TTL de 60s para evitar tormentas de consultas N+1.
     """
+    global _OPTICA_CONFIG_CACHE
+    import time
+    now = time.time()
+    if not force_refresh and _OPTICA_CONFIG_CACHE["config"] is not None and _OPTICA_CONFIG_CACHE["expires_at"] > now:
+        return dict(_OPTICA_CONFIG_CACHE["config"])
+
     cfg = dict(DEFAULT_OPTICA_CONFIG)
     raw_line_cfg = get_whatsapp_optica_config()
     for k, v in raw_line_cfg.items():
@@ -354,7 +364,10 @@ def get_optica_vortix_full_config() -> Dict[str, Any]:
         except Exception as e:
             logger.debug(f"[OpticaConfig] Error leyendo optica_vortix_config: {e}")
 
-    return _sincronizar_aliases_config_optica(cfg)
+    final_cfg = _sincronizar_aliases_config_optica(cfg)
+    _OPTICA_CONFIG_CACHE["config"] = dict(final_cfg)
+    _OPTICA_CONFIG_CACHE["expires_at"] = now + OPTICA_CONFIG_CACHE_TTL_SECONDS
+    return final_cfg
 
 
 def save_optica_vortix_full_config(updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -363,7 +376,10 @@ def save_optica_vortix_full_config(updates: Dict[str, Any]) -> Dict[str, Any]:
     (`clave = 'optica_vortix_config'`) e invalida la caché de credenciales WABA.
     Valida que el `optica_phone_number_id` no colisione con la Línea 1 ni Línea 2.
     """
-    current = get_optica_vortix_full_config()
+    global _OPTICA_CONFIG_CACHE
+    _OPTICA_CONFIG_CACHE["config"] = None
+    _OPTICA_CONFIG_CACHE["expires_at"] = 0.0
+    current = get_optica_vortix_full_config(force_refresh=True)
     upd = dict(updates or {})
     # Propagar claves entrantes del frontend a sus contrapartes internas antes de fusionar
     if "phone_number_id" in upd and "optica_phone_number_id" not in upd:
@@ -451,7 +467,8 @@ def save_optica_vortix_full_config(updates: Dict[str, Any]) -> Dict[str, Any]:
 def normalizar_telefono_optica_mza(
     raw_phone: Optional[str],
     celular_preferido: Optional[str] = None,
-    default_area_code: str = "261"
+    default_area_code: str = "261",
+    cfg: Optional[Dict[str, Any]] = None
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Normaliza números telefónicos provenientes de Geclisa (Mendoza y Cuyo) al estándar E.164 de Meta
@@ -475,7 +492,7 @@ def normalizar_telefono_optica_mza(
     # 0. Bypass prioritario: Whitelist de prueba de Óptica Vortix
     for src in raw_sources:
         d_src = "".join(filter(str.isdigit, str(src)))
-        if es_telefono_whitelist_prueba(d_src):
+        if es_telefono_whitelist_prueba(d_src, cfg=cfg):
             if d_src.startswith("549") and len(d_src) == 13:
                 return d_src, None
             if len(d_src) == 10:
@@ -1248,7 +1265,8 @@ def sincronizar_turnos_proximos_optica(
         tel_norm, err_tel = normalizar_telefono_optica_mza(
             raw_phone=raw_tel,
             celular_preferido=celular_ficha,
-            default_area_code=str(cfg.get("area_code_default") or "261")
+            default_area_code=str(cfg.get("area_code_default") or "261"),
+            cfg=cfg
         )
         if not tel_norm:
             excluidos.append({
