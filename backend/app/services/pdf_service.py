@@ -2044,20 +2044,36 @@ def generar_pdf_agenda_prestadores(
         ojo = c.get("ojo", "OD")
         practica = c.get("practica_nombre") or c.get("practica") or "Cirugía Oftalmológica"
 
-        # Detalles de Lente Intraocular
+        # Detalles de Lente Intraocular (LIO)
         lio_parts = []
-        if c.get("lente_intraocular") or c.get("lente_modelo"):
-            mod = c.get("lente_modelo") or c.get("lente_marca") or "LIO"
+        lleva_lio = c.get("lleva_lente") or bool(c.get("lente_tipo")) or bool(c.get("lente_dioptria")) or bool(c.get("lente_modelo"))
+        if lleva_lio:
+            mod = c.get("lente_tipo") or c.get("lente_modelo") or c.get("lente_marca") or "LIO Estándar"
             diop = f"P: {c.get('lente_dioptria')} D" if c.get("lente_dioptria") else ""
-            toric = f"Tórico: {c.get('lente_toric_val', '')} (Eje {c.get('lente_eje', '')}°)" if c.get("lente_torico") else ""
-            inc = f"Incisión: {c.get('lente_incision_grados')}°" if c.get("lente_incision_grados") else ""
-            detalles_lio = " | ".join(filter(bool, [mod, diop, toric, inc]))
+            
+            es_torico = c.get("es_torico") or bool(c.get("lente_torico_valor")) or bool(c.get("lente_torico"))
+            toric_val = c.get("lente_torico_valor") if c.get("lente_torico_valor") is not None else c.get("lente_toric_val")
+            toric_eje = c.get("lente_torico_eje") if c.get("lente_torico_eje") is not None else c.get("lente_eje")
+            toric_str = ""
+            if es_torico and (toric_val or toric_eje is not None):
+                val_prefix = f"T{toric_val}" if str(toric_val).isdigit() else str(toric_val or "")
+                eje_suffix = f" (Eje {toric_eje}°)" if toric_eje is not None else ""
+                toric_str = f"Tórico: {val_prefix}{eje_suffix}".strip()
+            
+            inc_val = c.get("lente_incision_grados")
+            inc_str = f"Inc: {inc_val}°" if inc_val else ""
+            
+            detalles_lio = " | ".join(filter(bool, [mod, diop, toric_str, inc_str]))
             lio_parts.append(f"<b>LIO:</b> {detalles_lio}")
+            
+            # Marca si el cálculo se encuentra pendiente de validación clínica
+            if not c.get("lio_calculado", False):
+                lio_parts.append("<font color='#C2410C'><b>[PENDIENTE DE CÁLCULO]</b></font>")
 
         # Observaciones médicas específicas (excluyendo notas de uso interno estricto)
-        obs_med = c.get("observaciones_medicas") or c.get("observaciones_prequirurgicas") or ""
-        if obs_med:
-            lio_parts.append(f"<b>Obs:</b> {obs_med[:140]}")
+        obs_med = c.get("observaciones_quirofano") or c.get("observaciones") or c.get("observaciones_medicas") or c.get("observaciones_prequirurgicas") or ""
+        if obs_med and obs_med.strip():
+            lio_parts.append(f"<b>Obs:</b> {obs_med.strip()[:140]}")
 
         lio_text = "<br/>".join(lio_parts) if lio_parts else "<font color='#94A3B8'>Sin LIO / Sin obs especiales</font>"
 

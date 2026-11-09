@@ -165,6 +165,79 @@ def test_generar_pdf_agenda_prestadores_valido():
     assert len(sha256_hash) == 64
 
 
+def test_generar_pdf_agenda_prestadores_lio_pendiente_y_calculado():
+    """
+    Verifica que se procesen correctamente los campos reales de LIO de turnos_quirofano
+    (lleva_lente, lente_tipo, lente_dioptria, es_torico, lente_torico_valor, lio_calculado).
+    """
+    prestador_info = {
+        "nombre": "Carlos Andrés Labat",
+        "roles": ["Cirujano Principal"],
+        "telefono": "5492614703230"
+    }
+    cirugias = [
+        # Caso 1: LIO cargado pero PENDIENTE de cálculo formal
+        {
+            "id": "t-cano",
+            "hora_inicio": "2026-11-10T08:00:00-03:00",
+            "paciente_nombre": "Cano Nancy",
+            "paciente_dni": "016122301",
+            "cirujano_nombre": "LABAT, CARLOS ANDRES",
+            "medico_derivador_nombre": "LABAT, CARLOS ANDRES",
+            "ojo": "OD",
+            "practica_nombre": "CATARATA CON FACOEMULSIFICACION",
+            "lleva_lente": True,
+            "lente_tipo": "Clareon Vivity (Alcon)",
+            "lente_dioptria": "19.5",
+            "es_torico": True,
+            "lente_torico_valor": 2,
+            "lente_torico_eje": 88,
+            "lio_calculado": False,
+            "observaciones_quirofano": None
+        },
+        # Caso 2: LIO cargado y formalmente CALCULADO
+        {
+            "id": "t-calculado",
+            "hora_inicio": "2026-11-10T09:00:00-03:00",
+            "paciente_nombre": "Pérez Juan",
+            "paciente_dni": "20111222",
+            "cirujano_nombre": "LABAT, CARLOS ANDRES",
+            "medico_derivador_nombre": "LABAT, CARLOS ANDRES",
+            "ojo": "OI",
+            "practica_nombre": "CATARATA CON FACOEMULSIFICACION",
+            "lleva_lente": True,
+            "lente_tipo": "Clareon Monofocal (Alcon)",
+            "lente_dioptria": "21.0",
+            "es_torico": False,
+            "lio_calculado": True,
+            "observaciones_quirofano": "Ojo único"
+        },
+        # Caso 3: Procedimiento sin LIO (Inyección)
+        {
+            "id": "t-inyeccion",
+            "hora_inicio": "2026-11-10T10:00:00-03:00",
+            "paciente_nombre": "Correa María Cristina",
+            "paciente_dni": "4654553",
+            "cirujano_nombre": "LABAT, CARLOS ANDRES",
+            "medico_derivador_nombre": "LABAT, CARLOS ANDRES",
+            "ojo": "AO",
+            "practica_nombre": "COLOCACION INYECCION INTRAVITREA",
+            "lleva_lente": False,
+            "lio_calculado": False
+        }
+    ]
+
+    pdf_bytes, sha256_hash = generar_pdf_agenda_prestadores(
+        prestador_info=prestador_info,
+        cirugias_list=cirugias,
+        fecha_cirugia_str="Martes 10 de Noviembre de 2026"
+    )
+
+    assert pdf_bytes.startswith(b"%PDF-")
+    assert len(pdf_bytes) > 2500
+    assert len(sha256_hash) == 64
+
+
 # ==============================================================================
 # 5. DEDUPLICACIÓN DE ROLES Y EXCLUSIÓN DE ANESTESISTAS / INSTRUMENTADORES
 # ==============================================================================
