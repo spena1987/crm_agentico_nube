@@ -67,6 +67,7 @@ import ModalDetalleCirugiaEnVivo from './ModalDetalleCirugiaEnVivo'
 import ModalPausaQuirurgicaOms from './modal/ModalPausaQuirurgicaOms'
 import ModalCartelesPechoA4 from './modal/ModalCartelesPechoA4'
 import ModalEnvioAgendasPrestadores from './ModalEnvioAgendasPrestadores'
+import ModalPlanillaQuirurgicaA4 from './modal/ModalPlanillaQuirurgicaA4'
 
 interface PizarraQuirofanoEnVivoProps {
   onEditarTurno?: (turno: any) => void
@@ -125,6 +126,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [indicacionesModalTurno, setIndicacionesModalTurno] = useState<any | null>(null)
   const [mostrarModalCartelesA4, setMostrarModalCartelesA4] = useState<boolean>(false)
   const [mostrarModalAgendasWA, setMostrarModalAgendasWA] = useState<boolean>(false)
+  const [mostrarModalPlanillaA4, setMostrarModalPlanillaA4] = useState<boolean>(false)
   const [turnoParaCartel, setTurnoParaCartel] = useState<string | null>(null)
 
   // Cargar preferencia de modo oscuro clínico y listener de fullscreen
@@ -1004,6 +1006,16 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           >
             <Printer size={15} />
             <span className="hidden sm:inline">Carteles A4</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMostrarModalPlanillaA4(true)}
+            className="px-3 py-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 rounded-xl border border-indigo-500/30 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
+            title="Emitir Planilla Quirúrgica Operativa Diaria de Control y LIO en formato A4 Landscape"
+          >
+            <FileText size={15} />
+            <span className="hidden sm:inline">Planilla A4</span>
           </button>
 
           <button
@@ -2123,6 +2135,17 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           turnos={turnos}
           quirofanos={quirofanos}
           initialTurnoId={turnoParaCartel}
+        />
+      )}
+
+      {/* 8.1. MODAL DE PLANILLA QUIRÚRGICA OPERATIVA DIARIA (A4 LANDSCAPE) */}
+      {mostrarModalPlanillaA4 && (
+        <ModalPlanillaQuirurgicaA4
+          isOpen={mostrarModalPlanillaA4}
+          onClose={() => setMostrarModalPlanillaA4(false)}
+          fecha={fecha}
+          quirofanos={quirofanos}
+          totalCirugias={turnos.length}
         />
       )}
 

@@ -28,6 +28,7 @@ import {
   Search,
   Timer,
   Check,
+  Layers,
   UserCheck,
   Syringe,
   FileText,
@@ -211,25 +212,49 @@ export default function FichaTurnoModal({
     lio_calculado_por: turno?.lio_calculado_por || casoConfirmadoInicial?.lio_calculado_por || '',
     lio_calculo_opciones: turno?.lio_calculo_opciones || casoConfirmadoInicial?.lio_calculo_opciones || [],
     lio_formula: turno?.lio_formula || casoConfirmadoInicial?.lio_formula || '',
-    lio_target_refractivo: turno?.lio_target_refractivo || casoConfirmadoInicial?.lio_target_refractivo || ''
+    lio_target_refractivo: turno?.lio_target_refractivo || casoConfirmadoInicial?.lio_target_refractivo || '',
+    hora_citacion_paciente: turno?.hora_citacion_paciente ? turno.hora_citacion_paciente.slice(0, 5) : '',
+    secuencia_ojo: turno?.secuencia_ojo || ''
   })
+
+  const sugerirHoraCitacion = (horaCir: string, duracionAntes = 50) => {
+    if (!horaCir) return ''
+    try {
+      const [hh, mm] = horaCir.slice(0, 5).split(':').map(Number)
+      let tot = hh * 60 + mm - duracionAntes
+      if (tot < 0) tot += 24 * 60
+      const hRes = Math.floor(tot / 60) % 24
+      const mRes = tot % 60
+      return `${String(hRes).padStart(2, '0')}:${String(mRes).padStart(2, '0')}`
+    } catch {
+      return ''
+    }
+  }
 
   // Sincronizar reactivamente formData si cambian las props de slot seleccionado o defecto
   useEffect(() => {
     if (slotSeleccionado) {
-      setFormData((prev) => ({
-        ...prev,
-        quirofano_id: slotSeleccionado.quirofanoId || prev.quirofano_id,
-        fecha_cirugia: slotSeleccionado.fecha || prev.fecha_cirugia,
-        hora_inicio: (slotSeleccionado.hora || prev.hora_inicio).slice(0, 5)
-      }))
+      setFormData((prev) => {
+        const hIni = (slotSeleccionado.hora || prev.hora_inicio).slice(0, 5)
+        return {
+          ...prev,
+          quirofano_id: slotSeleccionado.quirofanoId || prev.quirofano_id,
+          fecha_cirugia: slotSeleccionado.fecha || prev.fecha_cirugia,
+          hora_inicio: hIni,
+          hora_citacion_paciente: prev.hora_citacion_paciente || sugerirHoraCitacion(hIni)
+        }
+      })
     } else if (quirofanoDefectoId || fechaDefecto || horaDefecto) {
-      setFormData((prev) => ({
-        ...prev,
-        quirofano_id: prev.quirofano_id || quirofanoDefectoId || '',
-        fecha_cirugia: prev.fecha_cirugia || fechaDefecto || '',
-        hora_inicio: prev.hora_inicio || (horaDefecto ? horaDefecto.slice(0, 5) : '08:30')
-      }))
+      setFormData((prev) => {
+        const hIni = prev.hora_inicio || (horaDefecto ? horaDefecto.slice(0, 5) : '08:30')
+        return {
+          ...prev,
+          quirofano_id: prev.quirofano_id || quirofanoDefectoId || '',
+          fecha_cirugia: prev.fecha_cirugia || fechaDefecto || '',
+          hora_inicio: hIni,
+          hora_citacion_paciente: prev.hora_citacion_paciente || sugerirHoraCitacion(hIni)
+        }
+      })
     }
   }, [slotSeleccionado, quirofanoDefectoId, fechaDefecto, horaDefecto])
 
@@ -500,6 +525,8 @@ export default function FichaTurnoModal({
         duracion_minutos: Number(formData.duracion_minutos) || 20,
         fecha_cirugia: formData.fecha_cirugia || fechaDefecto || new Date().toISOString().slice(0, 10),
         hora_inicio: (formData.hora_inicio || horaDefecto || '08:30').slice(0, 5),
+        hora_citacion_paciente: formData.hora_citacion_paciente ? formData.hora_citacion_paciente.slice(0, 5) : null,
+        secuencia_ojo: formData.secuencia_ojo || null,
         lleva_lente: !!formData.lleva_lente,
         es_torico: !!formData.es_torico,
         lente_torico_valor: formData.es_torico ? Number(formData.lente_torico_valor) || 0 : null,
@@ -1543,6 +1570,56 @@ export default function FichaTurnoModal({
                   className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-blue-600 font-bold font-mono outline-none focus:border-blue-500"
                   required
                 />
+              </div>
+            </div>
+
+            {/* 4.1. Sistematización de H. PAC. (Hora de Citación) y Secuencia Bilateral (Número) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl bg-blue-50/50 dark:bg-slate-800/60 border border-blue-200/60 dark:border-slate-700/60">
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <Clock size={13} className="text-blue-500" />
+                    <span>H. PAC. (Hora Citación Paciente)</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, hora_citacion_paciente: sugerirHoraCitacion(formData.hora_inicio) })}
+                    className="text-[10px] font-bold text-blue-600 hover:text-blue-700 dark:text-blue-400 hover:underline flex items-center gap-0.5"
+                    title="Calcular 50 minutos antes de la hora de cirugía"
+                  >
+                    <span>↻ Sugerir (T-50m)</span>
+                  </button>
+                </div>
+                <input
+                  type="time"
+                  value={formData.hora_citacion_paciente}
+                  onChange={(e) => setFormData({ ...formData, hora_citacion_paciente: e.target.value })}
+                  placeholder={sugerirHoraCitacion(formData.hora_inicio) || '07:40'}
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-slate-800 dark:text-slate-100 font-mono font-bold outline-none focus:border-blue-500"
+                />
+                <span className="text-[10px] text-slate-400 mt-0.5 block">
+                  Ingreso a prequirófano para dilatación y anestesia
+                </span>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <Layers size={13} className="text-indigo-500" />
+                  <span>Secuencia Bilateral (Número)</span>
+                </label>
+                <select
+                  value={formData.secuencia_ojo}
+                  onChange={(e) => setFormData({ ...formData, secuencia_ojo: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold outline-none focus:border-indigo-500"
+                >
+                  <option value="">Automático (Infiere 1, 2 o U por historial)</option>
+                  <option value="1">1 — Primer Ojo</option>
+                  <option value="2">2 — Segundo Ojo (Contralateral)</option>
+                  <option value="U">U — Unilateral / Ojo Único</option>
+                </select>
+                <span className="text-[10px] text-slate-400 mt-0.5 block">
+                  Distintivo impreso en la columna N° de la Planilla Quirúrgica
+                </span>
               </div>
             </div>
 

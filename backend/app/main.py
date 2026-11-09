@@ -6083,6 +6083,90 @@ def listar_turnos_quirofano(
         logger.error(f"Error al listar turnos de quirófano: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/quirofanos/planilla-diaria-pdf")
+@app.get("/api/turnos-quirofano/planilla-diaria-pdf")
+def descargar_planilla_quirofano_diaria_pdf(
+    fecha: str = Query(..., description="Fecha de cirugías (YYYY-MM-DD)"),
+    quirofano_id: Optional[str] = Query("all", description="ID de sala o 'all'"),
+    tipo_filtro: Optional[str] = Query("todos", description="'todos', 'con_lio', 'sin_lio'")
+):
+    """
+    Genera y entrega en streaming la Planilla Quirúrgica Operativa Diaria en formato A4 Landscape.
+    Permite filtrar por sala quirúrgica y por alcance de procedimientos (con LIO o todos).
+    """
+    try:
+        from app.services.pdf_service import generar_pdf_planilla_quirofano_diaria
+
+        # 1. Obtener turnos para la fecha indicada
+        qid_filtro = None if not quirofano_id or quirofano_id.lower() == "all" else quirofano_id
+        turnos = get_turnos_quirofano(
+            fecha_desde=fecha,
+            fecha_hasta=fecha,
+            quirofano_id=qid_filtro
+        )
+
+        # Excluir turnos cancelados
+        turnos_activos = [t for t in turnos if str(t.get("estado", "")).lower() not in ("cancelado", "anulado")]
+
+        # 2. Filtrar por tipo de procedimiento si aplica
+        if tipo_filtro == "con_lio":
+            turnos_filtrados = [
+                t for t in turnos_activos 
+                if t.get("lleva_lente") or bool(t.get("lente_tipo")) or bool(t.get("lente_dioptria")) or bool(t.get("lente_modelo"))
+            ]
+        elif tipo_filtro == "sin_lio":
+            turnos_filtrados = [
+                t for t in turnos_activos 
+                if not (t.get("lleva_lente") or bool(t.get("lente_tipo")) or bool(t.get("lente_dioptria")) or bool(t.get("lente_modelo")))
+            ]
+        else:
+            turnos_filtrados = turnos_activos
+
+        # 3. Resolver nombre de sala para el encabezado
+        sala_nombre = "Todas las salas"
+        if qid_filtro:
+            for t in turnos_activos:
+                q_info = t.get("quirofanos") or {}
+                if str(t.get("quirofano_id")) == str(qid_filtro) and q_info.get("nombre"):
+                    sala_nombre = q_info.get("nombre")
+                    break
+
+        # 4. Obtener historial de turnos de los pacientes para inferencia de secuencia bilateral (1, 2, U)
+        historial_pacientes = {}
+        pacientes_ids = list({str(t.get("paciente_id")) for t in turnos_filtrados if t.get("paciente_id")})
+        if pacientes_ids and supabase:
+            try:
+                res_hist = supabase.table("turnos_quirofano").select(
+                    "id, paciente_id, fecha_cirugia, hora_inicio, ojo, estado, es_bilateral_escalonada, turno_par_id, secuencia_ojo"
+                ).in_("paciente_id", pacientes_ids).neq("estado", "cancelado").execute()
+                if res_hist.data:
+                    for h_t in res_hist.data:
+                        p_id = str(h_t.get("paciente_id"))
+                        historial_pacientes.setdefault(p_id, []).append(h_t)
+            except Exception as e_hist:
+                logger.warning(f"Error consultando historial bilateral de pacientes: {e_hist}")
+
+        # 5. Generar PDF
+        filtro_label = "Todos" if tipo_filtro == "todos" else ("Solo con LIO" if tipo_filtro == "con_lio" else "Sin LIO")
+        pdf_bytes, sha = generar_pdf_planilla_quirofano_diaria(
+            turnos=turnos_filtrados,
+            fecha_str=fecha,
+            sala_filtro=sala_nombre,
+            tipo_filtro=filtro_label,
+            turnos_historial_pacientes=historial_pacientes
+        )
+
+        filename = f"Planilla_Quirofano_{fecha}_{tipo_filtro}.pdf"
+        headers = {
+            "Content-Disposition": f"inline; filename={filename}",
+            "Content-Type": "application/pdf",
+            "X-SHA256-Checksum": sha
+        }
+        return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+    except Exception as e:
+        logger.error(f"Error generando planilla quirúrgica diaria en PDF: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generando planilla PDF: {str(e)}")
+
 @app.post("/api/turnos-quirofano")
 def crear_turno(payload: Dict[str, Any] = Body(...)):
     try:

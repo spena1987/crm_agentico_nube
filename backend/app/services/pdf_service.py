@@ -5,10 +5,11 @@ import base64
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import letter, A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from reportlab.pdfgen import canvas
 
 from app.services.config_service import load_settings, obtener_o_cachear_logo_local, obtener_o_cachear_firma_local
 
@@ -2126,3 +2127,545 @@ def generar_pdf_agenda_prestadores(
 
     sha256_hash = hashlib.sha256(pdf_bytes).hexdigest()
     return pdf_bytes, sha256_hash
+
+
+class NumberedCanvasLandscapeA4(canvas.Canvas):
+    """
+    Canvas de ReportLab de 2 pasadas para calcular y dibujar dinámicamente
+    el total de páginas ('Página X de Y') y membrete legal inferior en orientación A4 apaisada.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_page_decorations(num_pages)
+            super().showPage()
+        super().save()
+
+    def draw_page_decorations(self, page_count: int):
+        self.saveState()
+        self.setFont("Helvetica", 7)
+        self.setFillColor(colors.HexColor("#64748B"))
+        # A4 Landscape: width = 841.89 pt, height = 595.27 pt
+        footer_text = "Centrovisión · Planilla Operativa de Quirófano y Control de LIO · Confidencial · Uso Interno Exclusivo"
+        self.drawString(24, 12, footer_text)
+        page_text = f"Página {self._pageNumber} de {page_count}"
+        self.drawRightString(841.89 - 24, 12, page_text)
+        self.restoreState()
+
+
+def calcular_hora_citacion_sugerida(hora_cirugia: Optional[str], duracion_minutos_antes: int = 50) -> str:
+    """
+    Resta los minutos sugeridos (por defecto 50 min para cataratas) a la hora de cirugía.
+    Retorna cadena 'HH:MM'. Si la hora no es válida, retorna '--:--'.
+    """
+    if not hora_cirugia:
+        return "--:--"
+    try:
+        s = str(hora_cirugia).strip().lower().replace("hs", "").strip()
+        if "t" in s:
+            s = s.split("t")[1]
+        partes = s.split(":")
+        hh, mm = int(partes[0]), int(partes[1])
+        minutos_totales = hh * 60 + mm - duracion_minutos_antes
+        if minutos_totales < 0:
+            minutos_totales += 24 * 60
+        hh_res = (minutos_totales // 60) % 24
+        mm_res = minutos_totales % 60
+        return f"{hh_res:02d}:{mm_res:02d}"
+    except Exception:
+        return "--:--"
+
+
+def inferir_secuencia_ojo(turno: Dict[str, Any], otros_turnos_paciente: Optional[List[Dict[str, Any]]] = None) -> str:
+    """
+    Infiere o resuelve la secuencia ocular de la intervención:
+    - '1': Primer ojo intervenido
+    - '2': Segundo ojo intervenido (contralateral)
+    - 'U': Unilateral / Ojo único
+    Respeta overrides manuales ('secuencia_ojo' en la base de datos).
+    """
+    secuencia_manual = turno.get("secuencia_ojo")
+    if secuencia_manual:
+        sm = str(secuencia_manual).strip().upper()
+        if sm in ("1", "1°", "1ERO", "PRIMERO"):
+            return "1"
+        if sm in ("2", "2°", "2DO", "SEGUNDO"):
+            return "2"
+        if sm in ("U", "UNILATERAL", "UNICO", "ÚNICO"):
+            return "U"
+        if sm in ("1", "2", "U"):
+            return sm
+
+    if not otros_turnos_paciente or len(otros_turnos_paciente) <= 1:
+        if turno.get("es_bilateral_escalonada"):
+            if turno.get("turno_par_id") and turno.get("id") and str(turno.get("turno_par_id")) != str(turno.get("id")):
+                return "2"
+            return "1"
+        return "U"
+
+    turnos_validos = [
+        t for t in otros_turnos_paciente
+        if str(t.get("estado", "")).lower() not in ("cancelado", "anulado")
+    ]
+    if len(turnos_validos) <= 1:
+        return "U"
+
+    def turno_sort_key(t):
+        f = str(t.get("fecha_cirugia") or "9999-99-99")
+        h = str(t.get("hora_inicio") or "99:99")
+        return (f, h)
+
+    turnos_ordenados = sorted(turnos_validos, key=turno_sort_key)
+    turno_id = str(turno.get("id") or "")
+
+    for idx, t in enumerate(turnos_ordenados):
+        if turno_id and str(t.get("id") or "") == turno_id:
+            return "1" if idx == 0 else "2"
+
+    f_curr = str(turno.get("fecha_cirugia") or "")
+    h_curr = str(turno.get("hora_inicio") or "")
+    for idx, t in enumerate(turnos_ordenados):
+        if str(t.get("fecha_cirugia") or "") == f_curr and str(t.get("hora_inicio") or "") == h_curr:
+            return "1" if idx == 0 else "2"
+
+    return "U"
+
+
+def generar_pdf_planilla_quirofano_diaria(
+    turnos: List[Dict[str, Any]],
+    fecha_str: str,
+    sala_filtro: Optional[str] = "Todas las salas",
+    tipo_filtro: Optional[str] = "Todos",
+    config_override: Optional[Dict[str, Any]] = None,
+    turnos_historial_pacientes: Optional[Dict[str, List[Dict[str, Any]]]] = None
+) -> tuple[bytes, str]:
+    """
+    Genera la Planilla Quirúrgica Operativa Diaria en formato A4 Landscape (793.8 pt útiles)
+    con la estructura exacta de 14 columnas requerida por el personal de quirófano de Centrovisión.
+
+    Estructura de Columnas (Total: 793.8 pt):
+    1.  Fecha (42 pt)
+    2.  H. PAC. (38 pt)
+    3.  H. CIR. (38 pt)
+    4.  HC (44 pt)
+    5.  PACIENTE (112 pt)
+    6.  Número (20 pt)
+    7.  OJO (24 pt) - con badge cromático rojo (OD) o verde (OI)
+    8.  LENTE (70 pt)
+    9.  DIOPTRIA (52 pt)
+    10. OBS (105 pt) - Incisión, eje tórico, alertas clínicas y [PENDIENTE DE CÁLCULO]
+    11. Cirujano (75 pt)
+    12. DERIVADOR (65 pt)
+    13. ANESTESISTA (55 pt)
+    14. OBRA SOCIAL (53.8 pt)
+
+    Retorna (pdf_bytes, sha256_hash).
+    """
+    settings = config_override or load_settings()
+    nombre_inst = settings.get("nombre_institucion", "Centrovisión - Cirugía Oftalmológica")
+    buffer = io.BytesIO()
+
+    # Documento A4 apaisado con márgenes mínimos de 24 pt
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        leftMargin=24,
+        rightMargin=24,
+        topMargin=20,
+        bottomMargin=24
+    )
+
+    styles = getSampleStyleSheet()
+    style_normal = styles["Normal"]
+
+    style_title = ParagraphStyle(
+        'PlanillaTitle',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=12,
+        leading=14,
+        textColor=colors.HexColor('#0F172A')
+    )
+    style_sub = ParagraphStyle(
+        'PlanillaSub',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        leading=11,
+        textColor=colors.HexColor('#0284C7')
+    )
+    style_meta = ParagraphStyle(
+        'PlanillaMeta',
+        parent=style_normal,
+        fontName='Helvetica',
+        fontSize=7.5,
+        leading=9.5,
+        textColor=colors.HexColor('#334155')
+    )
+    style_meta_bold = ParagraphStyle(
+        'PlanillaMetaBold',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#0F172A')
+    )
+    style_th = ParagraphStyle(
+        'PlanillaTH',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=7,
+        leading=8.5,
+        textColor=colors.white,
+        alignment=1  # Centered
+    )
+    style_cell_center = ParagraphStyle(
+        'PlanillaCellCenter',
+        parent=style_normal,
+        fontName='Helvetica',
+        fontSize=7,
+        leading=8.5,
+        textColor=colors.HexColor('#1E293B'),
+        alignment=1  # Centered
+    )
+    style_cell_center_bold = ParagraphStyle(
+        'PlanillaCellCenterBold',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=7.5,
+        leading=9,
+        textColor=colors.HexColor('#0F172A'),
+        alignment=1  # Centered
+    )
+    style_cell_left = ParagraphStyle(
+        'PlanillaCellLeft',
+        parent=style_normal,
+        fontName='Helvetica',
+        fontSize=6.8,
+        leading=8.2,
+        textColor=colors.HexColor('#1E293B'),
+        alignment=0  # Left
+    )
+    style_cell_left_bold = ParagraphStyle(
+        'PlanillaCellLeftBold',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=7.2,
+        leading=8.5,
+        textColor=colors.HexColor('#0F172A'),
+        alignment=0  # Left
+    )
+    style_eye_od = ParagraphStyle(
+        'EyeOD',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        leading=9,
+        textColor=colors.white,
+        alignment=1
+    )
+    style_eye_oi = ParagraphStyle(
+        'EyeOI',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        leading=9,
+        textColor=colors.white,
+        alignment=1
+    )
+    style_eye_gen = ParagraphStyle(
+        'EyeGen',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        leading=9,
+        textColor=colors.white,
+        alignment=1
+    )
+
+    story = []
+
+    # 1. Encabezado Institucional Compacto
+    logo_path = obtener_o_cachear_logo_local()
+    logo_flowable = None
+    if logo_path and os.path.exists(logo_path):
+        try:
+            logo_flowable = RLImage(logo_path, width=95, height=28)
+        except Exception as e:
+            logger.warning(f"No se pudo cargar logo en planilla diaria: {e}")
+
+    header_titles = [
+        Paragraph(nombre_inst.upper(), style_title),
+        Paragraph("PLANILLA DE CONTROL QUIRÚRGICO Y LIO (A4 LANDSCAPE)", style_sub),
+    ]
+
+    cant_cirugias = len(turnos)
+    meta_lines = [
+        Paragraph(f"<b>FECHA:</b> {fecha_str} &nbsp;&nbsp;|&nbsp;&nbsp; <b>SALA:</b> {sala_filtro or 'Todas las salas'} &nbsp;&nbsp;|&nbsp;&nbsp; <b>ALCANCE:</b> {tipo_filtro or 'Todos'}", style_meta_bold),
+        Paragraph(f"<b>TOTAL PACIENTES:</b> {cant_cirugias} &nbsp;&nbsp;|&nbsp;&nbsp; <b>EMISIÓN:</b> {parsear_fecha_hora_argentina()} hs", style_meta),
+    ]
+
+    if logo_flowable:
+        t_header = Table([[logo_flowable, header_titles, meta_lines]], colWidths=[105, 360, 328.8])
+    else:
+        t_header = Table([[header_titles, meta_lines]], colWidths=[450, 343.8])
+
+    t_header.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+        ('TOPPADDING', (0,0), (-1,-1), 0),
+        ('LEFTPADDING', (0,0), (-1,-1), 2),
+        ('RIGHTPADDING', (0,0), (-1,-1), 2),
+    ]))
+    story.append(t_header)
+    story.append(Spacer(1, 6))
+
+    # 2. Definición de Columnas de la Tabla
+    # Total ancho imprimible: 793.8 pt
+    col_widths = [42, 38, 38, 44, 112, 20, 24, 70, 52, 105, 75, 65, 55, 53.8]
+
+    headers = [
+        Paragraph("Fecha", style_th),
+        Paragraph("H. PAC.", style_th),
+        Paragraph("H. CIR.", style_th),
+        Paragraph("HC", style_th),
+        Paragraph("PACIENTE / DNI", style_th),
+        Paragraph("N°", style_th),
+        Paragraph("OJO", style_th),
+        Paragraph("LENTE", style_th),
+        Paragraph("DIOPTRIA", style_th),
+        Paragraph("OBSERVACIONES / LIO", style_th),
+        Paragraph("Cirujano", style_th),
+        Paragraph("DERIVADOR", style_th),
+        Paragraph("ANESTESIA", style_th),
+        Paragraph("OBRA SOCIAL", style_th),
+    ]
+
+    tabla_data = [headers]
+    table_style_commands = [
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0F172A')),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')]),
+        ('TOPPADDING', (0, 0), (-1, -1), 2.5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 2.5),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 2.5),
+        # Alineación de contenido
+        ('ALIGN', (0, 1), (3, -1), 'CENTER'),   # Fecha, H.PAC, H.CIR, HC
+        ('ALIGN', (4, 1), (4, -1), 'LEFT'),     # Paciente
+        ('ALIGN', (5, 1), (6, -1), 'CENTER'),   # N°, OJO
+        ('ALIGN', (7, 1), (7, -1), 'LEFT'),     # Lente
+        ('ALIGN', (8, 1), (8, -1), 'CENTER'),   # Dioptria
+        ('ALIGN', (9, 1), (-1, -1), 'LEFT'),    # OBS, Cirujano, Derivador, Anestesia, Obra Social
+    ]
+
+    historial_map = turnos_historial_pacientes or {}
+
+    for row_idx, t in enumerate(turnos, start=1):
+        # 1. Fecha (DD-MM)
+        f_raw = str(t.get("fecha_cirugia") or "")
+        f_disp = "--"
+        if f_raw:
+            try:
+                partes_f = f_raw.split("-")
+                if len(partes_f) == 3:
+                    f_disp = f"{partes_f[2]}-{partes_f[1]}"
+                else:
+                    f_disp = f_raw[:5]
+            except Exception:
+                f_disp = f_raw[:5]
+
+        # 2. H. CIR.
+        h_cir_raw = t.get("hora_inicio")
+        h_cir = "--:--"
+        if h_cir_raw:
+            try:
+                s_h = str(h_cir_raw).strip()
+                if "T" in s_h:
+                    s_h = s_h.split("T")[1]
+                h_cir = s_h[:5]
+            except Exception:
+                h_cir = str(h_cir_raw)[:5]
+
+        # 3. H. PAC. (hora citación)
+        h_pac_raw = t.get("hora_citacion_paciente")
+        if h_pac_raw:
+            try:
+                s_hp = str(h_pac_raw).strip()
+                if "T" in s_hp:
+                    s_hp = s_hp.split("T")[1]
+                h_pac = s_hp[:5]
+            except Exception:
+                h_pac = str(h_pac_raw)[:5]
+        else:
+            # Cálculo sugerido reactivo: 50 min antes de la cirugía
+            h_pac = calcular_hora_citacion_sugerida(h_cir, duracion_minutos_antes=50)
+
+        # 4. HC (Historia Clínica)
+        paciente_info = t.get("pacientes") or {}
+        hc_val = (
+            paciente_info.get("historia_clinica")
+            or paciente_info.get("geclisa_id")
+            or t.get("paciente_historia_clinica")
+            or (str(t.get("paciente_id") or "")[:6] if t.get("paciente_id") else "-")
+        )
+
+        # 5. PACIENTE / DNI
+        p_nom = (
+            t.get("paciente_nombre")
+            or paciente_info.get("nombre")
+            or "SIN NOMBRE"
+        ).strip().upper()
+        p_dni = (
+            t.get("paciente_dni")
+            or t.get("dni")
+            or paciente_info.get("dni")
+            or "-"
+        )
+        p_dni_fmt = formatear_dni(p_dni) if p_dni != "-" else "-"
+        p_celda = f"<b>{p_nom}</b><br/><font color='#64748B' size=6>DNI: {p_dni_fmt}</font>"
+
+        # 6. Número (Secuencia 1, 2, U)
+        pac_id = str(t.get("paciente_id") or "")
+        hist_pac = historial_map.get(pac_id, [])
+        sec_val = inferir_secuencia_ojo(t, otros_turnos_paciente=hist_pac)
+
+        # 7. OJO
+        ojo_raw = str(t.get("ojo") or "OD").strip().upper()
+        ojo_val = "OD" if "OD" in ojo_raw else ("OI" if "OI" in ojo_raw else ("AO" if "AO" in ojo_raw else ojo_raw[:2]))
+        
+        # Color del badge de lateralidad
+        if ojo_val == "OD":
+            table_style_commands.append(('BACKGROUND', (6, row_idx), (6, row_idx), colors.HexColor('#DC2626')))
+            eye_style = style_eye_od
+        elif ojo_val == "OI":
+            table_style_commands.append(('BACKGROUND', (6, row_idx), (6, row_idx), colors.HexColor('#16A34A')))
+            eye_style = style_eye_oi
+        else:
+            table_style_commands.append(('BACKGROUND', (6, row_idx), (6, row_idx), colors.HexColor('#2563EB')))
+            eye_style = style_eye_gen
+
+        # 8. LENTE
+        lleva_lio = t.get("lleva_lente") or bool(t.get("lente_tipo")) or bool(t.get("lente_dioptria")) or bool(t.get("lente_modelo"))
+        if lleva_lio:
+            lente_mod = str(t.get("lente_tipo") or t.get("lente_modelo") or t.get("lente_marca") or "LIO Estándar").strip()
+        else:
+            lente_mod = "Sin LIO"
+
+        # 9. DIOPTRIA
+        dioptria_lines = []
+        if lleva_lio and t.get("lente_dioptria"):
+            dioptria_lines.append(f"<b>{t.get('lente_dioptria')} D</b>")
+        
+        es_tor = t.get("es_torico") or bool(t.get("lente_torico_valor"))
+        tor_val = t.get("lente_torico_valor")
+        if es_tor and tor_val:
+            prefix_t = f"T{tor_val}" if str(tor_val).isdigit() else str(tor_val)
+            dioptria_lines.append(f"<font color='#0284C7' size=6>{prefix_t}</font>")
+        
+        diop_str = "<br/>".join(dioptria_lines) if dioptria_lines else "-"
+
+        # 10. OBSERVACIONES / LIO (Incisión, Eje, Pendiente, Observaciones Clínicas)
+        obs_parts = []
+        
+        # Incisión
+        inc_val = t.get("lente_incision_grados")
+        if inc_val:
+            obs_parts.append(f"<b>Inc:</b> {inc_val}°")
+            
+        # Eje tórico
+        tor_eje = t.get("lente_torico_eje")
+        if es_tor and tor_eje is not None:
+            obs_parts.append(f"<b>EJE:</b> {tor_eje}°")
+
+        # Alerta LIO Pendiente de Cálculo
+        if lleva_lio and not t.get("lio_calculado", False):
+            obs_parts.append("<font color='#C2410C'><b>[PENDIENTE DE CÁLCULO]</b></font>")
+
+        # Observaciones médicas prioritarias
+        obs_med = (
+            t.get("observaciones_quirofano")
+            or t.get("observaciones")
+            or t.get("observaciones_medicas")
+            or ""
+        ).strip()
+        if obs_med:
+            obs_parts.append(obs_med[:100])
+
+        obs_final_str = " · ".join(obs_parts) if obs_parts else "-"
+
+        # 11. Cirujano
+        cirujano_str = t.get("cirujano_nombre") or "-"
+        if len(cirujano_str) > 22:
+            cirujano_str = cirujano_str[:22] + "..."
+
+        # 12. DERIVADOR
+        derivador_str = (
+            t.get("medico_derivador_nombre")
+            or (t.get("asesorias_quirurgicas") or {}).get("medico_derivador_nombre")
+            or "-"
+        )
+        if len(derivador_str) > 18:
+            derivador_str = derivador_str[:18] + "..."
+
+        # 13. ANESTESISTA
+        anestesia_str = t.get("anestesiologo_nombre") or t.get("tipo_anestesia") or "Tópica"
+        if len(anestesia_str) > 15:
+            anestesia_str = anestesia_str[:15] + "..."
+
+        # 14. OBRA SOCIAL
+        os_str = (
+            t.get("obra_social")
+            or t.get("codigo_obra_social")
+            or (t.get("pacientes") or {}).get("obra_social")
+            or "-"
+        )
+        if len(os_str) > 16:
+            os_str = os_str[:16] + "..."
+
+        # Ensamblado de fila
+        fila = [
+            Paragraph(f_disp, style_cell_center),
+            Paragraph(f"<b>{h_pac}</b>", style_cell_center_bold),
+            Paragraph(f"<b>{h_cir}</b>", style_cell_center_bold),
+            Paragraph(str(hc_val), style_cell_center),
+            Paragraph(p_celda, style_cell_left),
+            Paragraph(f"<b>{sec_val}</b>", style_cell_center_bold),
+            Paragraph(ojo_val, eye_style),
+            Paragraph(lente_mod, style_cell_left),
+            Paragraph(diop_str, style_cell_center),
+            Paragraph(obs_final_str, style_cell_left),
+            Paragraph(cirujano_str, style_cell_left),
+            Paragraph(derivador_str, style_cell_left),
+            Paragraph(anestesia_str, style_cell_left),
+            Paragraph(os_str, style_cell_left),
+        ]
+        tabla_data.append(fila)
+
+    t_principal = Table(
+        tabla_data,
+        colWidths=col_widths,
+        repeatRows=1
+    )
+    t_principal.setStyle(TableStyle(table_style_commands))
+    story.append(t_principal)
+
+    # Compilación del documento PDF con NumberedCanvasLandscapeA4
+    doc.build(story, canvasmaker=NumberedCanvasLandscapeA4)
+    pdf_bytes = buffer.getvalue()
+    buffer.close()
+
+    sha256_hash = hashlib.sha256(pdf_bytes).hexdigest()
+    return pdf_bytes, sha256_hash
+
