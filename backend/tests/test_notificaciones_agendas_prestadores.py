@@ -23,7 +23,7 @@ from app.services.notificacion_prestadores_service import (
     formatear_fecha_espanol,
     NotificacionPrestadoresService
 )
-from app.services.pdf_service import generar_pdf_agenda_prestadores, enmascarar_dni
+from app.services.pdf_service import generar_pdf_agenda_prestadores, enmascarar_dni, formatear_dni
 
 
 # ==============================================================================
@@ -106,6 +106,15 @@ def test_enmascarar_dni():
     assert enmascarar_dni("4567890") == "XX.XXX.890"
     assert enmascarar_dni(None) == "S/D"
     assert enmascarar_dni("") == "S/D"
+
+
+def test_formatear_dni():
+    assert formatear_dni("018081249") == "18.081.249"
+    assert formatear_dni("34567890") == "34.567.890"
+    assert formatear_dni("4567890") == "4.567.890"
+    assert formatear_dni(None) == "S/D"
+    assert formatear_dni("") == "S/D"
+    assert formatear_dni("-") == "S/D"
 
 
 def test_generar_pdf_agenda_prestadores_valido():
@@ -238,6 +247,44 @@ def test_clasificar_y_agrupar_destinatarios_deduplicacion_y_exclusion():
         # 4. Anestesista e Instrumentador NO deben aparecer como destinatarios
         assert "anest-99" not in agrupados
         assert "inst-88" not in agrupados
+
+
+def test_deduplicacion_mismo_medico_cirujano_y_derivador():
+    """
+    Verifica que si un médico es cirujano y derivador en la misma cirugía,
+    se le asigne una ÚNICA fila en su lista de cirugías (no se duplique).
+    """
+    mock_turnos = [
+        {
+            "id": "turno-doble-rol",
+            "cirujano_id": "p-gras",
+            "cirujano_nombre": "GRAS, HERNAN",
+            "medico_derivador_nombre": "GRAS, HERNAN",
+            "quirofano": "Q1",
+            "paciente_nombre": "RODRIGUEZ, MARCELA",
+            "paciente_dni": "018081249"
+        }
+    ]
+
+    mock_prestador = {
+        "id": "p-gras",
+        "geclisa_pre_id": 55,
+        "nombre_apellido": "Hernán Gras",
+        "telefono": "2614703230",
+        "activo": True
+    }
+
+    with patch("app.services.notificacion_prestadores_service.obtener_prestador_por_cirujano", return_value=mock_prestador):
+        agrupados = NotificacionPrestadoresService.clasificar_y_agrupar_destinatarios(mock_turnos)
+
+        assert "p-gras" in agrupados
+        gras = agrupados["p-gras"]
+        # Debe tener ambos roles en la cabecera
+        assert "Cirujano Principal" in gras["roles"]
+        assert "Médico Derivador" in gras["roles"]
+        # Debe tener EXACTAMENTE 1 sola cirugía en la lista (no 2 filas duplicadas)
+        assert len(gras["cirugias"]) == 1
+        assert gras["cirugias"][0]["id"] == "turno-doble-rol"
 
 
 # ==============================================================================

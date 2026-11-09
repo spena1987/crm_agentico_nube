@@ -1841,6 +1841,21 @@ import hashlib
 import io
 from reportlab.lib.pagesizes import A4
 
+def formatear_dni(dni_val: Any) -> str:
+    """Formatea el DNI separando por miles para identificación clínica, ej: 18.081.249"""
+    if not dni_val:
+        return "S/D"
+    s = re.sub(r'\D', '', str(dni_val))
+    if not s:
+        return "S/D"
+    try:
+        dni_num = int(s)
+        if dni_num > 1000000:
+            return f"{dni_num:,}".replace(",", ".")
+        return str(dni_num)
+    except Exception:
+        return s
+
 def enmascarar_dni(dni_val: Any) -> str:
     """Enmascara el DNI por protección de datos de salud (Ley 25.326), ej: XX.XXX.123"""
     if not dni_val:
@@ -2005,29 +2020,29 @@ def generar_pdf_agenda_prestadores(
 
     # 3. Tabla Cronológica de Cirugías
     # Ancho total A4 imprimible: 547 pt
-    # ColWidths: Horario (45), Quirófano (55), Paciente & DNI (115), Procedimiento & Ojo (122), Rol (65), Detalles LIO & Notas (145)
+    # ColWidths: Horario (45), Paciente & DNI (115), Cirujano (85), Derivador (85), Ojo y Práctica (102), LIO & Indicaciones (115)
     tabla_rows = [
         [
             Paragraph("Hora", style_header_th),
-            Paragraph("Sala", style_header_th),
             Paragraph("Paciente / DNI", style_header_th),
+            Paragraph("Cirujano", style_header_th),
+            Paragraph("Derivador", style_header_th),
             Paragraph("Ojo y Práctica", style_header_th),
-            Paragraph("Rol Médico", style_header_th),
             Paragraph("LIO / Incisión / Indicaciones", style_header_th),
         ]
     ]
 
     for c in cirugias_list:
         hora = parsear_hora_argentina(c.get("hora_inicio"), fallback="--:--")
-        quirofano = c.get("quirofano_nombre") or c.get("quirofano") or "Q1"
         paciente = c.get("paciente_nombre", "Sin Nombre")
-        dni_mask = enmascarar_dni(c.get("paciente_dni") or c.get("dni"))
+        dni_raw = c.get("paciente_dni") or c.get("dni")
+        dni_fmt = formatear_dni(dni_raw)
+        
+        cirujano = c.get("cirujano_nombre") or "-"
+        derivador = c.get("medico_derivador_nombre") or "-"
         
         ojo = c.get("ojo", "OD")
         practica = c.get("practica_nombre") or c.get("practica") or "Cirugía Oftalmológica"
-        
-        rol_turno = c.get("rol_en_turno", "Cirujano Principal")
-        style_rol = style_badge_derivador if "Derivador" in rol_turno else style_badge_cirujano
 
         # Detalles de Lente Intraocular
         lio_parts = []
@@ -2048,17 +2063,17 @@ def generar_pdf_agenda_prestadores(
 
         row = [
             Paragraph(f"<b>{hora}</b>", style_cell_bold),
-            Paragraph(quirofano, style_cell),
-            Paragraph(f"<b>{paciente}</b><br/><font color='#64748B'>{dni_mask}</font>", style_cell),
+            Paragraph(f"<b>{paciente}</b><br/><font color='#64748B'>DNI: {dni_fmt}</font>", style_cell),
+            Paragraph(cirujano, style_cell),
+            Paragraph(derivador, style_cell),
             Paragraph(f"<b>{ojo}</b> — {practica}", style_cell),
-            Paragraph(f"<b>{rol_turno}</b>", style_rol),
             Paragraph(lio_text, style_cell)
         ]
         tabla_rows.append(row)
 
     t_cirugias = Table(
         tabla_rows,
-        colWidths=[45, 55, 115, 122, 65, 145],
+        colWidths=[45, 115, 85, 85, 102, 115],
         repeatRows=1
     )
     t_cirugias.setStyle(TableStyle([

@@ -119,17 +119,26 @@ class NotificacionPrestadoresService:
 
     @classmethod
     def obtener_cirugias_por_fecha(cls, fecha_cirugia: str) -> List[Dict[str, Any]]:
-        """Consulta turnos activos para una fecha determinada en turnos_quirofano."""
+        """Consulta turnos activos para una fecha determinada en turnos_quirofano con enriquecimiento de pacientes."""
         if not supabase:
             return []
         try:
             resp = supabase.table("turnos_quirofano")\
-                .select("*")\
+                .select("*, pacientes(id, nombre, dni, obra_social), quirofanos(nombre, codigo)")\
                 .eq("fecha_cirugia", fecha_cirugia)\
                 .neq("estado", "cancelado")\
                 .order("hora_inicio", desc=False)\
                 .execute()
-            return resp.data or []
+            data = resp.data or []
+            for t in data:
+                pac = t.get("pacientes") or {}
+                if pac:
+                    t["paciente_nombre"] = pac.get("nombre") or t.get("paciente_nombre") or "Sin Nombre"
+                    t["paciente_dni"] = pac.get("dni") or t.get("paciente_dni") or ""
+                q = t.get("quirofanos") or {}
+                if q:
+                    t["quirofano_nombre"] = q.get("nombre") or t.get("quirofano") or "Q1"
+            return data
         except Exception as e:
             logger.error(f"[NotificacionPrestadores] Error consultando turnos para {fecha_cirugia}: {e}")
             return []
@@ -139,7 +148,7 @@ class NotificacionPrestadoresService:
         """
         Agrupa los turnos por prestador resolviendo identidades.
         Si un prestador actúa como cirujano y derivador en el mismo día, se consolida
-        en una sola entrada con sus cirugías diferenciadas.
+        en una sola entrada con exactamente 1 fila por cirugía asignada (sin duplicaciones).
         Excluye expresamente turnos asignados a anestesistas o instrumentadores.
         """
         prestadores_map: Dict[str, Dict[str, Any]] = {}
@@ -171,7 +180,9 @@ class NotificacionPrestadoresService:
                 prestadores_map[p_key]["roles"].add("Cirujano Principal")
                 turno_cir = dict(t)
                 turno_cir["rol_en_turno"] = "Cirujano Principal"
-                prestadores_map[p_key]["cirugias"].append(turno_cir)
+                # Garantizar que una cirugía solo aparezca 1 vez por prestador
+                if not any(c.get("id") == t.get("id") for c in prestadores_map[p_key]["cirugias"]):
+                    prestadores_map[p_key]["cirugias"].append(turno_cir)
 
             # 2. Procesar rol de Médico Derivador
             if derivador_nom:
@@ -196,8 +207,8 @@ class NotificacionPrestadoresService:
                     prestadores_map[d_key]["roles"].add("Médico Derivador")
                     turno_der = dict(t)
                     turno_der["rol_en_turno"] = "Médico Derivador"
-                    # Evitar duplicar el mismo turno si el prestador ya lo tiene en otro rol
-                    if not any(c.get("id") == t.get("id") and c.get("rol_en_turno") == "Médico Derivador" for c in prestadores_map[d_key]["cirugias"]):
+                    # Garantizar que una cirugía solo aparezca 1 vez por prestador
+                    if not any(c.get("id") == t.get("id") for c in prestadores_map[d_key]["cirugias"]):
                         prestadores_map[d_key]["cirugias"].append(turno_der)
                 else:
                     # Derivador no resoluble en catálogo
@@ -215,7 +226,8 @@ class NotificacionPrestadoresService:
                         }
                     turno_der = dict(t)
                     turno_der["rol_en_turno"] = "Médico Derivador (No resuelto)"
-                    prestadores_map[d_key]["cirugias"].append(turno_der)
+                    if not any(c.get("id") == t.get("id") for c in prestadores_map[d_key]["cirugias"]):
+                        prestadores_map[d_key]["cirugias"].append(turno_der)
 
         # Convertir sets de roles a listas ordenadas
         for p in prestadores_map.values():
