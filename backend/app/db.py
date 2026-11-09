@@ -10522,7 +10522,7 @@ def registrar_log_notificacion_prestador(datos: Dict[str, Any]) -> Dict[str, Any
     if not supabase:
         return {}
     try:
-        resp = supabase.table("notificaciones_prestadores_logs").upsert(datos, on_conflict="fecha_cirugia, fecha_corte, prestador_id").execute()
+        resp = supabase.table("notificaciones_prestadores_logs").upsert(datos, on_conflict="fecha_cirugia,fecha_corte,prestador_id").execute()
         return resp.data[0] if resp.data else datos
     except Exception as e:
         logger.error(f"Error al registrar log de notificación de prestador: {e}")
