@@ -401,12 +401,28 @@ class NotificacionPrestadoresService:
                     }
                 ]
 
-                res_wa = await wa_client.send_template(
-                    to_phone=tel_norm,
-                    template_name=template_name,
-                    language_code=lang_code,
-                    components=components
-                )
+                try:
+                    res_wa = await wa_client.send_template(
+                        to_phone=tel_norm,
+                        template_name=template_name,
+                        language_code=lang_code,
+                        components=components
+                    )
+                except Exception as e_tpl:
+                    err_str = str(e_tpl)
+                    if "132001" in err_str and template_name != "entrega_estudio_oftalmologico_pdf":
+                        logger.warning(
+                            f"[NotificacionPrestadores] Plantilla '{template_name}' no aprobada aún en Meta (132001). "
+                            f"Aplicando fallback transitorio a 'entrega_estudio_oftalmologico_pdf' para garantizar entrega."
+                        )
+                        res_wa = await wa_client.send_template(
+                            to_phone=tel_norm,
+                            template_name="entrega_estudio_oftalmologico_pdf",
+                            language_code="es_AR",
+                            components=components
+                        )
+                    else:
+                        raise e_tpl
 
                 wamid = res_wa.get("wamid")
 

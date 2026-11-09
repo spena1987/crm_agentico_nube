@@ -8443,11 +8443,54 @@ def eliminar_prestador(prestador_id: str) -> bool:
         return False
 
 
+def _seleccionar_mejor_prestador_candidato(candidatos: List[Dict[str, Any]], clean_nom: str) -> Optional[Dict[str, Any]]:
+    """
+    Evalúa una lista de candidatos devueltos por la base de datos y selecciona
+    el registro legítimo y vigente, priorizando coincidencia exacta, activos y con teléfono celular,
+    y penalizando aliases o registros marcados como 'NO USAR' o 'ESPECIALES -'.
+    """
+    if not candidatos:
+        return None
+    target_clean = clean_nom.strip().lower()
+
+    def score(c: Dict[str, Any]) -> int:
+        s = 0
+        nom = (c.get("nombre_apellido") or "").strip()
+        nom_lower = nom.lower()
+
+        # Coincidencia exacta con el nombre buscado
+        if nom_lower == target_clean:
+            s += 1000
+
+        # Priorizar prestador activo
+        if c.get("activo", True):
+            s += 200
+
+        # Priorizar prestador que posea número celular registrado
+        tel = (c.get("telefono") or "").strip()
+        digits = re.sub(r'\D', '', tel)
+        if len(digits) >= 8:
+            s += 500
+
+        # Penalizar registros deprecados u obsoletos
+        if "no usar" in nom_lower or "no utilizar" in nom_lower or "baja" in nom_lower:
+            s -= 2000
+        if "especiales -" in nom_lower or "especiales-" in nom_lower:
+            s -= 800
+
+        # Penalizar diferencia de longitud respecto al nombre buscado
+        s -= abs(len(nom) - len(clean_nom)) * 2
+        return s
+
+    return max(candidatos, key=score)
+
+
 def obtener_prestador_por_cirujano(medico_id: Optional[Any] = None, medico_nombre: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Resuelve el prestador en la base de datos de CRM buscando prioritariamente por
     geclisa_pre_id o por coincidencia en nombre_apellido. Si no está en BD, consulta
     el catálogo de Geclisa como fallback para obtener la matrícula oficial y especialidad.
+    Prioriza registros activos, con teléfono celular y no obsoletos.
     """
     if not supabase:
         return None
@@ -8456,9 +8499,9 @@ def obtener_prestador_por_cirujano(medico_id: Optional[Any] = None, medico_nombr
         if medico_id:
             try:
                 mid_int = int(medico_id)
-                res = supabase.table("prestadores").select("*").eq("geclisa_pre_id", mid_int).limit(1).execute()
+                res = supabase.table("prestadores").select("*").eq("geclisa_pre_id", mid_int).execute()
                 if res.data and len(res.data) > 0:
-                    return res.data[0]
+                    return _seleccionar_mejor_prestador_candidato(res.data, medico_nombre or "")
             except (ValueError, TypeError):
                 pass
 
@@ -8466,16 +8509,26 @@ def obtener_prestador_por_cirujano(medico_id: Optional[Any] = None, medico_nombr
         if medico_nombre:
             clean_nom = medico_nombre.replace("Dr.", "").replace("Dra.", "").replace("Dr", "").replace("Dra", "").strip()
             if clean_nom:
-                res_nom = supabase.table("prestadores").select("*").ilike("nombre_apellido", f"%{clean_nom}%").limit(1).execute()
+                # 2.a Probar coincidencia exacta
+                res_exact = supabase.table("prestadores").select("*").ilike("nombre_apellido", clean_nom).execute()
+                if res_exact.data and len(res_exact.data) > 0:
+                    return _seleccionar_mejor_prestador_candidato(res_exact.data, clean_nom)
+
+                # 2.b Probar coincidencia parcial (substring)
+                res_nom = supabase.table("prestadores").select("*").ilike("nombre_apellido", f"%{clean_nom}%").execute()
                 if res_nom.data and len(res_nom.data) > 0:
-                    return res_nom.data[0]
+                    return _seleccionar_mejor_prestador_candidato(res_nom.data, clean_nom)
                 
-                # Probar coincidencia de palabras clave (ej: 'GRAS')
+                # 2.c Probar coincidencia de palabras clave (ej: 'GRAS')
                 partes = [p.strip().rstrip(",") for p in clean_nom.split() if len(p.strip().rstrip(",")) >= 3]
+                candidatos_kw = []
                 for part in partes:
-                    res_part = supabase.table("prestadores").select("*").ilike("nombre_apellido", f"%{part}%").limit(1).execute()
-                    if res_part.data and len(res_part.data) > 0:
-                        return res_part.data[0]
+                    res_part = supabase.table("prestadores").select("*").ilike("nombre_apellido", f"%{part}%").execute()
+                    if res_part.data:
+                        candidatos_kw.extend(res_part.data)
+                if candidatos_kw:
+                    uniques = {c.get("id"): c for c in candidatos_kw if c.get("id")}
+                    return _seleccionar_mejor_prestador_candidato(list(uniques.values()), clean_nom)
 
         # 3. Fallback: Consultar catálogo de Geclisa para recuperar matrícula oficial
         if medico_nombre or medico_id:
