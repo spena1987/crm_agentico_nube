@@ -244,9 +244,18 @@ def _sincronizar_aliases_config_optica(cfg: Dict[str, Any]) -> Dict[str, Any]:
     res["intervalo_min_seg"] = jit_min
     res["antibloqueo_jitter_min_seg"] = jit_min
 
-    jit_max = int(res.get("antibloqueo_jitter_max_seg") if "antibloqueo_jitter_max_seg" in res else res.get("intervalo_max_seg", 35))
+    jit_max = int(res.get("antibloqueo_jitter_max_seg") if "antibloqueo_jitter_max_seg" in res else res.get("intervalo_max_seg", 90))
     res["intervalo_max_seg"] = jit_max
     res["antibloqueo_jitter_max_seg"] = jit_max
+
+    lote_sz = int(res.get("antibloqueo_lote_max_hora") if "antibloqueo_lote_max_hora" in res else (res.get("lote_max_hora") or res.get("lote_size", 35)))
+    res["lote_size"] = lote_sz
+    res["lote_max_hora"] = lote_sz
+    res["antibloqueo_lote_max_hora"] = lote_sz
+
+    max_d = int(res.get("antibloqueo_max_envios_diarios") if "antibloqueo_max_envios_diarios" in res else (res.get("max_envios_diarios", 200)))
+    res["max_envios_diarios"] = max_d
+    res["antibloqueo_max_envios_diarios"] = max_d
 
     h_ini = str(res.get("antibloqueo_hora_inicio") or res.get("hora_inicio_envios") or "09:00").strip()
     res["hora_inicio_envios"] = h_ini
@@ -425,6 +434,24 @@ def save_optica_vortix_full_config(updates: Dict[str, Any]) -> Dict[str, Any]:
         upd["hora_inicio_envios"] = str(upd["antibloqueo_hora_inicio"])
     if "antibloqueo_hora_fin" in upd:
         upd["hora_fin_envios"] = str(upd["antibloqueo_hora_fin"])
+    if "antibloqueo_max_envios_diarios" in upd:
+        upd["max_envios_diarios"] = int(upd["antibloqueo_max_envios_diarios"])
+        upd["antibloqueo_max_envios_diarios"] = int(upd["antibloqueo_max_envios_diarios"])
+    if "max_envios_diarios" in upd:
+        upd["max_envios_diarios"] = int(upd["max_envios_diarios"])
+        upd["antibloqueo_max_envios_diarios"] = int(upd["max_envios_diarios"])
+    if "antibloqueo_lote_max_hora" in upd:
+        upd["lote_size"] = int(upd["antibloqueo_lote_max_hora"])
+        upd["lote_max_hora"] = int(upd["antibloqueo_lote_max_hora"])
+        upd["antibloqueo_lote_max_hora"] = int(upd["antibloqueo_lote_max_hora"])
+    if "lote_max_hora" in upd:
+        upd["lote_size"] = int(upd["lote_max_hora"])
+        upd["lote_max_hora"] = int(upd["lote_max_hora"])
+        upd["antibloqueo_lote_max_hora"] = int(upd["lote_max_hora"])
+    if "lote_size" in upd:
+        upd["lote_size"] = int(upd["lote_size"])
+        upd["lote_max_hora"] = int(upd["lote_size"])
+        upd["antibloqueo_lote_max_hora"] = int(upd["lote_size"])
     if "auto_respuesta_fuera_horario" in upd:
         upd["mensaje_fuera_horario"] = str(upd["auto_respuesta_fuera_horario"])
 

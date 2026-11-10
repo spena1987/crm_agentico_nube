@@ -272,13 +272,27 @@ export default function OpticaCampanasPage() {
   const loadAll = async () => {
     setLoading(true)
     try {
-      const [resS, resP, resC, resT] = await Promise.all([
+      const [resS, resP, resC, resT, resCfg] = await Promise.all([
         apiFetch('/api/optica-vortix/salud-linea', { cache: 'no-store' }).catch(() => null),
         apiFetch('/api/optica-vortix/placas', { cache: 'no-store' }).catch(() => null),
         apiFetch('/api/optica-vortix/campanas', { cache: 'no-store' }).catch(() => null),
         apiFetch('/api/optica-vortix/plantillas', { cache: 'no-store' }).catch(() => null),
+        apiFetch('/api/optica-vortix/config', { cache: 'no-store' }).catch(() => null),
       ])
       if (resS?.ok) setSalud(await resS.json())
+      if (resCfg?.ok) {
+        const rawCfg = await resCfg.json()
+        const cfgData = rawCfg.config || rawCfg
+        if (cfgData.antibloqueo_jitter_min_seg || cfgData.intervalo_min_seg) {
+          setJitterMin(Number(cfgData.antibloqueo_jitter_min_seg || cfgData.intervalo_min_seg))
+        }
+        if (cfgData.antibloqueo_jitter_max_seg || cfgData.intervalo_max_seg) {
+          setJitterMax(Number(cfgData.antibloqueo_jitter_max_seg || cfgData.intervalo_max_seg))
+        }
+        if (cfgData.antibloqueo_lote_max_hora || cfgData.lote_max_hora || cfgData.lote_size) {
+          setLoteMaxHora(Number(cfgData.antibloqueo_lote_max_hora || cfgData.lote_max_hora || cfgData.lote_size))
+        }
+      }
       if (resP?.ok) {
         const dp = await resP.json()
         const listP = Array.isArray(dp) ? dp : dp.items || []

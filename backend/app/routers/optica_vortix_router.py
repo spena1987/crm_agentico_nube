@@ -3677,17 +3677,12 @@ async def lanzar_campana_optica(camp_id: str):
     camp = c_res.data[0]
     filtro = camp.get("filtro_audiencia") or {}
     goteo = camp.get("config_goteo_json") or {}
-    int_min = int(goteo.get("intervalo_min_seg", 15))
-    int_max = int(goteo.get("intervalo_max_seg", 35))
-    lote_sz = max(1, int(goteo.get("lote_size", 30)))
-    pausa_min = int(goteo.get("pausa_lote_min", 5))
-
-    tpl_name = camp.get("template_name") or "vortix_beneficio_turno_v1"
-    segmento = str(filtro.get("segmento") or camp.get("tipo") or "TURNOS_PROXIMOS_CON_DESCUENTO").upper()
-
-    now_utc = datetime.now(timezone.utc)
     cfg = get_optica_vortix_full_config()
     descuento = str(filtro.get("descuento_texto") or cfg.get("porcentaje_descuento_turno") or "20% OFF")
+    int_min = int(goteo.get("intervalo_min_seg") or cfg.get("antibloqueo_jitter_min_seg", 35))
+    int_max = int(goteo.get("intervalo_max_seg") or cfg.get("antibloqueo_jitter_max_seg", 90))
+    lote_sz = max(1, int(goteo.get("lote_size") or cfg.get("antibloqueo_lote_max_hora", 35)))
+    pausa_min = int(goteo.get("pausa_lote_min") or cfg.get("pausa_lote_min", 5))
 
     # 1. Determinar número de variables del template para mapeo dinámico estricto
     tpl_body = ""
@@ -3876,9 +3871,14 @@ async def lanzar_campana_optica(camp_id: str):
         except Exception as e_q:
             logger.debug(f"[CampanaOptica] Error encolando {tel}: {e_q}")
 
+    # Preservar el total global acumulado de la campaña si ya existían envíos previos
+    prev_env = int(camp.get("enviados_count") or 0)
+    prev_tot = int(camp.get("total_destinatarios") or 0)
+    total_efectivo = max(prev_tot, prev_env + encolados) if prev_env > 0 else encolados
+
     upd = supabase.table("optica_campanas").update({
         "estado": "en_curso",
-        "total_destinatarios": encolados,
+        "total_destinatarios": total_efectivo,
         "updated_at": now_utc.isoformat()
     }).eq("id", camp_id).execute()
 

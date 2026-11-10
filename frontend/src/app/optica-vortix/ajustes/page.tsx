@@ -139,6 +139,8 @@ const DEFAULT_CONFIG_LOCAL: OpticaConfig = {
   antibloqueo_cooldown_dias: 30,
   antibloqueo_jitter_min_seg: 35,
   antibloqueo_jitter_max_seg: 90,
+  antibloqueo_max_envios_diarios: 200,
+  antibloqueo_lote_max_hora: 35,
   antibloqueo_ventana_horaria_inicio: '09:00',
   antibloqueo_ventana_horaria_fin: '20:00',
   antibloqueo_pausa_calidad_amarilla: true,
@@ -562,6 +564,53 @@ export default function OpticaAjustesPage() {
                 />
                 <p className="text-[11px] text-slate-500 mt-1">
                   No vuelve a contactar al paciente antes de este período.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">
+                  Tope Diario de Envíos (Límite Anti-Bloqueo Meta)
+                </label>
+                <input
+                  type="number"
+                  min={10}
+                  max={2000}
+                  value={config.antibloqueo_max_envios_diarios ?? config.max_envios_diarios ?? 200}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      antibloqueo_max_envios_diarios: parseInt(e.target.value) || 200,
+                      max_envios_diarios: parseInt(e.target.value) || 200,
+                    })
+                  }
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Límite máximo de mensajes por día para proteger la reputación y Tier de la línea en Meta.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">
+                  Máx. Mensajes / Hora Predeterminado (Lote)
+                </label>
+                <input
+                  type="number"
+                  min={5}
+                  max={120}
+                  value={config.antibloqueo_lote_max_hora ?? config.lote_max_hora ?? config.lote_size ?? 35}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      antibloqueo_lote_max_hora: parseInt(e.target.value) || 35,
+                      lote_max_hora: parseInt(e.target.value) || 35,
+                      lote_size: parseInt(e.target.value) || 35,
+                    })
+                  }
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Ritmo por defecto aplicado en el Paso 4 al crear nuevas campañas.
                 </p>
               </div>
 

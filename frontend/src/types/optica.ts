@@ -243,6 +243,11 @@ export interface OpticaConfig {
   antibloqueo_ventana_horaria_inicio: string
   antibloqueo_ventana_horaria_fin: string
   antibloqueo_pausa_calidad_amarilla: boolean
+  antibloqueo_max_envios_diarios?: number
+  max_envios_diarios?: number
+  antibloqueo_lote_max_hora?: number
+  lote_max_hora?: number
+  lote_size?: number
   telefonos_whitelist_prueba?: string[]
   // Clasificación Oficial Geclisa (Sedes y Servicios)
   sedes_habilitadas_campana?: string[]
