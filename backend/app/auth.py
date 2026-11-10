@@ -20,8 +20,10 @@ WEBHOOK_SECRET = (os.getenv("WEBHOOK_SECRET") or os.getenv("META_WA_VERIFY_TOKEN
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
-# Cache en memoria para verificación de tokens autenticados (token_hash -> (payload, expire_timestamp))
+# Cache en memoria para verificación de tokens autenticados (token -> (payload, expire_timestamp))
 _AUTH_TOKEN_CACHE: Dict[str, Tuple[Dict[str, Any], float]] = {}
+# Cache negativo para tokens rechazados o con sesión revocada (token -> expire_timestamp)
+_AUTH_INVALID_TOKEN_CACHE: Dict[str, float] = {}
 
 def decode_supabase_jwt(token: str) -> Dict[str, Any]:
     """
@@ -45,8 +47,21 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # Chequear caché en memoria de tokens autenticados validados previamente (TTL 5 minutos)
     ahora_ts = time.time()
+
+    # Chequear caché negativo: si el token fue rechazado recientemente por sesión expirada o revocada
+    invalid_until = _AUTH_INVALID_TOKEN_CACHE.get(token)
+    if invalid_until:
+        if ahora_ts < invalid_until:
+            raise HTTPException(
+                status_code=401,
+                detail="La sesión o token de acceso ha expirado o fue revocado. Inicia sesión nuevamente.",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        else:
+            _AUTH_INVALID_TOKEN_CACHE.pop(token, None)
+
+    # Chequear caché en memoria de tokens autenticados validados previamente (TTL 5 minutos)
     token_cached = _AUTH_TOKEN_CACHE.get(token)
     if token_cached:
         payload_cached, exp_cached = token_cached
@@ -107,6 +122,16 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
 
     # 3. Fallback: Verificación remota contra la API de Supabase Auth SOLO para usuarios autenticados
     if token_role != "anon":
+        # Primero verificar exp del JWT para no llamar a Supabase Auth si ya expiró
+        exp = unverified.get("exp")
+        if exp and exp < ahora_ts:
+            _AUTH_INVALID_TOKEN_CACHE[token] = ahora_ts + 60
+            raise HTTPException(
+                status_code=401, 
+                detail="La sesión o token de acceso ha expirado. Inicia sesión nuevamente.", 
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+
         try:
             from app.db import supabase
             if supabase:
@@ -121,6 +146,13 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
                     return verified_payload
         except Exception as api_err:
             logger.debug(f"Verificación remota get_user no aplicable o falló: {api_err}")
+            # Cachear el rechazo por 60 segundos para evitar llamadas repetitivas /auth/v1/user en polling
+            _AUTH_INVALID_TOKEN_CACHE[token] = ahora_ts + 60
+            raise HTTPException(
+                status_code=401,
+                detail="La sesión de usuario no es válida o fue revocada. Inicia sesión nuevamente.",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
 
     # 4. Fallback de confianza para tokens emitidos por la instancia
     if is_project_token:

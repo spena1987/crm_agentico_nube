@@ -243,6 +243,7 @@ async def put_config_endpoint(payload: Dict[str, Any] = Body(...)):
     """Actualiza la configuración de Óptica Vortix en Supabase e invalida la caché de credenciales."""
     try:
         saved = save_optica_vortix_full_config(payload)
+        _SALUD_LINEA_CACHE["expires_at"] = 0.0
         return {
             **saved,
             "success": True,
@@ -379,7 +380,7 @@ async def get_salud_linea_optica(force_refresh: bool = Query(False, description=
             pass
 
     q_rating = str(linea_health.get("quality_rating") or "UNKNOWN").upper()
-    return {
+    res_data = {
         "success": True,
         "waba_id": waba_id,
         "connected": bool(linea_health.get("connected")),
