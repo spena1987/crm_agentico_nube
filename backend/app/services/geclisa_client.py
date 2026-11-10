@@ -1867,7 +1867,7 @@ class GeclisaClient:
         """
         Elimina un archivo adjunto del repositorio de Geclisa.
         Ruta primaria: DELETE /api/Archivo?asId={asId}
-        Ruta secundaria: DELETE /api/Archivo/historia-clinica-archivo/{hcaId}
+        Ruta secundaria: DELETE /api/Archivo/historia-clinica-archivo/{hcaId} (solo si se dispone de hcaId)
         """
         token = self._obtener_token()
         target_as_id = as_id or archivo_id
@@ -1877,8 +1877,8 @@ class GeclisaClient:
         t_start = time.time()
         try:
             res = self._do_request("DELETE", url_as, headers=headers, timeout=15)
+            duracion = int((time.time() - t_start) * 1000)
             if res.status_code == 200:
-                duracion = int((time.time() - t_start) * 1000)
                 log_event(
                     nivel="INFO",
                     modulo="GECLISA",
@@ -1889,20 +1889,37 @@ class GeclisaClient:
                     http_status=res.status_code
                 )
                 return {"success": True, "mensaje": f"Archivo #{target_as_id} eliminado de Geclisa."}
-        except Exception:
-            pass
+            elif res.status_code in (400, 404) and ("no encontrado" in res.text.lower() or "no existe" in res.text.lower()):
+                log_event(
+                    nivel="INFO",
+                    modulo="GECLISA",
+                    accion="ELIMINAR_DOCUMENTO_HC",
+                    mensaje=f"Documento (asId #{target_as_id}) ya no existía en Geclisa",
+                    detalles={"asId": target_as_id, "respuesta": res.text},
+                    duracion_ms=duracion,
+                    http_status=res.status_code
+                )
+                return {"success": True, "mensaje": f"Archivo #{target_as_id} ya estaba eliminado en Geclisa."}
+            else:
+                logger.warning(f"DELETE {url_as} devolvió HTTP {res.status_code}: {res.text}")
+        except Exception as err_as:
+            logger.warning(f"Error en DELETE {url_as}: {err_as}")
             
-        # Fallback a historia-clinica-archivo
-        try:
-            url_hca = f"{self.base_url}/api/Archivo/historia-clinica-archivo/{archivo_id}"
-            res = self._do_request("DELETE", url_hca, headers=headers, timeout=15)
-            duracion = int((time.time() - t_start) * 1000)
-            res.raise_for_status()
-            return {"success": True, "mensaje": f"Archivo #{archivo_id} eliminado de Geclisa."}
-        except Exception as e:
-            duracion = int((time.time() - t_start) * 1000)
-            logger.error(f"Error eliminando archivo #{archivo_id} en Geclisa: {e}")
-            return {"success": False, "error": str(e)}
+        # Fallback a historia-clinica-archivo solo si archivo_id es un hcaId explícito distinto de target_as_id
+        if archivo_id and as_id and int(archivo_id) != int(as_id):
+            try:
+                url_hca = f"{self.base_url}/api/Archivo/historia-clinica-archivo/{archivo_id}"
+                res = self._do_request("DELETE", url_hca, headers=headers, timeout=15)
+                duracion = int((time.time() - t_start) * 1000)
+                if res.status_code == 200:
+                    return {"success": True, "mensaje": f"Archivo #{archivo_id} eliminado de Geclisa."}
+                res.raise_for_status()
+            except Exception as e:
+                duracion = int((time.time() - t_start) * 1000)
+                logger.error(f"Error eliminando archivo #{archivo_id} en Geclisa: {e}")
+                return {"success": False, "error": str(e)}
+
+        return {"success": False, "error": f"Geclisa no confirmó la eliminación del archivo #{target_as_id}."}
 
     def listar_archivos_historia_clinica(
         self,

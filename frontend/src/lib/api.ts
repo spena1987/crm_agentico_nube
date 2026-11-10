@@ -89,9 +89,15 @@ export async function apiFetch(endpoint: string, options: ApiFetchOptions = {}):
     ? endpoint
     : `${BACKEND_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
 
+  const method = (options.method || 'GET').toUpperCase()
+  const isIdempotent = method === 'GET' || method === 'HEAD'
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
-  const timeoutMs = options.timeoutMs ?? 15000
-  const retryOnNetworkError = options.retryOnNetworkError ?? true
+  // Dar 60s por defecto a envíos con FormData (archivos) y 15s a llamadas JSON livianas
+  const timeoutMs = options.timeoutMs ?? (isFormData ? 60000 : 15000)
+  // Por seguridad clínica y estándar HTTP (RFC 7230), solo reintentar automáticamente
+  // métodos idempotentes (GET/HEAD) ante micro-cortes. Nunca reintentar mutaciones (POST/PUT/DELETE)
+  // a menos que el llamador lo configure expresamente.
+  const retryOnNetworkError = options.retryOnNetworkError ?? isIdempotent
 
   const baseHeaders: Record<string, string> = isFormData ? {} : { 'Content-Type': 'application/json' }
   const authHeaders = await getAuthHeaders(options.headers || baseHeaders)
@@ -124,13 +130,19 @@ export async function apiFetch(endpoint: string, options: ApiFetchOptions = {}):
   try {
     res = await executeFetch(authHeaders)
   } catch (err: any) {
-    // Si falló por desconexión transitoria, reintentar una vez tras breve pausa
-    if (retryOnNetworkError) {
+    const isAbort = err?.name === 'AbortError' || (typeof err?.message === 'string' && err.message.toLowerCase().includes('aborted'))
+    // Nunca reintentar si el error fue un corte por timeout de AbortController ni en mutaciones
+    if (retryOnNetworkError && !isAbort) {
       await new Promise(r => setTimeout(r, 800))
       const freshHeaders = await getAuthHeaders(options.headers || baseHeaders)
       if (isFormData) delete freshHeaders['Content-Type']
       res = await executeFetch(freshHeaders)
     } else {
+      if (isAbort) {
+        throw new Error(
+          `La petición superó el tiempo máximo de espera (${Math.round(timeoutMs / 1000)}s). El servidor aún puede estar procesando el archivo en segundo plano; revise el historial antes de reintentar.`
+        )
+      }
       throw err
     }
   }

@@ -165,6 +165,37 @@ class TestEstudiosEdicionAnulacion(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("anulado", ctx.exception.detail.lower())
 
+    def test_geclisa_eliminar_archivo_as_id_status_200(self):
+        from app.services.geclisa_client import GeclisaClient
+        gc = GeclisaClient()
+        with patch.object(gc, "_obtener_token", return_value="fake-jwt"), \
+             patch.object(gc, "_do_request") as mock_req:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.text = "true"
+            mock_req.return_value = mock_resp
+
+            res = gc.eliminar_archivo_historia_clinica(archivo_id=196870, as_id=196870)
+            self.assertTrue(res["success"])
+            self.assertIn("eliminado", res["mensaje"].lower())
+            # Debe llamar solo a DELETE /api/Archivo?asId=196870 sin fallback a hcaId
+            self.assertEqual(mock_req.call_count, 1)
+
+    def test_geclisa_eliminar_archivo_ya_no_existe_400(self):
+        from app.services.geclisa_client import GeclisaClient
+        gc = GeclisaClient()
+        with patch.object(gc, "_obtener_token", return_value="fake-jwt"), \
+             patch.object(gc, "_do_request") as mock_req:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 400
+            mock_resp.text = '{"error":["Archivo no encontrado."]}'
+            mock_req.return_value = mock_resp
+
+            res = gc.eliminar_archivo_historia_clinica(archivo_id=196870, as_id=196870)
+            self.assertTrue(res["success"])
+            self.assertIn("ya estaba eliminado", res["mensaje"].lower())
+
+
 
 if __name__ == "__main__":
     unittest.main()

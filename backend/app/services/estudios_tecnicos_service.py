@@ -10,6 +10,7 @@ Garantiza:
 import io
 import os
 import re
+import time
 import asyncio
 import logging
 from datetime import datetime, date, timezone, timedelta
@@ -40,6 +41,32 @@ logger = logging.getLogger("estudios_tecnicos_service")
 
 estudios_router = APIRouter(tags=["Estudios Oftalmológicos & Multi-Línea WhatsApp"])
 geclisa_client = GeclisaClient()
+
+# =========================================================================
+# CONTROL DE CONCURRENCIA E IDEMPOTENCIA (PREVENCIÓN DE DUPLICADOS)
+# =========================================================================
+_IN_FLIGHT_ESTUDIOS_LOCKS: Dict[str, asyncio.Lock] = {}
+_RECENT_ESTUDIOS_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_CACHE_MUTEX = asyncio.Lock()
+
+
+async def _get_or_create_study_lock(key: str) -> asyncio.Lock:
+    """Obtiene o crea un candado asyncio para deduplicar peticiones concurrentes idénticas."""
+    async with _CACHE_MUTEX:
+        if key not in _IN_FLIGHT_ESTUDIOS_LOCKS:
+            _IN_FLIGHT_ESTUDIOS_LOCKS[key] = asyncio.Lock()
+        return _IN_FLIGHT_ESTUDIOS_LOCKS[key]
+
+
+async def _clean_expired_study_cache():
+    """Limpia periódicamente entradas de caché con más de 180 segundos."""
+    now_t = time.time()
+    async with _CACHE_MUTEX:
+        expired = [k for k, (ts, _) in _RECENT_ESTUDIOS_CACHE.items() if now_t - ts > 180.0]
+        for k in expired:
+            _RECENT_ESTUDIOS_CACHE.pop(k, None)
+            _IN_FLIGHT_ESTUDIOS_LOCKS.pop(k, None)
+
 
 
 # =========================================================================
@@ -1323,7 +1350,8 @@ async def enviar_y_archivar_estudio_oftalmologico(
     plantilla_whatsapp: Optional[str] = Form(None),
     aplicar_caratula: bool = Form(True),
     obra_social: Optional[str] = Form(None),
-    plan: Optional[str] = Form(None)
+    plan: Optional[str] = Form(None),
+    client_request_id: Optional[str] = Form(None)
 ):
     """
     Flujo Maestro de Estudios Oftalmológicos:
@@ -1405,6 +1433,60 @@ async def enviar_y_archivar_estudio_oftalmologico(
 
     base_fname = f"Estudio_{tipo_slug}_{ojo_slug}_{ape_slug}_{dni_limpio}"
 
+    # Control de Idempotencia y Deduplicación preventiva
+    await _clean_expired_study_cache()
+
+    raw_bytes_total = sum(len(b) for _, b, _ in raw_files)
+    idemp_key = (client_request_id or request.headers.get("X-Idempotency-Key") or "").strip()
+    dedup_key = f"idemp_{idemp_key}" if idemp_key else f"sig_{geclisa_ficha_id}_{tipo_slug}_{ojo_slug}_{raw_bytes_total}"
+    sig_key = f"sig_{geclisa_ficha_id}_{tipo_slug}_{ojo_slug}_{raw_bytes_total}"
+
+    now_ts = time.time()
+    # 1. Verificación rápida en memoria RAM (mismo worker)
+    for k in (dedup_key, sig_key):
+        if k in _RECENT_ESTUDIOS_CACHE and now_ts - _RECENT_ESTUDIOS_CACHE[k][0] < 90:
+            logger.warning(f"[Deduplicación RAM] Petición duplicada interceptada para Ficha #{geclisa_ficha_id} ({tipo_estudio} {ojo}). Retornando respuesta previa.")
+            cached_res = dict(_RECENT_ESTUDIOS_CACHE[k][1])
+            cached_res["deduplicado"] = True
+            return cached_res
+
+    # 2. Verificación fail-safe en Supabase (multi-worker o reinicios de backend)
+    if supabase:
+        try:
+            un_minuto_atras = (datetime.now(timezone.utc) - timedelta(seconds=75)).isoformat()
+            dup_q = supabase.table("estudios_oftalmo")\
+                .select("*")\
+                .eq("geclisa_ficha_id", int(geclisa_ficha_id))\
+                .eq("tipo", tipo_estudio.strip())\
+                .eq("ojo", ojo.strip() or "AO")\
+                .gte("created_at", un_minuto_atras)\
+                .order("created_at", desc=True)\
+                .limit(1)\
+                .execute()
+            if dup_q.data and len(dup_q.data) > 0:
+                row_existente = dup_q.data[0]
+                logger.warning(
+                    f"[Deduplicación DB] Estudio idéntico detectado en Supabase (#{row_existente.get('id')}) "
+                    f"creado hace menos de 75s para Ficha #{geclisa_ficha_id}. Retornando registro existente para evitar duplicar en Geclisa/WhatsApp."
+                )
+                return {
+                    "success": True,
+                    "estudio_id": row_existente.get("id"),
+                    "geclisa_ok": bool(row_existente.get("geclisa_as_id")),
+                    "geclisa_as_id": row_existente.get("geclisa_as_id"),
+                    "geclisa_error": None,
+                    "whatsapp_ok": row_existente.get("whatsapp_status") in ("sent", "delivered", "read"),
+                    "wamid": row_existente.get("wamid"),
+                    "whatsapp_status": row_existente.get("whatsapp_status"),
+                    "whatsapp_error": row_existente.get("whatsapp_error"),
+                    "delivery_mode": None,
+                    "estudio": row_existente,
+                    "deduplicado": True,
+                    "mensaje": "Estudio ya procesado exitosamente (duplicado interceptado por idempotencia)."
+                }
+        except Exception as dup_err:
+            logger.warning(f"[Deduplicación] Error verificando duplicados en base de datos: {dup_err}")
+
     titulo_estudio_limpio = f"{tipo_estudio.strip()} ({ojo.strip()})" if ojo and ojo != "N/A" else tipo_estudio.strip()
     titulo_geclisa = f"Estudio - {titulo_estudio_limpio}"[:45]
     titulo_completo = titulo_geclisa
@@ -1456,207 +1538,222 @@ async def enviar_y_archivar_estudio_oftalmologico(
     else:
         obs_geclisa = f"Estudio digital cargado vía CRM por {resolved_tecnico_nombre}"
 
-    # Tareas asíncronas en paralelo (Geclisa + Meta Cloud API Línea 2)
-    async def _task_geclisa() -> Dict[str, Any]:
-        if not guardar_en_geclisa:
-            return {"skipped": True}
-        return await asyncio.to_thread(
-            geclisa_client.adjuntar_archivo_historia_clinica,
-            ficha_id=int(geclisa_ficha_id),
-            file_bytes=final_bytes,
-            filename=final_filename,
-            titulo=titulo_geclisa,
-            observaciones=obs_geclisa[:100],
-            pre_id=int(resolved_pre_id),
-            clase_id=1,
-            content_type=final_mime
-        )
+    study_lock = await _get_or_create_study_lock(dedup_key)
+    async with study_lock:
+        now_t2 = time.time()
+        for k in (dedup_key, sig_key):
+            if k in _RECENT_ESTUDIOS_CACHE and now_t2 - _RECENT_ESTUDIOS_CACHE[k][0] < 90:
+                logger.warning(f"[Deduplicación Lock] Estudio resuelto concurrentemente para Ficha #{geclisa_ficha_id}. Retornando caché.")
+                cached_res = dict(_RECENT_ESTUDIOS_CACHE[k][1])
+                cached_res["deduplicado"] = True
+                return cached_res
 
-    async def _task_whatsapp() -> Dict[str, Any]:
-        if not enviar_whatsapp:
-            return {"skipped": True}
-        return await _dispatch_study_via_meta_line2(
-            to_phone=tel_norm,
-            nombre_paciente=nombre_paciente,
-            titulo_estudio=titulo_estudio_limpio,
-            file_bytes=final_bytes,
-            filename=final_filename,
-            mime_type=final_mime,
-            template_override=plantilla_whatsapp
-        )
-
-    geclisa_res, wa_res = await asyncio.gather(
-        _task_geclisa(),
-        _task_whatsapp(),
-        return_exceptions=True
-    )
-
-    # Analizar resultado de Geclisa
-    geclisa_ok = False
-    geclisa_as_id = None
-    geclisa_err = None
-    if isinstance(geclisa_res, Exception):
-        geclisa_err = str(geclisa_res)
-    elif isinstance(geclisa_res, dict):
-        if geclisa_res.get("skipped"):
-            geclisa_ok = True
-        elif geclisa_res.get("exito") or geclisa_res.get("success"):
-            geclisa_ok = True
-            geclisa_as_id = (
-                geclisa_res.get("as_id")
-                or geclisa_res.get("archivo_id")
-                or geclisa_res.get("geclisa_as_id")
-                or geclisa_res.get("hca_id")
+        # Tareas asíncronas en paralelo (Geclisa + Meta Cloud API Línea 2)
+        async def _task_geclisa() -> Dict[str, Any]:
+            if not guardar_en_geclisa:
+                return {"skipped": True}
+            return await asyncio.to_thread(
+                geclisa_client.adjuntar_archivo_historia_clinica,
+                ficha_id=int(geclisa_ficha_id),
+                file_bytes=final_bytes,
+                filename=final_filename,
+                titulo=titulo_geclisa,
+                observaciones=obs_geclisa[:100],
+                pre_id=int(resolved_pre_id),
+                clase_id=1,
+                content_type=final_mime
             )
-            # Si Geclisa no devolvió el AS_ID en el body del POST, intentar resolver el último archivo de la ficha
-            if not geclisa_as_id:
-                try:
-                    archivos = await asyncio.to_thread(
-                        geclisa_client.listar_archivos_historia_clinica,
-                        int(geclisa_ficha_id)
-                    )
-                    if archivos and len(archivos) > 0:
-                        geclisa_as_id = archivos[0].get("asId") or archivos[0].get("as_id") or archivos[0].get("id")
-                except Exception:
-                    pass
-        else:
-            geclisa_err = geclisa_res.get("error") or "Error al guardar el archivo en Geclisa."
 
-    # Analizar resultado de WhatsApp Línea 2
-    wa_ok = False
-    wamid = None
-    media_id = None
-    wa_status = "pending"
-    wa_err = None
-    delivery_mode = None
-    if isinstance(wa_res, Exception):
-        wa_err = str(wa_res)
-        wa_status = "failed"
-    elif isinstance(wa_res, dict):
-        if wa_res.get("skipped"):
-            wa_status = "skipped"
-            wa_ok = True
-        elif wa_res.get("success"):
-            wa_ok = True
-            wamid = wa_res.get("wamid")
-            media_id = wa_res.get("media_id")
-            wa_status = "sent"
-            delivery_mode = wa_res.get("delivery_mode")
-        else:
-            wa_err = wa_res.get("error") or "Error al enviar por WhatsApp."
+        async def _task_whatsapp() -> Dict[str, Any]:
+            if not enviar_whatsapp:
+                return {"skipped": True}
+            return await _dispatch_study_via_meta_line2(
+                to_phone=tel_norm,
+                nombre_paciente=nombre_paciente,
+                titulo_estudio=titulo_estudio_limpio,
+                file_bytes=final_bytes,
+                filename=final_filename,
+                mime_type=final_mime,
+                template_override=plantilla_whatsapp
+            )
+
+        geclisa_res, wa_res = await asyncio.gather(
+            _task_geclisa(),
+            _task_whatsapp(),
+            return_exceptions=True
+        )
+
+        # Analizar resultado de Geclisa
+        geclisa_ok = False
+        geclisa_as_id = None
+        geclisa_err = None
+        if isinstance(geclisa_res, Exception):
+            geclisa_err = str(geclisa_res)
+        elif isinstance(geclisa_res, dict):
+            if geclisa_res.get("skipped"):
+                geclisa_ok = True
+            elif geclisa_res.get("exito") or geclisa_res.get("success"):
+                geclisa_ok = True
+                geclisa_as_id = (
+                    geclisa_res.get("as_id")
+                    or geclisa_res.get("archivo_id")
+                    or geclisa_res.get("geclisa_as_id")
+                    or geclisa_res.get("hca_id")
+                )
+                # Si Geclisa no devolvió el AS_ID en el body del POST, intentar resolver el último archivo de la ficha
+                if not geclisa_as_id:
+                    try:
+                        archivos = await asyncio.to_thread(
+                            geclisa_client.listar_archivos_historia_clinica,
+                            int(geclisa_ficha_id)
+                        )
+                        if archivos and len(archivos) > 0:
+                            geclisa_as_id = archivos[0].get("asId") or archivos[0].get("as_id") or archivos[0].get("id")
+                    except Exception:
+                        pass
+            else:
+                geclisa_err = geclisa_res.get("error") or "Error al guardar el archivo en Geclisa."
+
+        # Analizar resultado de WhatsApp Línea 2
+        wa_ok = False
+        wamid = None
+        media_id = None
+        wa_status = "pending"
+        wa_err = None
+        delivery_mode = None
+        if isinstance(wa_res, Exception):
+            wa_err = str(wa_res)
             wa_status = "failed"
+        elif isinstance(wa_res, dict):
+            if wa_res.get("skipped"):
+                wa_status = "skipped"
+                wa_ok = True
+            elif wa_res.get("success"):
+                wa_ok = True
+                wamid = wa_res.get("wamid")
+                media_id = wa_res.get("media_id")
+                wa_status = "sent"
+                delivery_mode = wa_res.get("delivery_mode")
+            else:
+                wa_err = wa_res.get("error") or "Error al enviar por WhatsApp."
+                wa_status = "failed"
 
-    # Sincronización y persistencia de auditoría (FAIL-SAFE)
-    # Una vez que Geclisa y/o WhatsApp procesaron el estudio, cualquier error en la persistencia
-    # local o resolución de IDs secundarios NUNCA debe abortar la respuesta ni propagar HTTP 500.
-    saved_record = None
-    try:
-        existing_paciente_id = None
+        # Sincronización y persistencia de auditoría (FAIL-SAFE)
+        saved_record = None
         try:
-            p_crm = get_paciente_by_dni(dni_limpio)
-            if not p_crm and geclisa_pac_id:
-                p_crm = get_paciente_by_geclisa_id(int(geclisa_pac_id))
-            if p_crm:
-                existing_paciente_id = p_crm.get("id")
-        except Exception as p_e:
-            logger.warning(f"[Estudios] Error buscando paciente existente: {p_e}")
+            existing_paciente_id = None
+            try:
+                p_crm = get_paciente_by_dni(dni_limpio)
+                if not p_crm and geclisa_pac_id:
+                    p_crm = get_paciente_by_geclisa_id(int(geclisa_pac_id))
+                if p_crm:
+                    existing_paciente_id = p_crm.get("id")
+            except Exception as p_e:
+                logger.warning(f"[Estudios] Error buscando paciente existente: {p_e}")
 
-        # Persistir registro en public.estudios_oftalmo (0 bytes en Supabase Storage)
-        ahora_iso = datetime.now(timezone.utc).isoformat()
-        now_mza_save = get_argentina_now()
-        db_row: Dict[str, Any] = {
-            "paciente_id": existing_paciente_id,
-            "tipo": tipo_estudio.strip(),
-            "ojo": ojo.strip() or "AO",
-            "fecha": now_mza_save.date().isoformat(),
-            "notas": observaciones or "",
-            "observaciones": observaciones or "",
-            "archivo_url": f"/api/geclisa/archivos/{geclisa_as_id}/ver" if geclisa_as_id else None,
-            "archivo_nombre": final_filename,
-            "nombre_archivo": final_filename,
-            "mime_type": final_mime,
-            "tamano_bytes": len(final_bytes),
-            "geclisa_archivo_id": int(geclisa_as_id) if geclisa_as_id else None,
-            "geclisa_as_id": int(geclisa_as_id) if geclisa_as_id else None,
-            "geclisa_pac_id": int(geclisa_pac_id) if geclisa_pac_id else None,
-            "geclisa_ficha_id": int(geclisa_ficha_id),
-            "dni_paciente": dni_limpio,
-            "nombre_paciente": nombre_paciente.strip(),
-            "telefono_destino": tel_norm,
+            # Persistir registro en public.estudios_oftalmo (0 bytes en Supabase Storage)
+            ahora_iso = datetime.now(timezone.utc).isoformat()
+            now_mza_save = get_argentina_now()
+            db_row: Dict[str, Any] = {
+                "paciente_id": existing_paciente_id,
+                "tipo": tipo_estudio.strip(),
+                "ojo": ojo.strip() or "AO",
+                "fecha": now_mza_save.date().isoformat(),
+                "notas": observaciones or "",
+                "observaciones": observaciones or "",
+                "archivo_url": f"/api/geclisa/archivos/{geclisa_as_id}/ver" if geclisa_as_id else None,
+                "archivo_nombre": final_filename,
+                "nombre_archivo": final_filename,
+                "mime_type": final_mime,
+                "tamano_bytes": len(final_bytes),
+                "geclisa_archivo_id": int(geclisa_as_id) if geclisa_as_id else None,
+                "geclisa_as_id": int(geclisa_as_id) if geclisa_as_id else None,
+                "geclisa_pac_id": int(geclisa_pac_id) if geclisa_pac_id else None,
+                "geclisa_ficha_id": int(geclisa_ficha_id),
+                "dni_paciente": dni_limpio,
+                "nombre_paciente": nombre_paciente.strip(),
+                "telefono_destino": tel_norm,
+                "wamid": wamid,
+                "whatsapp_media_id": media_id,
+                "whatsapp_status": wa_status,
+                "whatsapp_error": wa_err,
+                "whatsapp_sent_at": ahora_iso if wa_ok and wamid else None,
+                "tecnico_usuario_id": eff_user_id if eff_user_id else None,
+                "tecnico_nombre": resolved_tecnico_nombre,
+                "tecnico_pre_id": int(resolved_pre_id) if resolved_pre_id else None
+            }
+
+            saved_record = db_row
+            if supabase:
+                try:
+                    ins = supabase.table("estudios_oftalmo").insert(db_row).execute()
+                    if ins.data and len(ins.data) > 0:
+                        saved_record = ins.data[0]
+                except Exception as db_e:
+                    logger.error(f"[Estudios] Error insertando en estudios_oftalmo: {db_e}")
+
+            log_event(
+                nivel="INFO" if (geclisa_ok and wa_ok) else "WARNING",
+                modulo="ESTUDIOS_TECNICOS",
+                accion="ENVIO_ESTUDIO_OFTALMOLOGICO",
+                mensaje=f"Estudio '{titulo_completo}' para {nombre_paciente} (DNI {dni_limpio}): Geclisa={'OK' if geclisa_ok else 'ERROR'}, WhatsApp={'OK' if wa_ok else 'ERROR'}",
+                detalles={
+                    "estudio_id": saved_record.get("id") if isinstance(saved_record, dict) else None,
+                    "dni": dni_limpio,
+                    "ficha_id": geclisa_ficha_id,
+                    "geclisa_as_id": geclisa_as_id,
+                    "wamid": wamid,
+                    "tecnico": resolved_tecnico_nombre,
+                    "geclisa_error": geclisa_err,
+                    "whatsapp_error": wa_err
+                }
+            )
+        except Exception as post_e:
+            logger.error(f"[Estudios] Error no crítico post-envío: {post_e}", exc_info=True)
+            if saved_record is None:
+                saved_record = {
+                    "dni_paciente": dni_limpio,
+                    "nombre_paciente": nombre_paciente,
+                    "geclisa_as_id": geclisa_as_id,
+                    "wamid": wamid
+                }
+
+        if guardar_en_geclisa and not geclisa_ok and enviar_whatsapp and not wa_ok:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Falló tanto el guardado en Geclisa ({geclisa_err}) como el envío por WhatsApp ({wa_err})."
+            )
+        if guardar_en_geclisa and not geclisa_ok and not enviar_whatsapp:
+            raise HTTPException(
+                status_code=500,
+                detail=f"No se pudo guardar el archivo en la Historia Clínica de Geclisa: {geclisa_err}"
+            )
+        if not guardar_en_geclisa and enviar_whatsapp and not wa_ok:
+            raise HTTPException(
+                status_code=500,
+                detail=f"No se pudo enviar el archivo por WhatsApp: {wa_err}"
+            )
+
+        resp_data = {
+            "success": True,
+            "estudio_id": saved_record.get("id") if isinstance(saved_record, dict) else None,
+            "geclisa_ok": geclisa_ok,
+            "geclisa_as_id": geclisa_as_id,
+            "geclisa_error": geclisa_err,
+            "whatsapp_ok": wa_ok,
             "wamid": wamid,
-            "whatsapp_media_id": media_id,
             "whatsapp_status": wa_status,
             "whatsapp_error": wa_err,
-            "whatsapp_sent_at": ahora_iso if wa_ok and wamid else None,
-            "tecnico_usuario_id": eff_user_id if eff_user_id else None,
-            "tecnico_nombre": resolved_tecnico_nombre,
-            "tecnico_pre_id": int(resolved_pre_id) if resolved_pre_id else None
+            "delivery_mode": delivery_mode,
+            "estudio": saved_record
         }
 
-        saved_record = db_row
-        if supabase:
-            try:
-                ins = supabase.table("estudios_oftalmo").insert(db_row).execute()
-                if ins.data and len(ins.data) > 0:
-                    saved_record = ins.data[0]
-            except Exception as db_e:
-                logger.error(f"[Estudios] Error insertando en estudios_oftalmo: {db_e}")
+        async with _CACHE_MUTEX:
+            t_fin = time.time()
+            _RECENT_ESTUDIOS_CACHE[dedup_key] = (t_fin, resp_data)
+            _RECENT_ESTUDIOS_CACHE[sig_key] = (t_fin, resp_data)
 
-        log_event(
-            nivel="INFO" if (geclisa_ok and wa_ok) else "WARNING",
-            modulo="ESTUDIOS_TECNICOS",
-            accion="ENVIO_ESTUDIO_OFTALMOLOGICO",
-            mensaje=f"Estudio '{titulo_completo}' para {nombre_paciente} (DNI {dni_limpio}): Geclisa={'OK' if geclisa_ok else 'ERROR'}, WhatsApp={'OK' if wa_ok else 'ERROR'}",
-            detalles={
-                "estudio_id": saved_record.get("id") if isinstance(saved_record, dict) else None,
-                "dni": dni_limpio,
-                "ficha_id": geclisa_ficha_id,
-                "geclisa_as_id": geclisa_as_id,
-                "wamid": wamid,
-                "tecnico": resolved_tecnico_nombre,
-                "geclisa_error": geclisa_err,
-                "whatsapp_error": wa_err
-            }
-        )
-    except Exception as post_e:
-        logger.error(f"[Estudios] Error no crítico post-envío: {post_e}", exc_info=True)
-        if saved_record is None:
-            saved_record = {
-                "dni_paciente": dni_limpio,
-                "nombre_paciente": nombre_paciente,
-                "geclisa_as_id": geclisa_as_id,
-                "wamid": wamid
-            }
-
-    if guardar_en_geclisa and not geclisa_ok and enviar_whatsapp and not wa_ok:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Falló tanto el guardado en Geclisa ({geclisa_err}) como el envío por WhatsApp ({wa_err})."
-        )
-    if guardar_en_geclisa and not geclisa_ok and not enviar_whatsapp:
-        raise HTTPException(
-            status_code=500,
-            detail=f"No se pudo guardar el archivo en la Historia Clínica de Geclisa: {geclisa_err}"
-        )
-    if not guardar_en_geclisa and enviar_whatsapp and not wa_ok:
-        raise HTTPException(
-            status_code=500,
-            detail=f"No se pudo enviar el archivo por WhatsApp: {wa_err}"
-        )
-
-    return {
-        "success": True,
-        "estudio_id": saved_record.get("id") if isinstance(saved_record, dict) else None,
-        "geclisa_ok": geclisa_ok,
-        "geclisa_as_id": geclisa_as_id,
-        "geclisa_error": geclisa_err,
-        "whatsapp_ok": wa_ok,
-        "wamid": wamid,
-        "whatsapp_status": wa_status,
-        "whatsapp_error": wa_err,
-        "delivery_mode": delivery_mode,
-        "estudio": saved_record
-    }
+        return resp_data
 
 
 @estudios_router.post("/api/estudios-tecnicos/enviar-existente-geclisa")

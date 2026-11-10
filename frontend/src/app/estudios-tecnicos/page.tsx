@@ -608,9 +608,19 @@ export default function EstudiosTecnicosPage() {
       formData.append('usuario_nombre', tecnicoNombre)
       if (tecnicoPreId) formData.append('tecnico_pre_id', String(tecnicoPreId))
 
+      const clientRequestId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+      formData.append('client_request_id', clientRequestId)
+
       const res = await apiFetch('/api/estudios-tecnicos/enviar', {
         method: 'POST',
-        body: formData
+        body: formData,
+        timeoutMs: 90000,
+        retryOnNetworkError: false,
+        headers: {
+          'X-Idempotency-Key': clientRequestId
+        }
       })
       const data = await res.json()
 
@@ -719,6 +729,8 @@ export default function EstudiosTecnicosPage() {
     try {
       const res = await apiFetch('/api/estudios-tecnicos/enviar-existente-geclisa', {
         method: 'POST',
+        timeoutMs: 60000,
+        retryOnNetworkError: false,
         body: JSON.stringify({
           geclisa_as_id: arc.as_id,
           geclisa_ficha_id: paciente.geclisa_ficha_id,
