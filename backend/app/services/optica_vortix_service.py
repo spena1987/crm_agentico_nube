@@ -2829,6 +2829,15 @@ async def procesar_cola_envios_optica(max_batch: int = 10, force_outside_hours: 
                             "parameters": [{"type": "image", "image": {"link": header_url}}]
                         })
 
+                # Validar y recortar parámetros según las variables reales esperadas por la plantilla en BD/catálogo
+                if tpl_body_text and not tpl_body_text.startswith("[Plantilla"):
+                    matched_vars = re.findall(r'\{\{(\d+)\}\}', tpl_body_text)
+                    expected_vars = len(set(matched_vars))
+                    if expected_vars == 0:
+                        params = []
+                    elif len(params) > expected_vars:
+                        params = params[:expected_vars]
+
                 if params:
                     components.append({
                         "type": "body",

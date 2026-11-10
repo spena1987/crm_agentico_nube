@@ -3534,14 +3534,20 @@ async def enviar_prueba_campana_endpoint(payload: EnviarPruebaCampanaPayload):
             tpl_body_text = cat_match.get("body_text") or ""
             tpl_header_type = str(cat_match.get("header_type") or tpl_header_type).upper()
 
+    tpl_found = bool(tpl_body_text and not tpl_body_text.startswith("[Prueba"))
     var_matches = re.findall(r'\{\{(\d+)\}\}', tpl_body_text)
-    num_vars = len(set(var_matches)) if var_matches else 4
+    if tpl_found:
+        num_vars = len(set(var_matches))
+    else:
+        num_vars = len(set(var_matches)) if var_matches else 4
 
     nombre_corto = extraer_primer_nombre_paciente(payload.nombre_contacto)
     cupon = "#VORTIX-TEST"
     descuento = payload.descuento_texto or "20% OFF en Cristales y Armazones"
 
-    if num_vars == 1:
+    if num_vars == 0:
+        params = []
+    elif num_vars == 1:
         params = [{"type": "text", "text": nombre_corto}]
     elif num_vars == 2:
         params = [
@@ -3712,8 +3718,12 @@ async def lanzar_campana_optica(camp_id: str):
         if cat_match:
             tpl_body = cat_match.get("body_text") or ""
 
+    tpl_found = bool(tpl_body.strip())
     var_matches = re.findall(r'\{\{(\d+)\}\}', tpl_body)
-    num_vars = len(set(var_matches)) if var_matches else 4
+    if tpl_found:
+        num_vars = len(set(var_matches))
+    else:
+        num_vars = len(set(var_matches)) if var_matches else 4
 
     # 2. Escudo Anti-Bloqueo: Teléfonos en ventana de Cooldown (últimos 30 días)
     telefonos_cooldown: Set[str] = set()
@@ -3826,7 +3836,9 @@ async def lanzar_campana_optica(camp_id: str):
         cupon = str(ct.get("codigo_cupon_activo") or generar_codigo_beneficio_vortix(tel))
 
         # Construcción dinámica de parámetros según num_vars exacto de la plantilla Meta
-        if num_vars == 1:
+        if num_vars == 0:
+            params = []
+        elif num_vars == 1:
             params = [{"type": "text", "text": nombre_corto}]
         elif num_vars == 2:
             params = [
