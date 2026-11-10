@@ -3910,6 +3910,113 @@ async def pausar_campana_optica(camp_id: str):
     return {**camp_out, "success": True, "campana": camp_out}
 
 
+@optica_vortix_router.post("/campanas/{camp_id}/reanudar")
+async def reanudar_campana_optica(camp_id: str):
+    """
+    Reanuda una campaña pausada y reactiva sus envíos pendientes de forma inmediata (< 100ms)
+    sin necesidad de recalcular audiencias pesadas en Geclisa.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    c_res = supabase.table("optica_campanas").select("*").eq("id", camp_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Campaña no encontrada")
+
+    camp = c_res.data[0]
+    now_utc = datetime.now(timezone.utc)
+    now_iso = now_utc.isoformat()
+
+    # 1. Obtener envíos pausados de la campaña
+    env_res = (
+        supabase.table("optica_envios_programados")
+        .select("id, programado_para")
+        .eq("campana_id", camp_id)
+        .eq("estado", "pausado")
+        .order("programado_para", desc=False)
+        .execute()
+    )
+    pausados = env_res.data or []
+
+    # Configuración de cadencia para reprogramar si los tiempos previstos quedaron en el pasado
+    goteo = camp.get("config_goteo_json") or {}
+    cfg = get_optica_vortix_full_config()
+    int_min = int(goteo.get("intervalo_min_seg") or cfg.get("antibloqueo_jitter_min_seg", 35))
+    int_max = int(goteo.get("intervalo_max_seg") or cfg.get("antibloqueo_jitter_max_seg", 90))
+
+    cursor_time = now_utc + timedelta(seconds=10)
+    for p in pausados:
+        prog_str = p.get("programado_para")
+        necesita_reajuste = True
+        if prog_str:
+            try:
+                p_dt = datetime.fromisoformat(prog_str.replace("Z", "+00:00"))
+                if p_dt > now_utc:
+                    necesita_reajuste = False
+            except Exception:
+                pass
+
+        upd_data: Dict[str, Any] = {
+            "estado": "pendiente",
+            "updated_at": now_iso
+        }
+        if necesita_reajuste:
+            jitter = random.randint(int_min, int_max)
+            cursor_time += timedelta(seconds=jitter)
+            upd_data["programado_para"] = cursor_time.isoformat()
+
+        try:
+            supabase.table("optica_envios_programados").update(upd_data).eq("id", p["id"]).execute()
+        except Exception as e_upd:
+            logger.warning(f"[CampanaOptica] Error al reanudar item {p.get('id')}: {e_upd}")
+
+    # 2. Actualizar estado de la campaña en optica_campanas
+    upd = supabase.table("optica_campanas").update({
+        "estado": "en_curso",
+        "updated_at": now_iso
+    }).eq("id", camp_id).execute()
+
+    camp_out = _enriquecer_campana_optica_frontend(upd.data[0] if upd.data else camp)
+    return {
+        **camp_out,
+        "success": True,
+        "campana": camp_out,
+        "reactivados": len(pausados)
+    }
+
+
+@optica_vortix_router.delete("/campanas/{camp_id}")
+async def eliminar_campana_optica(camp_id: str):
+    """
+    Elimina una campaña de Óptica Vortix y sus envíos programados asociados.
+    Permite limpiar campañas en borrador o que no hayan comenzado o sido pausadas para rehacerlas.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    c_res = supabase.table("optica_campanas").select("*").eq("id", camp_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Campaña no encontrada")
+
+    camp = c_res.data[0]
+    nombre_camp = camp.get("nombre") or "Campaña"
+
+    try:
+        # 1. Eliminar envíos programados asociados
+        supabase.table("optica_envios_programados").delete().eq("campana_id", camp_id).execute()
+        # 2. Eliminar fila principal de la campaña
+        supabase.table("optica_campanas").delete().eq("id", camp_id).execute()
+    except Exception as e_del:
+        logger.error(f"[CampanaOptica] Error al eliminar campaña {camp_id}: {e_del}")
+        raise HTTPException(status_code=500, detail=f"Error al eliminar campaña: {e_del}")
+
+    return {
+        "success": True,
+        "message": f"Campaña '{nombre_camp}' eliminada correctamente.",
+        "campana_id": camp_id
+    }
+
+
 @optica_vortix_router.post("/cola/procesar-ahora")
 async def procesar_cola_ahora_endpoint():
     """Fuerza el procesamiento inmediato de un lote de la cola de Óptica Vortix."""

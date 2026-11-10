@@ -221,6 +221,8 @@ export default function OpticaCampanasPage() {
   const [campanaDetalleModal, setCampanaDetalleModal] = useState<OpticaCampana | null>(null)
   const [destinatariosDetalle, setDestinatariosDetalle] = useState<any[]>([])
   const [loadingDestinatarios, setLoadingDestinatarios] = useState(false)
+  const [deletingCampId, setDeletingCampId] = useState<string | null>(null)
+  const [togglingCampId, setTogglingCampId] = useState<string | null>(null)
 
   // Disparo Inmediato de Prueba (Opción 1 y 2: Whitelist y Bypass Cooldown)
   const [telefonoPrueba, setTelefonoPrueba] = useState('2614703230')
@@ -673,13 +675,72 @@ export default function OpticaCampanasPage() {
     }
   }
 
+  const handleEliminarCampana = async (camp: OpticaCampana) => {
+    const seguro = window.confirm(
+      `¿Estás seguro de eliminar la campaña "${camp.nombre}"?\nEsta acción cancelará todos los envíos no ejecutados y eliminará la campaña del historial.`
+    )
+    if (!seguro) return
+
+    setDeletingCampId(camp.id)
+    try {
+      const res = await apiFetch(`/api/optica-vortix/campanas/${camp.id}`, { method: 'DELETE' })
+      if (res.ok) {
+        setCampanas((prev) => prev.filter((c) => c.id !== camp.id))
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        alert(errData.detail || 'Error al eliminar la campaña.')
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error de conexión al eliminar la campaña.')
+    } finally {
+      setDeletingCampId(null)
+    }
+  }
+
   const handleToggleCampana = async (camp: OpticaCampana) => {
-    const endpoint =
-      camp.estado === 'EN_CURSO'
-        ? `/api/optica-vortix/campanas/${camp.id}/pausar`
-        : `/api/optica-vortix/campanas/${camp.id}/lanzar`
-    await apiFetch(endpoint, { method: 'POST' })
-    await loadAll()
+    setTogglingCampId(camp.id)
+    const estadoActual = camp.estado
+    const nuevoEstado = estadoActual === 'EN_CURSO' ? 'PAUSADA' : 'EN_CURSO'
+
+    // Actualización optimista inmediata en la interfaz para feedback instantáneo
+    setCampanas((prev) =>
+      prev.map((c) => (c.id === camp.id ? { ...c, estado: nuevoEstado } : c))
+    )
+
+    try {
+      let endpoint = `/api/optica-vortix/campanas/${camp.id}/lanzar`
+      if (estadoActual === 'EN_CURSO') {
+        endpoint = `/api/optica-vortix/campanas/${camp.id}/pausar`
+      } else if (estadoActual === 'PAUSADA') {
+        endpoint = `/api/optica-vortix/campanas/${camp.id}/reanudar`
+      }
+
+      const res = await apiFetch(endpoint, { method: 'POST' })
+      if (res.ok) {
+        const data = await res.json()
+        const campActualizada = data.campana || data
+        if (campActualizada && campActualizada.id) {
+          setCampanas((prev) =>
+            prev.map((c) => (c.id === camp.id ? { ...c, ...campActualizada } : c))
+          )
+        }
+      } else {
+        // Rollback si la petición fue rechazada por el backend
+        setCampanas((prev) =>
+          prev.map((c) => (c.id === camp.id ? { ...c, estado: estadoActual } : c))
+        )
+        const errData = await res.json().catch(() => ({}))
+        alert(errData.detail || 'No se pudo actualizar el estado de la campaña.')
+      }
+    } catch (err: any) {
+      // Rollback ante error de red o timeout
+      setCampanas((prev) =>
+        prev.map((c) => (c.id === camp.id ? { ...c, estado: estadoActual } : c))
+      )
+      alert(err.message || 'Error de conexión al procesar la campaña.')
+    } finally {
+      setTogglingCampId(null)
+    }
   }
 
   const handleVerDetalleCampana = async (camp: OpticaCampana) => {
@@ -2392,6 +2453,24 @@ export default function OpticaCampanasPage() {
                       </div>
 
                       <div className="flex items-center gap-2">
+                        {/* Botón Eliminar si no ha comenzado (BORRADOR o 0 enviados) */}
+                        {(c.estado === 'BORRADOR' || (c.enviados || (c as any).enviados_count || 0) === 0) && (
+                          <button
+                            type="button"
+                            onClick={() => handleEliminarCampana(c)}
+                            disabled={deletingCampId === c.id}
+                            title="Eliminar campaña y rehacerla"
+                            className="px-3 py-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            {deletingCampId === c.id ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={13} />
+                            )}
+                            <span>{deletingCampId === c.id ? 'Borrando...' : 'Eliminar'}</span>
+                          </button>
+                        )}
+
                         <button
                           type="button"
                           onClick={() => handleVerDetalleCampana(c)}
@@ -2400,18 +2479,32 @@ export default function OpticaCampanasPage() {
                           <Eye size={13} />
                           <span>Ver Destinatarios</span>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleCampana(c)}
-                          className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition-colors ${
-                            c.estado === 'EN_CURSO'
-                              ? 'bg-amber-500 hover:bg-amber-600 text-slate-950'
-                              : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                          }`}
-                        >
-                          {c.estado === 'EN_CURSO' ? <Pause size={13} /> : <Play size={13} />}
-                          <span>{c.estado === 'EN_CURSO' ? 'Pausar' : 'Reanudar'}</span>
-                        </button>
+
+                        {c.estado !== 'COMPLETADA' && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCampana(c)}
+                            disabled={togglingCampId === c.id}
+                            className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition-colors ${
+                              c.estado === 'EN_CURSO'
+                                ? 'bg-amber-500 hover:bg-amber-600 text-slate-950'
+                                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                            } ${togglingCampId === c.id ? 'opacity-70 cursor-not-allowed' : ''}`}
+                          >
+                            {togglingCampId === c.id ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : c.estado === 'EN_CURSO' ? (
+                              <Pause size={13} />
+                            ) : (
+                              <Play size={13} />
+                            )}
+                            <span>
+                              {togglingCampId === c.id
+                                ? (c.estado === 'EN_CURSO' ? 'Pausando...' : 'Reanudando...')
+                                : (c.estado === 'EN_CURSO' ? 'Pausar' : c.estado === 'BORRADOR' ? 'Lanzar' : 'Reanudar')}
+                            </span>
+                          </button>
+                        )}
                       </div>
                     </div>
 
