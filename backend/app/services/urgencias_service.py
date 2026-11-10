@@ -481,9 +481,11 @@ async def procesar_urgencia_postquirurgica(
     try:
         supabase.table("mensajes").insert({
             "conversacion_id": conversacion_id,
-            "emisor": "sistema",
+            "emisor": "bot",
             "contenido": nota_interna,
             "metadata_json": {
+                "es_nota_interna": True,
+                "sistema": True,
                 "tipo": "alerta_urgencia_postquirurgica",
                 "datos_alerta": datos_alerta,
                 "resultado_whatsapp": res_wa

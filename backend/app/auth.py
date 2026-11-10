@@ -20,10 +20,15 @@ WEBHOOK_SECRET = (os.getenv("WEBHOOK_SECRET") or os.getenv("META_WA_VERIFY_TOKEN
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
+# Cache en memoria para verificación de tokens autenticados (token_hash -> (payload, expire_timestamp))
+_AUTH_TOKEN_CACHE: Dict[str, Tuple[Dict[str, Any], float]] = {}
+
 def decode_supabase_jwt(token: str) -> Dict[str, Any]:
     """
     Decodifica y valida un token JWT emitido por Supabase.
     Soporta tokens de sesión de usuario (HS256), token anon oficial del proyecto y token service_role.
+    Optimizado con inspección previa de claims y caché de corta duración (TTL) para evitar
+    tormentas de 403 Forbidden y latencia redundante contra Supabase Auth.
     """
     if not token:
         raise HTTPException(
@@ -40,6 +45,16 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
         except Exception:
             pass
 
+    # Chequear caché en memoria de tokens autenticados validados previamente (TTL 5 minutos)
+    ahora_ts = time.time()
+    token_cached = _AUTH_TOKEN_CACHE.get(token)
+    if token_cached:
+        payload_cached, exp_cached = token_cached
+        if ahora_ts < exp_cached:
+            return payload_cached
+        else:
+            _AUTH_TOKEN_CACHE.pop(token, None)
+
     # 2. Validación local por secreto simétrico HS256 si SUPABASE_JWT_SECRET es un secreto válido
     active_secret = (os.getenv("SUPABASE_JWT_SECRET") or SUPABASE_JWT_SECRET or "").strip().strip("'\"")
     active_secret = active_secret if (active_secret and not active_secret.startswith("eyJ")) else ""
@@ -51,6 +66,9 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
                 algorithms=["HS256"],
                 options={"verify_aud": False}
             )
+            # Guardar en caché si el token es válido
+            exp = payload.get("exp") or (ahora_ts + 300)
+            _AUTH_TOKEN_CACHE[token] = (payload, min(float(exp), ahora_ts + 300))
             return payload
         except jwt.ExpiredSignatureError:
             raise HTTPException(
@@ -61,42 +79,55 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
         except jwt.InvalidTokenError as e:
             logger.warning(f"Error de firma en token JWT local: {e}. Intentando fallback...")
 
-    # 3. Fallback: Verificación remota contra la API de Supabase Auth
-    try:
-        from app.db import supabase
-        if supabase:
-            res = supabase.auth.get_user(token)
-            if res and res.user:
-                return {
-                    "sub": res.user.id,
-                    "email": res.user.email,
-                    "role": res.user.role or "authenticated"
-                }
-    except Exception as api_err:
-        logger.debug(f"Verificación remota get_user no aplicable o falló: {api_err}")
-
-    # 4. Fallback de confianza para tokens del proyecto (anon key u otros tokens emitidos por la instancia)
+    # Inspección de claims no verificados antes de contactar a Supabase Auth
+    # Evita llamar a /auth/v1/user cuando el token es del rol 'anon' (lo cual siempre arroja 403)
+    unverified: Dict[str, Any] = {}
     try:
         unverified = jwt.decode(token, options={"verify_signature": False})
-        project_ref = os.getenv("SUPABASE_URL", "").replace("https://", "").replace(".supabase.co", "").strip()
-        token_ref = unverified.get("ref") or ""
-        token_iss = unverified.get("iss") or ""
-
-        is_project_token = (
-            (token_iss == "supabase" and (not project_ref or token_ref == project_ref)) or
-            (bool(project_ref) and project_ref in token_iss) or
-            ("supabase.co" in token_iss and unverified.get("aud") in ("authenticated", "anon"))
-        )
-
-        if is_project_token:
-            exp = unverified.get("exp")
-            if exp and exp < time.time():
-                raise HTTPException(status_code=401, detail="El token de acceso ha expirado.")
-            return unverified
-    except HTTPException:
-        raise
     except Exception as parse_err:
         logger.warning(f"Error al inspeccionar token: {parse_err}")
+
+    token_role = str(unverified.get("role") or "").lower()
+    project_ref = os.getenv("SUPABASE_URL", "").replace("https://", "").replace(".supabase.co", "").strip()
+    token_ref = unverified.get("ref") or ""
+    token_iss = unverified.get("iss") or ""
+
+    is_project_token = (
+        (token_iss == "supabase" and (not project_ref or token_ref == project_ref)) or
+        (bool(project_ref) and project_ref in token_iss) or
+        ("supabase.co" in token_iss and unverified.get("aud") in ("authenticated", "anon"))
+    )
+
+    # Si es un token anon del proyecto, no intentar get_user (arrojaría 403 Forbidden garantizado)
+    if is_project_token and token_role == "anon":
+        exp = unverified.get("exp")
+        if exp and exp < ahora_ts:
+            raise HTTPException(status_code=401, detail="El token anon de acceso ha expirado.")
+        return unverified
+
+    # 3. Fallback: Verificación remota contra la API de Supabase Auth SOLO para usuarios autenticados
+    if token_role != "anon":
+        try:
+            from app.db import supabase
+            if supabase:
+                res = supabase.auth.get_user(token)
+                if res and res.user:
+                    verified_payload = {
+                        "sub": res.user.id,
+                        "email": res.user.email,
+                        "role": res.user.role or "authenticated"
+                    }
+                    _AUTH_TOKEN_CACHE[token] = (verified_payload, ahora_ts + 300)
+                    return verified_payload
+        except Exception as api_err:
+            logger.debug(f"Verificación remota get_user no aplicable o falló: {api_err}")
+
+    # 4. Fallback de confianza para tokens emitidos por la instancia
+    if is_project_token:
+        exp = unverified.get("exp")
+        if exp and exp < ahora_ts:
+            raise HTTPException(status_code=401, detail="El token de acceso ha expirado.")
+        return unverified
 
     raise HTTPException(
         status_code=401,

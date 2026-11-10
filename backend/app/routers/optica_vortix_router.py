@@ -256,13 +256,19 @@ async def put_config_endpoint(payload: Dict[str, Any] = Body(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Cache en memoria para salud de la línea de óptica (TTL 30s) para evitar sobrecarga y timeouts
+_SALUD_LINEA_CACHE: Dict[str, Any] = {"data": None, "expires_at": 0.0}
+
 @optica_vortix_router.get("/salud-linea")
-async def get_salud_linea_optica():
+async def get_salud_linea_optica(force_refresh: bool = Query(False, description="Forzar consulta en vivo a Meta y Supabase")):
     """
     Consulta en tiempo real el estado y salud de la Línea 3 (Óptica Vortix) en Meta Graph API,
     lista los números registrados en la WABA, las plantillas de óptica disponibles y las métricas
-    de la cola anti-bloqueo del día.
+    de la cola anti-bloqueo del día. Protegido con caché de 30 segundos para evitar 499 timeouts.
     """
+    now_ts = time.time()
+    if not force_refresh and _SALUD_LINEA_CACHE["data"] and now_ts < _SALUD_LINEA_CACHE["expires_at"]:
+        return _SALUD_LINEA_CACHE["data"]
     cfg = get_optica_vortix_full_config()
     waba_id = get_whatsapp_waba_id() or cfg.get("optica_waba_id") or "3731563350343089"
     q_phone_id, token = get_whatsapp_cloud_credentials()
@@ -393,6 +399,10 @@ async def get_salud_linea_optica():
         "cola_stats": cola_stats,
         "config": cfg
     }
+
+    _SALUD_LINEA_CACHE["data"] = res_data
+    _SALUD_LINEA_CACHE["expires_at"] = time.time() + 30.0
+    return res_data
 
 
 @optica_vortix_router.post("/linea/vincular")
@@ -3679,6 +3689,9 @@ async def lanzar_campana_optica(camp_id: str):
     goteo = camp.get("config_goteo_json") or {}
     cfg = get_optica_vortix_full_config()
     descuento = str(filtro.get("descuento_texto") or cfg.get("porcentaje_descuento_turno") or "20% OFF")
+    tpl_name = camp.get("template_name") or "vortix_beneficio_turno_v1"
+    segmento = str(filtro.get("segmento") or camp.get("tipo") or "TURNOS_PROXIMOS_CON_DESCUENTO").upper()
+    now_utc = datetime.now(timezone.utc)
     int_min = int(goteo.get("intervalo_min_seg") or cfg.get("antibloqueo_jitter_min_seg", 35))
     int_max = int(goteo.get("intervalo_max_seg") or cfg.get("antibloqueo_jitter_max_seg", 90))
     lote_sz = max(1, int(goteo.get("lote_size") or cfg.get("antibloqueo_lote_max_hora", 35)))

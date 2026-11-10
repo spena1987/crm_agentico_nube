@@ -668,8 +668,9 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                 except Exception:
                     pass
             except Exception as dwn_err:
-                logger.error(f"[Worker Media] Error descargando {msg_type} de Meta: {dwn_err}")
-                media_meta["download_error"] = str(dwn_err)
+                err_detail = f"{type(dwn_err).__name__}: {dwn_err}" if str(dwn_err).strip() else type(dwn_err).__name__
+                logger.error(f"[Worker Media] Error descargando {msg_type} de Meta: {err_detail}")
+                media_meta["download_error"] = err_detail
 
     elif msg_type == "location":
         loc = msg_dict.get("location", {})
@@ -815,6 +816,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     .execute()
                 crm_conv_id = None
                 bot_disabled = False
+                c_meta: Dict[str, Any] = {}
 
                 if conv_crm_res.data and len(conv_crm_res.data) > 0:
                     crm_conv_id = conv_crm_res.data[0]["id"]
@@ -934,7 +936,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                             )
                             supabase.table("mensajes").insert({
                                 "conversacion_id": crm_conv_id,
-                                "emisor": "sistema",
+                                "emisor": "bot",
                                 "contenido": nota_texto,
                                 "metadata_json": {
                                     "es_nota_interna": True,

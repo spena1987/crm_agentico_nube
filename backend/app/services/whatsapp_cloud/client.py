@@ -882,17 +882,35 @@ class WhatsAppCloudClient:
         if not download_url:
             raise ValueError(f"Meta no retornó URL de descarga para media {media_id}: {meta_info}")
 
-        # 2. Descarga del binario con verificación de Content-Length
-        binary_res = await client.get(
-            download_url,
-            headers={
-                "Authorization": f"Bearer {self.access_token}",
-                "User-Agent": "Mozilla/5.0 (CRM-WhatsApp-Client)"
-            },
-            follow_redirects=True
-        )
-        if binary_res.status_code != 200:
-            raise RuntimeError(f"Error descargando binario de media {media_id}: {binary_res.status_code}")
+        # 2. Descarga del binario con verificación de Content-Length y 1 reintento ante timeout
+        binary_res = None
+        for attempt in range(2):
+            try:
+                binary_res = await client.get(
+                    download_url,
+                    headers={
+                        "Authorization": f"Bearer {self.access_token}",
+                        "User-Agent": "Mozilla/5.0 (CRM-WhatsApp-Client)"
+                    },
+                    follow_redirects=True
+                )
+                if binary_res.status_code == 200:
+                    break
+                elif attempt == 0 and binary_res.status_code in (500, 502, 503, 504):
+                    await asyncio.sleep(1.0)
+                    continue
+                else:
+                    break
+            except (httpx.TimeoutException, httpx.NetworkError) as net_err:
+                if attempt == 0:
+                    logger.warning(f"[WhatsAppMedia] Timeout/red al descargar {media_id} (intento 1/2): {net_err}. Reintentando en 1.5s...")
+                    await asyncio.sleep(1.5)
+                    continue
+                raise
+
+        if not binary_res or binary_res.status_code != 200:
+            status_code = binary_res.status_code if binary_res else "NoResponse"
+            raise RuntimeError(f"Error descargando binario de media {media_id}: {status_code}")
 
         content_len_hdr = binary_res.headers.get("Content-Length")
         if content_len_hdr and content_len_hdr.isdigit():

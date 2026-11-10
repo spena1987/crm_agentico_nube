@@ -5283,6 +5283,7 @@ def generar_mensaje_ameno_presupuesto(
         nom = it.get("nombre") or it.get("nombre_prestacion") or "Prestación Médica"
         cod = it.get("codigo") or it.get("codigo_servicio") or ""
         mon = str(it.get("moneda") or "ARS").upper()
+        sub = float(it.get("subtotal") or it.get("precio_unitario") or 0.0)
         en_conv = bool(it.get("en_convenio", False))
         if en_conv:
             sub_str = "✅ *En convenio* (Cubierto por Cobertura Médica)"
