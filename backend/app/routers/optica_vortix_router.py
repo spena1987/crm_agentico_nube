@@ -114,6 +114,7 @@ class EnviarMensajeOpticaPayload(BaseModel):
     contenido: Optional[str] = None
     mensaje: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    client_id: Optional[str] = None
     is_internal_note: bool = False
     template_name: Optional[str] = None
     template_language: str = "es_AR"
@@ -1473,6 +1474,7 @@ async def listar_conversaciones_optica(
     origen: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     archivadas: bool = Query(False),
+    estado: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=300)
 ):
     """
@@ -1489,6 +1491,13 @@ async def listar_conversaciones_optica(
             .select("*, optica_contactos(*)")
             .eq("archivada", archivadas)
         )
+        if estado and estado not in ("TODOS", "TODAS", "ALL", ""):
+            est_clean = estado.strip().lower()
+            if est_clean in ("activa", "activas", "abierta"):
+                query = query.in_("estado", ["activa", "abierta"])
+            else:
+                query = query.eq("estado", est_clean)
+
         if etapa_comercial and etapa_comercial not in ("TODAS", "TODOS", "ALL", ""):
             query = query.eq("etapa_comercial", etapa_comercial)
 
@@ -1677,7 +1686,8 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
                 tipo="nota_interna",
                 contenido=texto_final,
                 enviado_por=payload.usuario_nombre or "óptico",
-                metadata=payload.metadata
+                metadata=payload.metadata,
+                client_id=payload.client_id
             )
         )
         return {**(saved_note or {}), "success": True, "tipo": "nota_interna", "mensaje": saved_note}
@@ -1714,7 +1724,10 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
                 )
                 s_res = await wa_client.send_free_text(to_phone=to_phone, text=txt_listos)
                 saved = _enriquecer_mensaje_optica_frontend(
-                    _record_optica_outbound_msg(conv_id, contacto_id, s_res.get("wamid"), "text", txt_listos, payload.usuario_nombre or "óptico")
+                    _record_optica_outbound_msg(
+                        conv_id, contacto_id, s_res.get("wamid"), "text", txt_listos,
+                        payload.usuario_nombre or "óptico", client_id=payload.client_id
+                    )
                 )
             else:
                 cfg = get_optica_vortix_full_config()
@@ -1733,7 +1746,9 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
                 txt_listos = f"📦 [Aviso de Lentes Listos enviado a {nombre_pac}: {detalle}]"
                 saved = _enriquecer_mensaje_optica_frontend(
                     _record_optica_outbound_msg(
-                        conv_id, contacto_id, s_res.get("wamid"), "template", txt_listos, payload.usuario_nombre or "óptico", template_name=tpl_listos
+                        conv_id, contacto_id, s_res.get("wamid"), "template", txt_listos,
+                        payload.usuario_nombre or "óptico", template_name=tpl_listos,
+                        client_id=payload.client_id
                     )
                 )
 
@@ -1821,7 +1836,8 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
             saved = _enriquecer_mensaje_optica_frontend(
                 _record_optica_outbound_msg(
                     conv_id, contacto_id, s_res.get("wamid"), "template", body_preview,
-                    payload.usuario_nombre or "óptico", template_name=tpl_name, media_url=payload.media_url
+                    payload.usuario_nombre or "óptico", template_name=tpl_name, media_url=payload.media_url,
+                    client_id=payload.client_id
                 )
             )
             return {**(saved or {}), "success": True, "mensaje": saved}
@@ -1865,7 +1881,7 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
             saved = _enriquecer_mensaje_optica_frontend(
                 _record_optica_outbound_msg(
                     conv_id, contacto_id, s_res.get("wamid"), "cotizacion", texto_cot,
-                    payload.usuario_nombre or "óptico", metadata=meta_cot
+                    payload.usuario_nombre or "óptico", metadata=meta_cot, client_id=payload.client_id
                 )
             )
             supabase.table("optica_conversaciones").update({
@@ -1887,7 +1903,7 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
                 _record_optica_outbound_msg(
                     conv_id, contacto_id, s_res.get("wamid"), payload.media_type or "image",
                     caption or "📷 [Imagen / Placa Promocional]", payload.usuario_nombre or "óptico",
-                    media_url=payload.media_url
+                    media_url=payload.media_url, client_id=payload.client_id
                 )
             )
             return {**(saved or {}), "success": True, "mensaje": saved}
@@ -1899,7 +1915,8 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
         s_res = await wa_client.send_free_text(to_phone=to_phone, text=texto_final, preview_url=True)
         saved = _enriquecer_mensaje_optica_frontend(
             _record_optica_outbound_msg(
-                conv_id, contacto_id, s_res.get("wamid"), "text", texto_final, payload.usuario_nombre or "óptico", metadata=payload.metadata
+                conv_id, contacto_id, s_res.get("wamid"), "text", texto_final, payload.usuario_nombre or "óptico",
+                metadata=payload.metadata, client_id=payload.client_id
             )
         )
         return {**(saved or {}), "success": True, "mensaje": saved}
@@ -2045,6 +2062,75 @@ async def enviar_media_conversacion_optica(
     nuevo_mensaje["direccion"] = "outbound"
 
     return {"success": True, "mensaje": nuevo_mensaje}
+
+
+@optica_vortix_router.post("/conversaciones/{conv_id}/cerrar")
+async def cerrar_conversacion_optica(conv_id: str, payload: Optional[Dict[str, Any]] = Body(None)):
+    """
+    Cierra manualmente una conversación de Óptica Vortix.
+    Preserva el modo de atención actual en `modo_atencion_previo` y actualiza el estado a `cerrada`.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    c_res = supabase.table("optica_conversaciones").select("id, modo_atencion, estado").eq("id", conv_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+    conv = c_res.data[0]
+    modo_actual = conv.get("modo_atencion") or "autonomo"
+    motivo = (payload or {}).get("motivo") or "manual_operador"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    supabase.table("optica_conversaciones").update({
+        "estado": "cerrada",
+        "modo_atencion_previo": modo_actual,
+        "cerrado_at": now_iso,
+        "cerrado_motivo": motivo,
+        "updated_at": now_iso
+    }).eq("id", conv_id).execute()
+
+    return {
+        "success": True,
+        "id": conv_id,
+        "estado": "cerrada",
+        "modo_atencion_previo": modo_actual,
+        "cerrado_at": now_iso,
+        "cerrado_motivo": motivo
+    }
+
+
+@optica_vortix_router.post("/conversaciones/{conv_id}/reabrir")
+async def reabrir_conversacion_optica(conv_id: str):
+    """
+    Reabre una conversación de Óptica Vortix.
+    Restaura el modo de atención previo y marca el estado como `activa`.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    c_res = supabase.table("optica_conversaciones").select("id, modo_atencion, modo_atencion_previo, estado").eq("id", conv_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+    conv = c_res.data[0]
+    modo_restaurado = conv.get("modo_atencion_previo") or conv.get("modo_atencion") or "autonomo"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    supabase.table("optica_conversaciones").update({
+        "estado": "activa",
+        "modo_atencion": modo_restaurado,
+        "cerrado_at": None,
+        "cerrado_motivo": None,
+        "updated_at": now_iso
+    }).eq("id", conv_id).execute()
+
+    return {
+        "success": True,
+        "id": conv_id,
+        "estado": "activa",
+        "modo_atencion": modo_restaurado
+    }
 
 
 @optica_vortix_router.post("/conversaciones/{conv_id}/reaccionar")

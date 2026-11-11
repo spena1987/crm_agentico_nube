@@ -58,6 +58,8 @@ import ToggleHuman from '@/components/ToggleHuman'
 import ModalReenviarMensaje from '@/components/chat/ModalReenviarMensaje'
 import ModalSelectorPlantillasMeta from '@/components/chat/ModalSelectorPlantillasMeta'
 import ModalHistoriaClinica from '@/components/ModalHistoriaClinica'
+import { StagedMediaModal } from '@/components/optica/StagedMediaModal'
+import { ChatVoicePlayer } from '@/components/optica/ChatVoicePlayer'
 import { apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import { formatDateArg, getCalendarDayKey, formatDateBadge } from '@/lib/dateUtils'
@@ -272,12 +274,38 @@ const EMPTY_GRADUACION: OpticaGraduacion = {
   fuente: 'MANUAL',
 }
 
+// Helper de Reconciliación Optimista In-Place (elimina el mensaje doble en pantalla)
+function reconciliarMensajes(prevList: OpticaMensaje[], nuevo: OpticaMensaje): OpticaMensaje[] {
+  const index = prevList.findIndex((m) => {
+    if (m.id && nuevo.id && m.id === nuevo.id) return true
+    const mClientId = m.client_id || m.metadata?.client_id
+    const nuevoClientId = nuevo.client_id || nuevo.metadata?.client_id
+    if (mClientId && nuevoClientId && mClientId === nuevoClientId) return true
+    const mWamid = m.wamid || m.metadata?.wamid
+    const nuevoWamid = nuevo.wamid || nuevo.metadata?.wamid
+    if (mWamid && nuevoWamid && mWamid === nuevoWamid) return true
+    return false
+  })
+
+  if (index >= 0) {
+    const updated = [...prevList]
+    updated[index] = {
+      ...updated[index],
+      ...nuevo,
+      id: nuevo.id && !nuevo.id.startsWith('temp_') ? nuevo.id : updated[index].id,
+      estado_entrega: nuevo.estado_entrega || updated[index].estado_entrega || 'sent',
+    }
+    return updated
+  }
+  return [...prevList, nuevo]
+}
+
 export default function OpticaVortixChatPage() {
   const searchParams = useSearchParams()
   const initialConvId = searchParams.get('conv_id')
 
-  // Pestañas Activas / Archivadas
-  const [mainTab, setMainTab] = useState<'ACTIVAS' | 'ARCHIVADAS'>('ACTIVAS')
+  // Pestañas Principales: Activas / Cerradas / Archivadas
+  const [mainTab, setMainTab] = useState<'ACTIVAS' | 'CERRADAS' | 'ARCHIVADAS'>('ACTIVAS')
 
   // Estados de lista de conversaciones
   const [conversaciones, setConversaciones] = useState<OpticaConversacion[]>([])
@@ -291,6 +319,10 @@ export default function OpticaVortixChatPage() {
   const [mensajes, setMensajes] = useState<OpticaMensaje[]>([])
   const [loadingMsgs, setLoadingMsgs] = useState(false)
   const [showFicha360, setShowFicha360] = useState(true)
+
+  // Drag & Drop y Modal Multimedia Staged
+  const [isDraggingOver, setIsDraggingOver] = useState(false)
+  const [isStagedModalOpen, setIsStagedModalOpen] = useState(false)
 
   // Ficha Óptica 360° & Graduación editable
   const [graduacion, setGraduacion] = useState<OpticaGraduacion>(EMPTY_GRADUACION)
@@ -600,12 +632,7 @@ export default function OpticaVortixChatPage() {
         },
         (payload) => {
           const nuevoMsg = payload.new as OpticaMensaje
-          setMensajes((prev) => {
-            if (prev.some((m) => m.id === nuevoMsg.id || (m.metadata?.wamid && m.metadata.wamid === nuevoMsg.metadata?.wamid))) {
-              return prev
-            }
-            return [...prev, nuevoMsg]
-          })
+          setMensajes((prev) => reconciliarMensajes(prev, nuevoMsg))
 
           setTimeout(() => {
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -641,9 +668,7 @@ export default function OpticaVortixChatPage() {
         },
         (payload) => {
           const updatedMsg = payload.new as OpticaMensaje
-          setMensajes((prev) =>
-            prev.map((m) => (m.id === updatedMsg.id ? { ...m, ...updatedMsg } : m))
-          )
+          setMensajes((prev) => reconciliarMensajes(prev, updatedMsg))
         }
       )
       .subscribe()
@@ -695,44 +720,197 @@ export default function OpticaVortixChatPage() {
     }
   }
 
-  // Envío de Texto Libre o Nota Interna
-  const handleSendMessage = async (e?: React.FormEvent) => {
+  // Envío de Texto Libre o Nota Interna con Reconciliación Optimista y Eliminación de Mensaje Doble
+  const handleSendMessage = async (e?: React.FormEvent, retryMessage?: OpticaMensaje) => {
     if (e) e.preventDefault()
-    if (!selectedConv || !inputMsg.trim() || sendingMsg) return
+    if (!selectedConv || sendingMsg) return
 
-    setSendingMsg(true)
-    const tipo = modoNotaInterna ? 'nota_interna' : 'text'
-    const texto = inputMsg.trim()
+    const texto = retryMessage ? (retryMessage.contenido || '') : inputMsg.trim()
+    if (!texto) return
+
+    const isRetry = Boolean(retryMessage)
+    const client_id = retryMessage?.client_id || retryMessage?.metadata?.client_id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `cid_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`)
+    const tipo = modoNotaInterna ? 'nota_interna' : (retryMessage?.tipo || 'text')
     const currentReply = replyingToMessage
-    setInputMsg('')
-    setShowSlashMenu(false)
-    setReplyingToMessage(null)
 
-    const metadata: Record<string, any> = {}
+    if (!isRetry) {
+      setInputMsg('')
+      setShowSlashMenu(false)
+      setReplyingToMessage(null)
+    }
+
+    const metadata: Record<string, any> = {
+      ...(retryMessage?.metadata || {}),
+      client_id,
+    }
     if (currentReply) {
       metadata.reply_to_id = currentReply.id
       metadata.reply_to_text = currentReply.contenido
       metadata.reply_to_emisor = currentReply.direccion === 'inbound' ? 'paciente' : 'operador'
     }
 
+    // Inserción optimista inmediata (0ms de latencia visual)
+    const tempId = retryMessage?.id || `temp_${client_id}`
+    const tempMsg: OpticaMensaje = {
+      id: tempId,
+      conversacion_id: selectedConv.id,
+      direccion: 'outbound',
+      tipo,
+      contenido: texto,
+      created_at: retryMessage?.created_at || new Date().toISOString(),
+      estado_entrega: 'pending',
+      client_id,
+      metadata,
+    }
+
+    setMensajes((prev) => reconciliarMensajes(prev, tempMsg))
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 40)
+
+    setSendingMsg(true)
     try {
       const res = await apiFetch(`/api/optica-vortix/conversaciones/${selectedConv.id}/enviar`, {
         method: 'POST',
         body: JSON.stringify({
           tipo,
           contenido: texto,
-          metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+          client_id,
+          metadata,
         }),
       })
+
       if (res.ok) {
-        const nuevo = await res.json()
-        setMensajes((prev) => [...prev, nuevo.mensaje || nuevo])
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 80)
+        const data = await res.json()
+        const backendMsg = data.mensaje || data
+        setMensajes((prev) => reconciliarMensajes(prev, {
+          ...backendMsg,
+          client_id,
+          estado_entrega: backendMsg.estado_entrega || 'sent',
+        }))
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 60)
+      } else {
+        // En caso de fallo HTTP, marcar como 'failed'
+        setMensajes((prev) =>
+          prev.map((m) =>
+            (m.id === tempId || m.client_id === client_id)
+              ? { ...m, estado_entrega: 'failed' }
+              : m
+          )
+        )
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error('Error enviando mensaje óptica:', err)
+      setMensajes((prev) =>
+        prev.map((m) =>
+          (m.id === tempId || m.client_id === client_id)
+            ? { ...m, estado_entrega: 'failed' }
+            : m
+        )
+      )
     } finally {
       setSendingMsg(false)
+    }
+  }
+
+  // Reintento manual de mensaje fallido
+  const handleRetrySendMessage = (msg: OpticaMensaje) => {
+    handleSendMessage(undefined, msg)
+  }
+
+  // Cierre y Reapertura manual de Conversación
+  const handleCerrarConversacion = async (convId?: string) => {
+    const targetId = convId || selectedConv?.id
+    if (!targetId) return
+    try {
+      const res = await apiFetch(`/api/optica-vortix/conversaciones/${targetId}/cerrar`, {
+        method: 'POST',
+        body: JSON.stringify({ motivo: 'manual_operador' }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setConversaciones((prev) =>
+          prev.map((c) => (c.id === targetId ? { ...c, estado: 'cerrada', modo_atencion_previo: data.modo_atencion_previo } : c))
+        )
+        if (selectedConv?.id === targetId) {
+          setSelectedConv((prev) => (prev ? { ...prev, estado: 'cerrada', modo_atencion_previo: data.modo_atencion_previo } : null))
+        }
+      }
+    } catch (e) {
+      console.error('Error cerrando conversación:', e)
+    }
+  }
+
+  const handleReabrirConversacion = async (convId?: string) => {
+    const targetId = convId || selectedConv?.id
+    if (!targetId) return
+    try {
+      const res = await apiFetch(`/api/optica-vortix/conversaciones/${targetId}/reabrir`, {
+        method: 'POST',
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setConversaciones((prev) =>
+          prev.map((c) => (c.id === targetId ? { ...c, estado: 'activa', modo_atencion: data.modo_atencion } : c))
+        )
+        if (selectedConv?.id === targetId) {
+          setSelectedConv((prev) => (prev ? { ...prev, estado: 'activa', modo_atencion: data.modo_atencion } : null))
+        }
+      }
+    } catch (e) {
+      console.error('Error reabriendo conversación:', e)
+    }
+  }
+
+  // Captura de Ctrl+V (Pegar imagen del portapapeles)
+  const handlePasteCapture = (e: React.ClipboardEvent) => {
+    if (!selectedConv) return
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.type.indexOf('image') !== -1) {
+        const file = item.getAsFile()
+        if (file) {
+          e.preventDefault()
+          setStagedFile(file)
+          setStagedFilePreview(URL.createObjectURL(file))
+          setIsStagedModalOpen(true)
+          break
+        }
+      }
+    }
+  }
+
+  // Eventos Drag & Drop de archivos sobre el chat
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!isDraggingOver) setIsDraggingOver(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return
+    setIsDraggingOver(false)
+  }
+
+  const handleDropCapture = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDraggingOver(false)
+    if (!selectedConv) return
+
+    const files = e.dataTransfer?.files
+    if (files && files.length > 0) {
+      const file = files[0]
+      setStagedFile(file)
+      if (file.type.startsWith('image/')) {
+        setStagedFilePreview(URL.createObjectURL(file))
+      } else {
+        setStagedFilePreview(null)
+      }
+      setIsStagedModalOpen(true)
     }
   }
 
@@ -807,7 +985,7 @@ export default function OpticaVortixChatPage() {
 
       if (ok && nuevoMensajeData) {
         const m = nuevoMensajeData.mensaje || nuevoMensajeData
-        setMensajes((prev) => [...prev, m])
+        setMensajes((prev) => reconciliarMensajes(prev, m))
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 80)
       } else {
         alert('No se pudo despachar el archivo multimedia por WhatsApp. Por favor intenta nuevamente.')
@@ -920,6 +1098,7 @@ export default function OpticaVortixChatPage() {
     } else {
       setStagedFilePreview(null)
     }
+    setIsStagedModalOpen(true)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -930,6 +1109,7 @@ export default function OpticaVortixChatPage() {
     setStagedFile(null)
     setStagedFilePreview(null)
     setStagedFileCaption('')
+    setIsStagedModalOpen(false)
   }
 
   const handleConfirmSendStagedFile = async () => {
@@ -1336,14 +1516,17 @@ export default function OpticaVortixChatPage() {
     } catch {}
   }
 
-  // Filtrado de conversaciones: Activas vs Archivadas y subfiltros
-  const activasCount = conversaciones.filter((c) => !c.archivada).length
-  const archivadasCount = conversaciones.filter((c) => c.archivada).length
+  // Filtrado de conversaciones: Activas vs Cerradas vs Archivadas y subfiltros
+  const activasCount = conversaciones.filter((c) => !c.archivada && (c.estado === 'activa' || c.estado === 'abierta' || !c.estado)).length
+  const cerradasCount = conversaciones.filter((c) => !c.archivada && c.estado === 'cerrada').length
+  const archivadasCount = conversaciones.filter((c) => c.archivada || c.estado === 'archivada').length
 
   const conversacionesFiltradas = conversaciones
     .filter((c) => {
-      if (mainTab === 'ARCHIVADAS') return Boolean(c.archivada)
-      if (c.archivada) return false
+      if (mainTab === 'ARCHIVADAS') return Boolean(c.archivada || c.estado === 'archivada')
+      if (mainTab === 'CERRADAS') return c.estado === 'cerrada' && !c.archivada
+      // mainTab === 'ACTIVAS'
+      if (c.archivada || c.estado === 'archivada' || c.estado === 'cerrada') return false
       if (filtroTab === 'SIN_LEER') return (c.no_leidos || 0) > 0
       if (filtroTab === 'RECETA_HOY') return Boolean(c.receta_detectada_hoy || c.origen === 'DETECCION_RECETA_HOY')
       if (filtroTab === 'VOUCHERS') return Boolean(c.cupon_codigo || c.origen === 'PLACA_TURNO')
@@ -1375,12 +1558,12 @@ export default function OpticaVortixChatPage() {
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* PANEL IZQUIERDO: Lista de Conversaciones & Embudo */}
         <aside className="w-80 xl:w-96 border-r border-[var(--border)] bg-[var(--card)] flex flex-col shrink-0">
-          {/* Pestañas Principales: Activas vs Archivadas */}
-          <div className="flex border-b border-[var(--border)] bg-slate-100/60 dark:bg-slate-800/40 p-1">
+          {/* Pestañas Principales: Activas vs Cerradas vs Archivadas */}
+          <div className="grid grid-cols-3 border-b border-[var(--border)] bg-slate-100/60 dark:bg-slate-800/40 p-1 gap-1">
             <button
               type="button"
               onClick={() => setMainTab('ACTIVAS')}
-              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+              className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all ${
                 mainTab === 'ACTIVAS'
                   ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
                   : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
@@ -1393,8 +1576,24 @@ export default function OpticaVortixChatPage() {
             </button>
             <button
               type="button"
+              onClick={() => setMainTab('CERRADAS')}
+              className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all ${
+                mainTab === 'CERRADAS'
+                  ? 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 shadow-xs'
+                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <span>Cerradas</span>
+              {cerradasCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-400/15 text-slate-600 dark:text-slate-300 font-bold">
+                  {cerradasCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
               onClick={() => setMainTab('ARCHIVADAS')}
-              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+              className={`py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all ${
                 mainTab === 'ARCHIVADAS'
                   ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
                   : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
@@ -1548,6 +1747,12 @@ export default function OpticaVortixChatPage() {
                     </p>
 
                     <div className="flex items-center flex-wrap gap-1 pt-0.5">
+                      {conv.estado === 'cerrada' && (
+                        <span className="px-1.5 py-0.5 rounded-md text-[9.5px] font-bold bg-slate-200/90 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700">
+                          🔒 Cerrada
+                        </span>
+                      )}
+
                       <span
                         className={`px-2 py-0.5 rounded-md text-[9.5px] font-bold border ${etapaObj.color}`}
                       >
@@ -1574,8 +1779,25 @@ export default function OpticaVortixChatPage() {
           </div>
         </aside>
 
-        {/* PANEL CENTRAL: Lienzo Conversacional Fluido */}
-        <section className="flex-1 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-950/40">
+        {/* PANEL CENTRAL: Lienzo Conversacional Fluido estilo WhatsApp Web */}
+        <section
+          onPaste={handlePasteCapture}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDropCapture}
+          className="flex-1 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-950/40 relative"
+        >
+          {/* Overlay visual de Drag & Drop */}
+          {isDraggingOver && (
+            <div className="absolute inset-0 z-40 bg-indigo-600/10 dark:bg-indigo-900/30 backdrop-blur-xs border-4 border-dashed border-indigo-500 rounded-xl flex flex-col items-center justify-center pointer-events-none animate-in fade-in duration-100">
+              <div className="p-4 bg-[var(--card)] rounded-2xl shadow-xl flex flex-col items-center gap-2 border border-indigo-500/30">
+                <Paperclip size={32} className="text-indigo-600 animate-bounce" />
+                <p className="text-sm font-black text-[var(--foreground)]">Suelta el archivo para previsualizar y enviar</p>
+                <p className="text-xs text-[var(--secondary)]">Imágenes JPG, PNG o documentos PDF</p>
+              </div>
+            </div>
+          )}
+
           {!selectedConv ? (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center gap-3">
               <div className="w-16 h-16 rounded-3xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
@@ -1601,15 +1823,21 @@ export default function OpticaVortixChatPage() {
                       <h3 className="font-black text-sm text-[var(--foreground)] truncate">
                         {selectedConv.nombre_paciente}
                       </h3>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          selectedConv.ventana_24h_activa
-                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                            : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                        }`}
-                      >
-                        {selectedConv.ventana_24h_activa ? 'Ventana 24h Abierta' : 'Ventana 24h Cerrada (Usar Plantilla)'}
-                      </span>
+                      {selectedConv.estado === 'cerrada' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 flex items-center gap-1">
+                          🔒 Conversación Cerrada
+                        </span>
+                      ) : (
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            selectedConv.ventana_24h_activa
+                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                              : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                          }`}
+                        >
+                          {selectedConv.ventana_24h_activa ? 'Ventana 24h Abierta' : 'Ventana 24h Cerrada (Usar Plantilla)'}
+                        </span>
+                      )}
                     </div>
                     <p className="text-[11px] text-[var(--secondary)] flex items-center gap-2">
                       <span className="inline-flex items-center gap-1">
@@ -1623,6 +1851,26 @@ export default function OpticaVortixChatPage() {
 
                 {/* Controles Superiores: Selector Etapa 1-clic, Switch Bot ToggleHuman, Cotizador, Búsqueda, Toggle Ficha */}
                 <div className="flex items-center gap-2 flex-wrap">
+                  {selectedConv.estado === 'cerrada' ? (
+                    <button
+                      type="button"
+                      onClick={() => handleReabrirConversacion()}
+                      className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs transition-colors"
+                      title="Reabrir conversación y restaurar modo previo"
+                    >
+                      Reabrir Chat
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleCerrarConversacion()}
+                      className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[var(--secondary)] hover:text-[var(--foreground)] border border-[var(--border)] transition-colors"
+                      title="Cerrar conversación manualmente"
+                    >
+                      Cerrar Chat
+                    </button>
+                  )}
+
                   <select
                     value={selectedConv.etapa_comercial}
                     onChange={(e) => handleChangeEtapa(e.target.value as EtapaComercialOptica)}
@@ -1866,23 +2114,51 @@ export default function OpticaVortixChatPage() {
                                   : 'bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-bl-xs'
                               }`}
                             >
-                              {/* Visualizador de Multimedia Nativo con Transcripción conectada a Óptica */}
-                              {hasMedia && (
+                              {/* Reproductor de Audio Nativo WhatsApp o Visualizador de Multimedia */}
+                              {(msg.tipo === 'audio' || msg.metadata?.is_voice_note) ? (
+                                <div className="py-1">
+                                  <ChatVoicePlayer
+                                    mediaUrl={msg.media_url || msg.metadata?.media_url || ''}
+                                    mensajeId={msg.id}
+                                    transcripcionPrevia={msg.metadata?.transcripcion}
+                                    onTranscribeRequest={async (msgId) => {
+                                      try {
+                                        const res = await apiFetch(`/api/optica-vortix/mensajes/${msgId}/transcribir`, {
+                                          method: 'POST',
+                                        })
+                                        if (res.ok) {
+                                          const data = await res.json()
+                                          const transText = data.transcripcion || data.transcription
+                                          if (transText) {
+                                            setMensajes((prev) =>
+                                              prev.map((m) =>
+                                                m.id === msgId
+                                                  ? { ...m, metadata: { ...(m.metadata || {}), transcripcion: transText } }
+                                                  : m
+                                              )
+                                            )
+                                            return transText
+                                          }
+                                        }
+                                      } catch (err) {
+                                        console.error('Error al solicitar transcripción de audio:', err)
+                                      }
+                                      return null
+                                    }}
+                                  />
+                                </div>
+                              ) : hasMedia && (
                                 <div className="space-y-1.5">
                                   <ChatMediaViewer
                                     metadata={{
                                       tipo:
-                                        msg.tipo === 'audio'
-                                          ? 'audio'
-                                          : msg.tipo === 'document' || (msg.media_url && msg.media_url.endsWith('.pdf'))
+                                        msg.tipo === 'document' || (msg.media_url && msg.media_url.endsWith('.pdf'))
                                           ? 'documento'
                                           : 'imagen',
                                       media_url: msg.media_url || msg.metadata?.media_url,
                                       file_name: msg.metadata?.file_name || msg.media_url?.split('/').pop(),
                                       caption: msg.contenido && !msg.contenido.startsWith('📷') && !msg.contenido.startsWith('🎤') ? msg.contenido : undefined,
-                                      is_voice_note: msg.tipo === 'audio' || Boolean(msg.metadata?.is_voice_note),
-                                      duration_seconds: msg.metadata?.duration_seconds,
-                                      transcripcion: msg.metadata?.transcripcion,
+                                      is_voice_note: false,
                                       reactions: msg.metadata?.reactions,
                                       delivery_status: msg.metadata?.delivery_status || (msg.estado_entrega === 'read' ? 'leido' : msg.estado_entrega === 'delivered' ? 'entregado' : 'enviado'),
                                     }}
@@ -1890,25 +2166,10 @@ export default function OpticaVortixChatPage() {
                                     mensajeId={msg.id}
                                     contenidoTexto={msg.contenido}
                                     endpointTranscribir="/api/optica-vortix/mensajes"
-                                    onTranscribeSuccess={(msgId, trans) => {
-                                      setMensajes((prev) =>
-                                        prev.map((m) =>
-                                          m.id === msgId
-                                            ? {
-                                                ...m,
-                                                metadata: {
-                                                  ...(m.metadata || {}),
-                                                  transcripcion: trans,
-                                                },
-                                              }
-                                            : m
-                                        )
-                                      )
-                                    }}
                                   />
 
                                   {/* Botón directo de Gemini Vision OCR para Recetas */}
-                                  {msg.media_url && !msg.media_url.endsWith('.pdf') && msg.tipo !== 'audio' && (
+                                  {msg.media_url && !msg.media_url.endsWith('.pdf') && (
                                     <div className="flex items-center gap-1.5 pt-1">
                                       <button
                                         type="button"
@@ -1954,7 +2215,7 @@ export default function OpticaVortixChatPage() {
                                 </div>
                               )}
 
-                              {/* Tildes oficiales de entrega con DeliveryStatusIcon */}
+                              {/* Tildes oficiales de entrega con DeliveryStatusIcon y botón reintentar si falló */}
                               <div
                                 className={`flex items-center justify-end gap-1.5 text-[10px] ${
                                   isOutbound ? 'text-indigo-100/80' : 'text-[var(--secondary)]'
@@ -1967,9 +2228,21 @@ export default function OpticaVortixChatPage() {
                                   })}
                                 </span>
                                 {isOutbound && (
-                                  <DeliveryStatusIcon
-                                    status={msg.metadata?.delivery_status || msg.estado_entrega || 'enviado'}
-                                  />
+                                  msg.estado_entrega === 'failed' ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRetrySendMessage(msg)}
+                                      className="flex items-center gap-1 text-rose-300 hover:text-white transition-colors cursor-pointer"
+                                      title="Error de envío. Clic para reintentar"
+                                    >
+                                      <AlertTriangle size={12} className="text-rose-400" />
+                                      <span className="text-[9px] font-bold underline">Reintentar</span>
+                                    </button>
+                                  ) : (
+                                    <DeliveryStatusIcon
+                                      status={msg.estado_entrega || msg.metadata?.delivery_status || 'enviado'}
+                                    />
+                                  )
                                 )}
                               </div>
                             </div>
@@ -2817,79 +3090,20 @@ export default function OpticaVortixChatPage() {
         </div>
       )}
 
-      {/* MODAL: Previsualización de Archivo Local Adjunto antes de Enviar */}
-      {stagedFile && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-lg w-full p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-2.5">
-              <div className="flex items-center gap-2">
-                <Paperclip size={16} className="text-indigo-500" />
-                <h3 className="text-sm font-black text-[var(--foreground)]">Vista Previa de Adjunto</h3>
-              </div>
-              <button
-                type="button"
-                onClick={handleCancelStagedFile}
-                disabled={sendingMedia}
-                className="p-1 rounded-lg text-slate-400 hover:text-[var(--foreground)]"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="flex flex-col items-center justify-center bg-slate-100 dark:bg-slate-800/60 rounded-2xl p-4 min-h-[160px] max-h-[300px] overflow-hidden">
-              {stagedFilePreview ? (
-                <img
-                  src={stagedFilePreview}
-                  alt="Preview"
-                  className="max-h-[260px] w-auto object-contain rounded-xl shadow-xs"
-                />
-              ) : (
-                <div className="text-center space-y-2">
-                  <FileText size={48} className="mx-auto text-indigo-500" />
-                  <p className="text-xs font-bold text-[var(--foreground)] truncate max-w-xs">{stagedFile.name}</p>
-                  <p className="text-[11px] text-[var(--secondary)]">{(stagedFile.size / 1024).toFixed(1)} KB</p>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-bold text-[var(--secondary)] mb-1">
-                Mensaje / Epígrafe (opcional):
-              </label>
-              <input
-                type="text"
-                value={stagedFileCaption}
-                onChange={(e) => setStagedFileCaption(e.target.value)}
-                placeholder="Ej: Te envío la cotización de los multifocales..."
-                className="w-full px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleConfirmSendStagedFile()
-                }}
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border)]">
-              <button
-                type="button"
-                onClick={handleCancelStagedFile}
-                disabled={sendingMedia}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmSendStagedFile}
-                disabled={sendingMedia}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 shadow-sm"
-              >
-                {sendingMedia ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                <span>Enviar a WhatsApp</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* MODAL: Previsualización de Archivo Local Adjunto antes de Enviar (StagedMediaModal) */}
+      <StagedMediaModal
+        file={stagedFile}
+        previewUrl={stagedFilePreview}
+        isOpen={isStagedModalOpen && Boolean(stagedFile)}
+        isUploading={sendingMedia}
+        onClose={handleCancelStagedFile}
+        onSend={async (file, caption) => {
+          const isImg = file.type.startsWith('image/')
+          const isAud = file.type.startsWith('audio/')
+          const tipo = isImg ? 'imagen' : isAud ? 'audio' : 'documento'
+          await handleUploadMedia(file, tipo, caption)
+        }}
+      />
 
       {/* MENÚ CONTEXTUAL DE MENSAJES (Clic Derecho: Responder, Copiar, Reaccionar, Reenviar) */}
       {contextMenu && (

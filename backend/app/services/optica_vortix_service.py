@@ -2146,10 +2146,13 @@ async def handle_optica_line_inbound_message(
             conv_id = conv_row["id"]
             unread = int(conv_row.get("mensajes_no_leidos") or 0) + 1
             conv_meta = conv_row.get("metadata_json") or {}
-            supabase.table("optica_conversaciones").update({
+            era_cerrada = str(conv_row.get("estado", "")).lower() == "cerrada"
+            modo_restaurado = conv_row.get("modo_atencion_previo") or conv_row.get("modo_atencion") or "autonomo"
+
+            update_conv_payload: Dict[str, Any] = {
                 "contacto_id": contacto_id or conv_row.get("contacto_id"),
                 "nombre_contacto": nombre_paciente,
-                "estado": "abierta",
+                "estado": "activa",
                 "archivada": False,
                 "ventana_24h_expira_at": window_exp,
                 "ultimo_mensaje_texto": text_content[:300],
@@ -2157,15 +2160,23 @@ async def handle_optica_line_inbound_message(
                 "ultimo_mensaje_direccion": "inbound",
                 "mensajes_no_leidos": unread,
                 "updated_at": now_iso
-            }).eq("id", conv_id).execute()
+            }
+            if era_cerrada:
+                update_conv_payload["modo_atencion"] = modo_restaurado
+                update_conv_payload["cerrado_at"] = None
+                update_conv_payload["cerrado_motivo"] = None
+                logger.info(f"🔄 [OpticaVortix] Conversación {conv_id} reabierta automáticamente por mensaje del paciente. Modo restaurado: {modo_restaurado}")
+
+            supabase.table("optica_conversaciones").update(update_conv_payload).eq("id", conv_id).execute()
         else:
             conv_meta = {}
             ins_conv = supabase.table("optica_conversaciones").insert({
                 "contacto_id": contacto_id,
                 "telefono": tel_norm,
                 "nombre_contacto": nombre_paciente,
-                "estado": "abierta",
+                "estado": "activa",
                 "etapa_comercial": "NUEVA_CONSULTA",
+                "modo_atencion": "autonomo",
                 "ventana_24h_expira_at": window_exp,
                 "ultimo_mensaje_texto": text_content[:300],
                 "ultimo_mensaje_at": now_iso,
@@ -2386,28 +2397,38 @@ def _record_optica_outbound_msg(
     enviado_por: str = "sistema",
     template_name: Optional[str] = None,
     media_url: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
+    client_id: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """Registra un mensaje saliente en `public.optica_mensajes` y actualiza `public.optica_conversaciones`."""
     if not supabase or not conversacion_id:
         return None
     now_iso = datetime.now(timezone.utc).isoformat()
+    meta_dict = dict(metadata or {})
+    final_client_id = client_id or meta_dict.get("client_id")
+    if final_client_id:
+        meta_dict["client_id"] = final_client_id
+
+    insert_payload: Dict[str, Any] = {
+        "conversacion_id": conversacion_id,
+        "contacto_id": contacto_id,
+        "wamid": wamid,
+        "direccion": "outbound",
+        "tipo": tipo,
+        "contenido": contenido,
+        "template_name": template_name,
+        "media_url": media_url,
+        "estado": "sent",
+        "enviado_por": enviado_por,
+        "metadata": meta_dict,
+        "created_at": now_iso,
+        "updated_at": now_iso
+    }
+    if final_client_id:
+        insert_payload["client_id"] = final_client_id
+
     try:
-        ins = supabase.table("optica_mensajes").insert({
-            "conversacion_id": conversacion_id,
-            "contacto_id": contacto_id,
-            "wamid": wamid,
-            "direccion": "outbound",
-            "tipo": tipo,
-            "contenido": contenido,
-            "template_name": template_name,
-            "media_url": media_url,
-            "estado": "sent",
-            "enviado_por": enviado_por,
-            "metadata": metadata or {},
-            "created_at": now_iso,
-            "updated_at": now_iso
-        }).execute()
+        ins = supabase.table("optica_mensajes").insert(insert_payload).execute()
         if tipo != "nota_interna":
             supabase.table("optica_conversaciones").update({
                 "ultimo_mensaje_texto": contenido[:300],
@@ -2418,6 +2439,7 @@ def _record_optica_outbound_msg(
         return ins.data[0] if ins.data else None
     except Exception as e:
         logger.warning(f"[OpticaOutboundMsg] Error guardando mensaje saliente: {e}")
+        return None
         return None
 
 
@@ -3168,18 +3190,63 @@ async def aprovisionar_plantillas_base_optica() -> Dict[str, Any]:
 
 _LAST_DAILY_TURNOS_RUN_DATE: Optional[str] = None
 _LAST_HOURLY_RECETAS_RUN_TS: float = 0.0
+_LAST_AUTOCLOSE_RUN_TS: float = 0.0
+
+
+async def ejecutar_cierre_conversaciones_inactivas_24h() -> int:
+    """
+    Cierra automáticamente conversaciones en estado 'activa' o 'abierta'
+    cuya ventana de 24h de Meta haya expirado (ventana_24h_expira_at < NOW()).
+    Preserva el modo de atención actual en 'modo_atencion_previo' y asigna 'cerrada'.
+    """
+    if not supabase:
+        return 0
+    now_utc = datetime.now(timezone.utc)
+    now_iso = now_utc.isoformat()
+    try:
+        res = (
+            supabase.table("optica_conversaciones")
+            .select("id, modo_atencion, estado")
+            .in_("estado", ["activa", "abierta"])
+            .lt("ventana_24h_expira_at", now_iso)
+            .execute()
+        )
+        vencidas = res.data or []
+        if not vencidas:
+            return 0
+
+        cerradas_count = 0
+        for conv in vencidas:
+            conv_id = conv["id"]
+            modo_actual = conv.get("modo_atencion") or "autonomo"
+            supabase.table("optica_conversaciones").update({
+                "estado": "cerrada",
+                "modo_atencion_previo": modo_actual,
+                "cerrado_at": now_iso,
+                "cerrado_motivo": "inactividad_24h",
+                "updated_at": now_iso
+            }).eq("id", conv_id).execute()
+            cerradas_count += 1
+
+        if cerradas_count > 0:
+            logger.info(f"🔒 [OpticaVortix] Se cerraron {cerradas_count} conversaciones inactivas tras 24h de expiración.")
+        return cerradas_count
+    except Exception as e:
+        logger.warning(f"[OpticaVortix] Error en autocierre 24h: {e}")
+        return 0
 
 
 async def cron_automatismos_optica_vortix():
     """
     Tarea asíncrona de fondo que ejecuta:
       1. Cada 45 segundos: `procesar_cola_envios_optica()` (despacho con goteo anti-bloqueo).
-      2. Una vez al día en `hora_disparo_turnos` (si `auto_turnos_proximos_enabled=True`):
+      2. Cada 10 minutos: `ejecutar_cierre_conversaciones_inactivas_24h()`.
+      3. Una vez al día en `hora_disparo_turnos` (si `auto_turnos_proximos_enabled=True`):
          `sincronizar_turnos_proximos_optica(dry_run=False)`.
-      3. Cada 30 minutos en horario comercial (si `auto_recetas_lentes_enabled=True`):
+      4. Cada 30 minutos en horario comercial (si `auto_recetas_lentes_enabled=True`):
          `detectar_indicaciones_lentes_del_dia()`.
     """
-    global _LAST_DAILY_TURNOS_RUN_DATE, _LAST_HOURLY_RECETAS_RUN_TS
+    global _LAST_DAILY_TURNOS_RUN_DATE, _LAST_HOURLY_RECETAS_RUN_TS, _LAST_AUTOCLOSE_RUN_TS
     await asyncio.sleep(25)
     logger.info("👓 [Óptica Vortix Cron] Motor de cola anti-bloqueo y detección Geclisa iniciado.")
 
@@ -3193,7 +3260,12 @@ async def cron_automatismos_optica_vortix():
             # 1. Procesar cola de envíos programados
             await procesar_cola_envios_optica(max_batch=5)
 
-            # 2. Barrido diario de turnos próximos (si está activo)
+            # 2. Autocierre de conversaciones con ventana 24h expirada (cada 10 min)
+            if time.time() - _LAST_AUTOCLOSE_RUN_TS >= 600:
+                _LAST_AUTOCLOSE_RUN_TS = time.time()
+                await ejecutar_cierre_conversaciones_inactivas_24h()
+
+            # 3. Barrido diario de turnos próximos (si está activo)
             if cfg.get("auto_turnos_proximos_enabled", False):
                 hora_disp = str(cfg.get("hora_disparo_turnos") or "10:00").strip()
                 if _LAST_DAILY_TURNOS_RUN_DATE != hoy_str and cur_hm >= hora_disp and cur_hm <= "19:30":
@@ -3201,7 +3273,7 @@ async def cron_automatismos_optica_vortix():
                     logger.info("[Óptica Vortix Cron] Ejecutando barrido diario de turnos próximos en Geclisa...")
                     await asyncio.to_thread(sincronizar_turnos_proximos_optica, None, False, True)
 
-            # 3. Detección periódica de indicaciones de lentes del día (si está activo)
+            # 4. Detección periódica de indicaciones de lentes del día (si está activo)
             if cfg.get("auto_recetas_lentes_enabled", False) and _esta_en_horario_comercial_optica(cfg):
                 if time.time() - _LAST_HOURLY_RECETAS_RUN_TS >= 1800:
                     _LAST_HOURLY_RECETAS_RUN_TS = time.time()

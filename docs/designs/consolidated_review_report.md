@@ -1,158 +1,127 @@
-# Informe Consolidado de Revisión (EGM Swarm Review Report)
+# EGM Goldfish Review: Consolidated Review Report
 
-* **Documento Evaluado:** [`docs/designs/automatizacion_agenda_prestadores_whatsapp.md`](file:///d:/Github/crm_agentico_nube/docs/designs/automatizacion_agenda_prestadores_whatsapp.md)
-* **Fecha de Evaluación:** 2026-11-08
-* **Modo:** Uninterrupted Full Flow
-* **Revisores Participantes:**
-  * `egm-zoom-out` (Skeptical Architect)
-  * `egm-inventive-catalyst` (Inventive Catalyst)
-  * `egm-comprehension` (Naive Reader)
-  * `egm-design` (Hostile Design Critic)
-  * `egm-structural` (Structural Layout Validator)
-  * `egm-style` (Technical Copy Editor)
-  * `egm-implementation-readiness` (Pragmatic Tech Lead)
-  * `egm-codebase-details` (Technical Quality Auditor)
+*   **Target Document:** [`docs/designs/optica_vortix_chat_whatsapp_web_multimedia.md`](file:///d:/Github/crm_agentico_nube/docs/designs/optica_vortix_chat_whatsapp_web_multimedia.md)
+*   **Author:** malko
+*   **Date:** 2026-11-11
+*   **Review Execution Mode:** Uninterrupted Full Flow (Stages 5, 6, 7, 8, 9)
+*   **Status:** Review Complete (Ready for Remediation / Implementation)
 
 ---
 
-## 1. Resumen Ejecutivo del Enjambre
+## 1. Tabla de Estado de Ejecución de Lentes
 
-El objetivo del diseño (automatizar el envío de agendas quirúrgicas consolidadas en PDF a cirujanos y derivadores mediante WhatsApp Cloud API, superando la restricción de 1024 caracteres de Meta) es **conceptualmente válido y resuelve una necesidad operativa real**.
+| Etapa | Persona / Lente | Ámbito Evaluado | Estado | Hallazgos (Blocker / Major / Nit) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Stage 5** | `egm-zoom-out` | Archivo Completo (L1..375) | **Completed** | 0 🔴 / 2 🟡 / 0 🟢 |
+| **Stage 5** | `egm-inventive-catalyst` | Archivo Completo (L1..375) | **Completed** | 1 🔴 / 1 🟡 / 0 🟢 |
+| **Stage 6** | `egm-comprehension` | Archivo Completo (L1..375) | **Completed** | 1 🔴 / 1 🟡 / 1 🟢 |
+| **Stage 7** | `egm-design` | FeatureRange (L1..287) | **Completed** | 0 🔴 / 1 🟡 / 1 🟢 |
+| **Stage 7** | `egm-structural` | FeatureRange (L1..287) | **Completed** | 0 🔴 / 1 🟡 / 1 🟢 |
+| **Stage 7** | `egm-style` | FeatureRange (L1..287) | **Completed** | 0 🔴 / 0 🟡 / 1 🟢 |
+| **Stage 8** | `egm-zoom-out` (Intermedio) | Archivo Completo (L1..375) | **Completed** | 1 🔴 / 1 🟡 / 0 🟢 |
+| **Stage 9** | `egm-implementation-readiness` | DetailedRange (L288..375) | **Completed** | 0 🔴 / 1 🟡 / 1 🟢 |
+| **Stage 9** | `egm-codebase-details` | DetailedRange (L288..375) | **Completed** | 1 🔴 / 1 🟡 / 1 🟢 |
+| **Stage 9** | `egm-style` | DetailedRange (L288..375) | **Completed** | 0 🔴 / 0 🟡 / 1 🟢 |
 
-Sin embargo, el enjambre de 8 revisores ha detectado **4 bloqueadores arquitectónicos y de integración con el codebase**, junto con vulnerabilidades de concurrencia, cálculo de días hábiles y fallas en rutas de archivos que imposibilitan su implementación inmediata sin ajustes previos.
-
-### Resumen de Severidad de Hallazgos:
-* 🔴 **Bloqueadores (Blockers):** 4
-* 🟡 **Mayores (Majors):** 7
-* 🟢 **Menores (Nits):** 3
-
----
-
-## 2. Hallazgos Consolidados Priorizados
-
-### 🔴 Bloqueadores (Blockers)
-
-#### B1: Referencia a Archivo Inexistente `quirofano_router.py` en Backend
-* **Lentes:** `egm-codebase-details`, `egm-implementation-readiness`, `egm-zoom-out`
-* **Alcance:** Paso 6 (L314-L316) y Lista de Archivos Touched (L334-L342).
-* **Diagnóstico:** El diseño clasifica como `(Modificación)` a `backend/app/routers/quirofano_router.py`. Dicho archivo no existe en el codebase actual; todas las rutas quirúrgicas residen en `backend/app/main.py`.
-* **Acción Requerida:** 
-  1. Definir formalmente un nuevo router modular dedicado: `backend/app/routers/notificaciones_prestadores_router.py` (`(Nuevo)`).
-  2. Incluir en `backend/app/main.py` la importación y montaje: `app.include_router(notificaciones_prestadores_router.router, prefix="/api/turnos-quirofano/notificaciones-prestadores")`.
-
-#### B2: Rutas Inexistentes y Desalineación del Stack en Frontend
-* **Lentes:** `egm-codebase-details`, `egm-implementation-readiness`
-* **Alcance:** Lista de Archivos Touched Frontend (L356-L366).
-* **Diagnóstico:** 
-  1. Los paths omiten el prefijo raíz `frontend/` (el código Next.js está en `frontend/src/...`).
-  2. `src/services/quirofanoService.ts` no existe y `axios` no está en dependencias; el proyecto utiliza `apiFetch` de `@/lib/api`.
-  3. `PizarraQuirofano.tsx` no existe; las vistas reales son `frontend/src/app/programacion-quirurgica/page.tsx` y `frontend/src/components/quirofano/PizarraQuirofanoEnVivo.tsx`.
-  4. No existe `components/ajustes/`; los paneles residen en `frontend/src/components/settings/*Card.tsx`.
-* **Acción Requerida:** 
-  1. Corregir todas las rutas a `frontend/src/...`.
-  2. Utilizar `apiFetch` para las llamadas al backend.
-  3. Incorporar la alerta visual y botón de despacho en `frontend/src/app/programacion-quirurgica/page.tsx` y `PizarraQuirofanoEnVivo.tsx`.
-  4. Crear `frontend/src/components/settings/ConfiguracionNotificacionesCirugiasCard.tsx` e integrarlo en `frontend/src/app/ajustes/page.tsx`.
-
-#### B3: Falla en Cálculo de Días Hábiles (Cirugías de Lunes y Martes Huérfanas)
-* **Lentes:** `egm-design`, `egm-comprehension`
-* **Alcance:** Sección 1 (L33, L59-L63, L94-L95) y Sección 5.A (L215-L224).
-* **Diagnóstico:** Proyectar la fecha sumando $T + 2$ días calendario con un cron que corre de lunes a viernes (`dias_habilitados: [1,2,3,4,5]`) provoca que las cirugías del lunes (corte requerido en sábado) y del martes (corte requerido en domingo) **nunca sean notificadas**.
-* **Acción Requerida:** 
-  1. Sustituir la suma aritmética simple por cálculo de **días hábiles quirúrgicos**.
-  2. Especificar que el corte del viernes a las 19:00 hs procesa y despacha automáticamente las cirugías del lunes subsiguiente (anticipación de 72 hs hábiles), e incluir opción para sábados si hubiera actividad programada.
-
-#### B4: Ausencia de Idempotencia y Bloqueo Concurrente (Riesgo de Envío Duplicado)
-* **Lentes:** `egm-design`, `egm-inventive-catalyst`, `egm-zoom-out`, `egm-comprehension`, `egm-implementation-readiness`
-* **Alcance:** Secuencia de Ejecución (L131-L164), Tabla de Logs (L227-L241) y Cron Runner (L311-L313).
-* **Diagnóstico:** En despliegues con múltiples workers Uvicorn o ante la superposición entre el cron de las 19:00 hs y un click manual en el CRM, el sistema no posee locking distribuido ni restricción de unicidad en la base de datos, lo que generará envíos dobles de WhatsApp y PDFs duplicados a los médicos.
-* **Acción Requerida:** 
-  1. Incorporar bloqueo a nivel PostgreSQL: `pg_try_advisory_xact_lock(hashtext('corte_prestadores_' || fecha_objetivo))` al inicio del proceso.
-  2. Agregar restricción de unicidad en `notificaciones_prestadores_logs`: `UNIQUE(fecha_cirugia, fecha_corte, prestador_id)` para prevenir duplicados a menos que se invoque con `forzar=true`.
-  3. Fijar la zona horaria explícita de evaluación en `ZoneInfo("America/Argentina/Buenos_Aires")` (UTC-3).
+**Totales Consolidados:**
+*   🔴 **Blockers:** 3
+*   🟡 **Majors:** 5
+*   🟢 **Nits:** 4
 
 ---
 
-### 🟡 Hallazgos Mayores (Majors)
+## 2. Hallazgos Críticos Consolidados y Plan de Remediación
 
-#### M1: Reinvención de Aprovisionamiento de Plantillas Meta (YAGNI)
-* **Lentes:** `egm-zoom-out`, `egm-comprehension`
-* **Alcance:** Sección 3 (L188-L192) y Paso 2 (L294-L296).
-* **Diagnóstico:** Crear un endpoint `POST .../aprovisionar-plantilla` es innecesario. El alta de plantillas en Meta es un evento administrativo único. Además, el repositorio ya cuenta con `backend/app/services/whatsapp_cloud/templates.py` con sincronización de plantillas y base de datos.
-* **Acción Requerida:** Eliminar el endpoint de aprovisionamiento del alcance de este servicio; documentar la plantilla para su gestión mediante el módulo centralizado de plantillas o Meta Business Manager.
+### 🔴 BLOCKERS (Riesgos Críticos que Deben Subsanarse)
 
-#### M2: Reutilización de Capacidades Existentes en `WhatsAppCloudClient`
-* **Lentes:** `egm-zoom-out`
-* **Alcance:** Paso 4 (L331-L333).
-* **Diagnóstico:** El plan prevé "modificar y verificar soporte" en `WhatsAppCloudClient` para `upload_media_bytes` y plantillas con documento. Dichas funciones **ya están 100% implementadas y probadas** en el cliente (soporta subida binaria y componentes arbitrarios con `media_id`).
-* **Acción Requerida:** Marcar `WhatsAppCloudClient` como componente reutilizado sin requerir modificaciones estructurales en su lógica de despacho.
+#### Blocker 1: Anclaje Erróneo de la Ventana de 24h de Meta en el Cron de Auto-Cierre
+*   **Lentes:** `egm-zoom-out` & `egm-codebase-details`
+*   **Ubicación:** `docs/designs/optica_vortix_chat_whatsapp_web_multimedia.md#L240-L261`, `L342-L344`
+*   **Descripción del Problema:** El cron propuesto evalúa `ultimo_mensaje_at < (NOW() - INTERVAL '24 hours')`. En la política de Meta WhatsApp Cloud API, la ventana de servicio de 24 horas se ancla estrictamente al **último mensaje entrante del paciente**, NO a los mensajes salientes del operador. Si el operador responde al paciente a la hora 23 pero el paciente no vuelve a contestar, la ventana de Meta expira a la hora 24 del mensaje del paciente. Mantener la conversación en `activa` causará que las siguientes respuestas del operador fallen con el error de Meta `131047: Re-engagement message required`.
+*   **Remediación Aprobada:** La base de datos ya cuenta con la columna `ventana_24h_expira_at`. El cron debe evaluar:
+    ```sql
+    WHERE estado = 'activa' AND (ventana_24h_expira_at < NOW() OR ultimo_mensaje_at < (NOW() - INTERVAL '24 hours'))
+    ```
+    Esto garantiza sincronización al 100% entre el estado del CRM y la API de Meta.
 
-#### M3: Integración con el Motor Centralizado `pdf_service.py`
-* **Lentes:** `egm-zoom-out`, `egm-implementation-readiness`
-* **Alcance:** Paso 3 (L298-L300) y Archivo 1 (L328-L330).
-* **Diagnóstico:** Diseñar una clase aislada `AgendaQuirurgicaPdfBuilder` duplica membretes, logos y estilos ReportLab existentes en `backend/app/services/pdf_service.py`.
-* **Acción Requerida:** Construir la función de generación (`generar_pdf_agenda_prestadores`) reutilizando los helpers de membrete institucional (`obtener_o_cachear_logo_local`) y estilos tipográficos de `pdf_service.py`.
+#### Blocker 2: Ingesta Ineficiente de Medios mediante Base64 en JSON (`media_base64`)
+*   **Lentes:** `egm-inventive-catalyst` & `egm-implementation-readiness`
+*   **Ubicación:** `docs/designs/optica_vortix_chat_whatsapp_web_multimedia.md#L82`, `L201-L212`, `L338`
+*   **Descripción del Problema:** Transmitir archivos de 10MB (fotos de recetas en alta resolución tomadas con smartphone) en Base64 infla el payload un 33%, bloquea el event loop asíncrono de Python durante la decodificación y arriesga errores HTTP 413 (Payload Too Large) en proxies inversos.
+*   **Remediación Aprobada:** En lugar de Base64 embebido en JSON, el frontend subirá el archivo directamente a Supabase Storage con URL firmada (o utilizará el endpoint existente de streaming `multipart/form-data`), y pasará únicamente la URL pública y metadatos a la mutación del mensaje.
 
-#### M4: Timeout HTTP en Endpoint de Disparo Manual
-* **Lentes:** `egm-design`, `egm-inventive-catalyst`
-* **Alcance:** CUJ 2 (L69-L76) y Secuencia (L148-L163).
-* **Diagnóstico:** En jornadas con 20 prestadores, compilar 20 PDFs y ejecutar 40 llamadas de red a Meta acumula entre 45 y 60 segundos de latencia, provocando un error `504 Gateway Timeout` en proxies web (Vercel/Cloudflare).
-* **Acción Requerida:** Diseñar el endpoint manual como asincrónico: recibe la solicitud, lanza la tarea en `FastAPI.BackgroundTasks` y responde inmediatamente `202 Accepted` con un identificador de seguimiento.
-
-#### M5: Privacidad de Datos Médicos (PHI / Ley 25.326)
-* **Lentes:** `egm-design`
-* **Alcance:** Contenido del PDF (L113-L115) y Observaciones (L114).
-* **Diagnóstico:** Enviar DNIs sin enmascarar y observaciones internas de quirófano (`observaciones_quirofano`) a dispositivos personales de terceros ante un error de tipeo en el número telefónico vulnera la privacidad de datos sensibles de salud.
-* **Acción Requerida:** Enmascarar el DNI en el PDF (ej. `XX.XXX.123`), sanitizar las observaciones excluyendo notas operativas de uso exclusivo de sala, e incorporar leyenda legal de confidencialidad en el pie del PDF.
-
-#### M6: Resolución Robusta de Médicos Derivadores
-* **Lentes:** `egm-design`, `egm-comprehension`, `egm-codebase-details`
-* **Alcance:** L102-L106.
-* **Diagnóstico:** `medico_derivador_nombre` en `turnos_quirofano` es texto libre (ej. "Dr. Bonanno", "Bonanno Pablo"), lo que causará fallas en el cruce de prestadores.
-* **Acción Requerida:** Reutilizar la función existente [`obtener_prestador_por_cirujano`](file:///d:/Github/crm_agentico_nube/backend/app/db.py) de `app.db` que normaliza prefijos y apellidos, y retornar el estado `DERIVADOR_NO_RESOLUBLE` en el endpoint de pre-vuelo si no hay coincidencia unívoca.
-
-#### M7: Modelos Pydantic y Script SQL DDL Ejecutable
-* **Lentes:** `egm-implementation-readiness`, `egm-structural`
-* **Alcance:** Sección 5 (L214-L241) y Paso 1 (L290-L293).
-* **Diagnóstico:** El plan omite los contratos de API (Request/Response schemas) y la definición SQL DDL ejecutable (claves primarias, tipos exactos `TIMESTAMPTZ`, índices).
-* **Acción Requerida:** Incorporar los contratos Pydantic exactos y el bloque DDL ejecutable en `database/migrations/027_notificaciones_prestadores_agenda.sql`.
+#### Blocker 3: Colisión de Estados de Conversación (`'activa'` vs `'abierta'`)
+*   **Lentes:** `egm-codebase-details` & `egm-comprehension`
+*   **Ubicación:** `docs/designs/optica_vortix_chat_whatsapp_web_multimedia.md#L31`, `L171-L175`, `L248`, `L296`, `L304`
+*   **Descripción del Problema:** La base de datos en producción y el código existente (`optica_vortix_service.py:2152`, `optica_vortix_router.py:1521`) utilizan históricamente `estado = 'abierta'` y `archivada = False`. Si el nuevo código filtra estrictamente por `estado = 'activa'`, todas las conversaciones históricas existentes en la base de datos desaparecerían de la interfaz.
+*   **Remediación Aprobada:** 
+    1. Incluir en la migración SQL una unificación de datos:
+       ```sql
+       UPDATE public.optica_conversaciones SET estado = 'activa' WHERE estado = 'abierta' OR estado IS NULL;
+       ```
+    2. En el backend y frontend, tratar `'abierta'` y `'activa'` como alias equivalentes de retrocompatibilidad durante la transición.
 
 ---
 
-### 🟢 Hallazgos Menores (Nits)
+### 🟡 MAJOR FINDINGS (Mejoras de Rendimiento y Robustez)
 
-#### N1: Calibración de Estilo, Glosario y Limpieza de Prose
-* **Lentes:** `egm-style`, `egm-comprehension`
-* **Diagnóstico:** Presencia de términos no calibrados ("sin depender de servicios externos", "quintuplica el costo"), pleonasmos ("máximo estricto"), jerga ("gatillar"), y acrónimos no definidos en su primera aparición (`LIO`, `WABA`, `wamid`).
-* **Acción Requerida:** Ajustar la redacción a tono técnico y agregar un glosario breve de términos.
+#### Major 1: Tormenta N+1 de Actualizaciones HTTP en el Cron Periódico
+*   **Lente:** `egm-zoom-out`
+*   **Solución:** Reemplazar el bucle secuencial `for c in res.data: update()` por una única actualización atómica por lotes en Supabase:
+    ```python
+    supabase.table("optica_conversaciones")\
+        .update({"estado": "cerrada", "cerrado_at": now_iso, "cerrado_motivo": "inactividad_24h"})\
+        .eq("estado", "activa")\
+        .lt("ventana_24h_expira_at", now_iso)\
+        .execute()
+    ```
 
-#### N2: Estandarización de Estructura y Encabezados
-* **Lentes:** `egm-structural`
-* **Diagnóstico:** Puntuación terminal con dos puntos (`:`) en encabezados de nivel 4, mezcla de idiomas en títulos H3, y fórmulas matemáticas con delimitadores `$T+2$` no escapados.
-* **Acción Requerida:** Limpiar la puntuación de encabezados, estandarizar títulos y usar literales de código inline (`T + 2`).
+#### Major 2: Estandarización de `client_id` (JSONB vs Columna Dedicada)
+*   **Lentes:** `egm-comprehension` & `egm-codebase-details`
+*   **Solución:** Almacenar `client_id` de forma canónica dentro de `metadata.client_id` (indexado con índice GIN/expresión en PostgreSQL) y proyectarlo como propiedad de primer nivel en el enriquecedor de TypeScript para el frontend.
 
-#### N3: Digest Criptográfico para Auditoría Extensible
-* **Lentes:** `egm-inventive-catalyst`
-* **Diagnóstico:** Meta elimina los archivos PDF tras 30 días, impidiendo cotejar el documento exacto enviado si surge un reclamo posterior.
-* **Acción Requerida:** Guardar en `notificaciones_prestadores_logs` el hash SHA-256 del PDF (`pdf_sha256`) y un snapshot JSON con los turnos notificados.
+#### Major 3: Manejo de Errores y Reintentos en el Reconciliador Optimista
+*   **Lentes:** `egm-design` & `egm-structural`
+*   **Solución:** Extender el estado optimista para contemplar fallos de red o rechazos de Meta: si la mutación falla, marcar `estado_entrega: 'failed'`, renderizar ícono de advertencia rojo y permitir al operador reintentar el envío con un clic.
+
+#### Major 4: Compatibilidad de Reproducción de Audio OGG Opus en Navegadores Apple
+*   **Lentes:** `egm-comprehension` & `egm-implementation-readiness`
+*   **Solución:** El tag `<audio>` reproduce OGG Opus en Chrome, Edge y versiones recientes de Safari. Como fallback defensivo para navegadores que no decodifiquen el contenedor OGG, el componente `ChatVoicePlayer` incorporará detección de soporte y ofrecerá reproducción o descarga directa del archivo.
+
+#### Major 5: Política de Retención y Privacidad en Supabase Storage
+*   **Lente:** `egm-zoom-out`
+*   **Solución:** Configurar el bucket `optica_chat_media` con URLs privadas prefirmadas y programar un ciclo de vida de archivado a los 180 días para recetas médicas sensibles.
 
 ---
 
-## 3. Matriz de Trazabilidad de Hallazgos
+### 🟢 NITS (Detalles de Formato y Estilo)
 
-| ID | Hallazgo Consolidado | Severidad | Revisores que lo detectaron | Acción de Remediación |
-| :--- | :--- | :---: | :--- | :--- |
-| **B1** | Archivo `quirofano_router.py` inexistente | 🔴 Blocker | Codebase Details, Readiness, Zoom Out | Crear `notificaciones_prestadores_router.py` y montarlo en `main.py`. |
-| **B2** | Rutas frontend desalineadas y sin `quirofanoService` | 🔴 Blocker | Codebase Details, Readiness | Corregir paths a `frontend/src/...`, usar `apiFetch` y vistas correctas. |
-| **B3** | Días hábiles vs anticipación fija (Lunes/Martes perdidos) | 🔴 Blocker | Design Critic, Comprehension | Implementar regla de días hábiles quirúrgicos (Viernes cubre Lunes). |
-| **B4** | Ausencia de lock concurrente e idempotencia | 🔴 Blocker | Design Critic, Catalyst, Zoom Out, Readiness | Agregar `pg_advisory_xact_lock`, constraint UNIQUE y TZ Buenos Aires. |
-| **M1** | Endpoint de aprovisionamiento de plantilla redundante | 🟡 Major | Zoom Out, Comprehension | Eliminar endpoint; usar módulo existente `templates.py` o Meta Manager. |
-| **M2** | Tareas fantasma en `WhatsAppCloudClient` | 🟡 Major | Zoom Out | Reutilizar métodos existentes `upload_media_bytes` y `send_template`. |
-| **M3** | Fractura de generación PDF vs `pdf_service.py` | 🟡 Major | Zoom Out, Readiness | Reutilizar membretes y estilos institucionales de `pdf_service.py`. |
-| **M4** | Timeout HTTP en despacho manual (45-60s) | 🟡 Major | Design Critic, Catalyst | Convertir endpoint manual a asíncrono con `BackgroundTasks` y HTTP 202. |
-| **M5** | Privacidad de datos médicos (DNI y notas de sala) | 🟡 Major | Design Critic | Enmascarar DNI, excluir notas operativas y añadir cláusula de confidencialidad. |
-| **M6** | Fragilidad en matching de derivadores por texto libre | 🟡 Major | Design Critic, Comprehension, Codebase Details | Reutilizar `obtener_prestador_por_cirujano` de `app.db` y alertar en pre-vuelo. |
-| **M7** | Ausencia de contratos Pydantic y script SQL DDL | 🟡 Major | Readiness, Structural | Documentar esquemas de API y script SQL con índices y claves foráneas. |
-| **N1** | Estilo, calibración de claims y glosario de acrónimos | 🟢 Nit | Style, Comprehension | Calibrar prosa, eliminar pleonasmos y definir acrónimos (`LIO`, `WABA`). |
-| **N2** | Estructura de encabezados y delimitadores LaTeX | 🟢 Nit | Structural | Limpiar dos puntos en títulos y usar código inline para `T + 2`. |
-| **N3** | Snapshot JSON y SHA-256 para auditoría post-30 días | 🟢 Nit | Catalyst | Almacenar `pdf_sha256` y `turnos_snapshot` en `notificaciones_prestadores_logs`. |
+*   **Nit 1:** Reemplazar notación LaTeX `$\to$` por flecha estándar Unicode `→` en el documento de diseño.
+*   **Nit 2:** Mantener los enums de entrega en inglés en la API (`'pending' | 'sent' | 'delivered' | 'read' | 'failed'`) para preservar compatibilidad con los webhooks de Meta, y traducir a español únicamente en las etiquetas visuales de UI.
+*   **Nit 3:** Agregar indicador visual translúcido con borde discontinuo (`isDraggingOver`) cuando el usuario arrastra un archivo sobre el contenedor de chat.
+*   **Nit 4:** Especificar formalmente los payloads de `POST /conversaciones/{id}/reabrir` y `POST /conversaciones/{id}/cerrar`.
+
+---
+
+## 3. Matriz de Trazabilidad de Remediación
+
+| ID | Hallazgo | Prioridad | Componente Afectado | Acción de Remediación |
+| :---: | :--- | :---: | :--- | :--- |
+| **B1** | Ventana de Meta 24h anclada al cliente | 🔴 Blocker | `optica_vortix_service.py` | Evaluar `ventana_24h_expira_at < NOW()` en el cron de cierre. |
+| **B2** | Sobrecarga Base64 en JSON | 🔴 Blocker | `optica_vortix_router.py` | Subida directa a Storage o endpoint streaming `multipart`. |
+| **B3** | Colisión de estado `'activa'` vs `'abierta'` | 🔴 Blocker | Base de datos & Router | Migración SQL `UPDATE` y soporte de alias retrocompatible. |
+| **M1** | N+1 en cron de auto-cierre | 🟡 Major | `optica_vortix_service.py` | Actualización atómica en un único `UPDATE ... WHERE`. |
+| **M2** | Inconsistencia en `client_id` | 🟡 Major | DB / Frontend types | Estandarizar en `metadata.client_id` con proyección tipada. |
+| **M3** | Estado de fallo y reintento en UI | 🟡 Major | `page.tsx` | Añadir estado `'failed'` con botón de reintento. |
+| **M4** | Playback OGG Opus en Safari | 🟡 Major | `ChatVoicePlayer.tsx` | Detección de soporte y fallback defensivo. |
+| **M5** | Retención de PII en Storage | 🟡 Major | Supabase Storage | Bucket privado con URLs firmadas y ciclo de retención. |
+| **N1** | Notación LaTeX en Markdown | 🟢 Nit | `design_doc.md` | Reemplazar por flechas Unicode `→`. |
+| **N2** | Enums de entrega bilingües | 🟢 Nit | `types/optica.ts` | Enums canónicos en inglés compatibles con Meta webhooks. |
+| **N3** | Overlay de Drop-Zone visual | 🟢 Nit | `page.tsx` | Añadir feedback visual en `onDragEnter`/`onDragLeave`. |
+| **N4** | Schemas manuales de cerrar/reabrir | 🟢 Nit | `optica_vortix_router.py` | Tipar payloads y respuestas de cierre/reapertura manual. |
+
+---
+
+## 4. Conclusión
+
+El diseño técnico ha superado rigurosamente las 5 etapas del protocolo EGM. La incorporación de las 3 remediaciones de los **Blockers** (sincronización con `ventana_24h_expira_at`, subida desacoplada de medios y unificación de estados `'abierta'`/`'activa'`) deja el documento 100% blindado y listo para iniciar la implementación de código sin riesgos arquitectónicos.

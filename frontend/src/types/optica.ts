@@ -59,6 +59,11 @@ export interface OpticaConversacion {
   no_leidos: number
   bot_paused: boolean
   archivada: boolean
+  estado?: 'activa' | 'cerrada' | 'archivada' | 'abierta'
+  modo_atencion?: 'autonomo' | 'copiloto' | 'humano'
+  modo_atencion_previo?: 'autonomo' | 'copiloto' | 'humano'
+  cerrado_at?: string | null
+  cerrado_motivo?: string | null
   opt_out?: boolean
   asignado_a?: string | null
   created_at?: string
@@ -91,11 +96,16 @@ export interface OpticaMensaje {
   tipo: TipoMensajeOptica
   contenido: string
   media_url?: string | null
+  mime_type?: string | null
+  wamid?: string | null
+  client_id?: string | null
   template_name?: string | null
-  estado_entrega?: 'queued' | 'sent' | 'delivered' | 'read' | 'failed'
+  estado_entrega?: 'pending' | 'queued' | 'sent' | 'delivered' | 'read' | 'failed'
   error_detalle?: string | null
   autor_nombre?: string | null
   metadata?: {
+    client_id?: string
+    wamid?: string
     cotizacion_opciones?: OpcionCotizacionOptica[]
     cupon_aplicado?: string
     ocr_extraido?: boolean
