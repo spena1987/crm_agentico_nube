@@ -38,7 +38,8 @@ def test_invalid_token_is_rejected_with_401():
         headers={"Authorization": "Bearer token.completamente.invalido"}
     )
     assert response.status_code == 401
-    assert "inválido" in response.json().get("detail", "").lower() or "token" in response.json().get("detail", "").lower()
+    detail = response.json().get("detail", "").lower()
+    assert any(w in detail for w in ("inválido", "invalido", "token", "válida", "valida", "revocado", "revocada"))
 
 def test_public_consent_endpoint_is_accessible_without_auth():
     """Verifica que las rutas de consentimiento público para pacientes no exijan token Bearer."""

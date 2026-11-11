@@ -150,7 +150,7 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
             _AUTH_INVALID_TOKEN_CACHE[token] = ahora_ts + 60
             raise HTTPException(
                 status_code=401,
-                detail="La sesión de usuario no es válida o fue revocada. Inicia sesión nuevamente.",
+                detail="El token o sesión de usuario no es válido o fue revocado. Inicia sesión nuevamente.",
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
