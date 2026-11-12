@@ -7,6 +7,7 @@ y endpoints de despacho de mensajes con plantillas o botones interactivos.
 import os
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 from fastapi import APIRouter, Request, Response, HTTPException, status, Query, Header, BackgroundTasks, Depends
@@ -47,6 +48,11 @@ class TemplateSendRequest(BaseModel):
     template_name: str = Field(..., description="Nombre de la plantilla en Meta Business Manager")
     language_code: str = Field(default="es_AR")
     components: Optional[List[Dict[str, Any]]] = Field(default=None)
+    conversacion_id: Optional[str] = Field(default=None, description="UUID de la conversación en public.conversaciones")
+    operador_id: Optional[str] = Field(default=None, description="UUID del operador que envía")
+    operador_nombre: Optional[str] = Field(default=None, description="Nombre legible del operador")
+    rendered_content: Optional[str] = Field(default=None, description="Texto completo de la plantilla renderizada para el chat")
+    category: Optional[str] = Field(default="UTILITY", description="Categoría de Meta: UTILITY, AUTHENTICATION o MARKETING")
 
 
 class TextSendRequest(BaseModel):
@@ -177,6 +183,8 @@ def get_client() -> WhatsAppCloudClient:
 async def send_template_message(req: TemplateSendRequest, background_tasks: BackgroundTasks):
     """
     Despacha un mensaje de plantilla pre-aprobada (ideal para recordatorios de turnos).
+    Registra de forma garantizada e inmediata en `public.mensajes` y actualiza `public.conversaciones`
+    usando credenciales de Service Role en el backend (inmune a RLS).
     """
     client = get_client()
     normalized_to = normalize_to_meta_e164(req.to_phone)
@@ -188,6 +196,8 @@ async def send_template_message(req: TemplateSendRequest, background_tasks: Back
             components=req.components
         )
         wamid = result.get("wamid")
+        target_conv_id = req.conversacion_id
+
         if wamid:
             background_tasks.add_task(
                 record_outbound_audit_message,
@@ -198,7 +208,56 @@ async def send_template_message(req: TemplateSendRequest, background_tasks: Back
                 payload=req.model_dump(),
                 billing_category="utility"
             )
-        return {"status": "success", "wamid": wamid, "to": normalized_to}
+
+            # Persistencia garantizada en public.mensajes y public.conversaciones del CRM Institucional
+            try:
+                from app.db import supabase, guardar_mensaje
+                if supabase:
+                    if not target_conv_id:
+                        # Buscar si existe una conversación abierta para este paciente
+                        pac_res = supabase.table("pacientes").select("id").eq("telefono", normalized_to).limit(1).execute()
+                        if pac_res.data:
+                            pac_id = pac_res.data[0]["id"]
+                            c_find = supabase.table("conversaciones").select("id").eq("paciente_id", pac_id).order("updated_at", desc=True).limit(1).execute()
+                            if c_find.data:
+                                target_conv_id = c_find.data[0]["id"]
+
+                    if target_conv_id:
+                        meta_tpl: Dict[str, Any] = {
+                            "tipo": "template",
+                            "template_name": req.template_name,
+                            "category": req.category or "UTILITY",
+                            "wamid": wamid,
+                            "delivery_status": "enviado",
+                            "provider": "meta_cloud_api"
+                        }
+                        if req.operador_id:
+                            meta_tpl["operador_id"] = req.operador_id
+                        if req.operador_nombre:
+                            meta_tpl["operador_nombre"] = req.operador_nombre
+
+                        msg_content = req.rendered_content or f"📄 [PLANTILLA OFICIAL: {req.template_name}]"
+                        guardar_mensaje(
+                            conversacion_id=target_conv_id,
+                            emisor="operador",
+                            contenido=msg_content,
+                            whatsapp_message_id=wamid,
+                            metadata_json=meta_tpl
+                        )
+
+                        now_iso = datetime.now(timezone.utc).isoformat()
+                        c_upd_payload = {
+                            "ultimo_mensaje": f"📄 {req.template_name}",
+                            "ultimo_mensaje_at": now_iso,
+                            "updated_at": now_iso,
+                            "bot_disabled": True
+                        }
+                        supabase.table("conversaciones").update(c_upd_payload).eq("id", target_conv_id).execute()
+                        logger.info(f"Plantilla {req.template_name} registrada en public.mensajes para conv {target_conv_id}")
+            except Exception as db_save_err:
+                logger.error(f"Error registrando plantilla en public.mensajes: {db_save_err}", exc_info=True)
+
+        return {"status": "success", "wamid": wamid, "to": normalized_to, "conversacion_id": target_conv_id}
     except Exception as e:
         logger.error(f"[Outbound Template Error] {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

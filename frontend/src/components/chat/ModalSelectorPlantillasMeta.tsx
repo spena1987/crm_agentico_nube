@@ -423,11 +423,17 @@ export default function ModalSelectorPlantillasMeta({
         })
       }
 
+      const renderedFull = getFullRenderedMessage()
       const payload = {
         to_phone: phoneToSend,
         template_name: selectedTemplate.name,
         language_code: selectedTemplate.language || 'es_AR',
-        components: components.length > 0 ? components : undefined
+        components: components.length > 0 ? components : undefined,
+        conversacion_id: conversacionId || undefined,
+        operador_id: currentUserId || undefined,
+        operador_nombre: currentUserName || undefined,
+        rendered_content: renderedFull ? `📄 [PLANTILLA OFICIAL: ${selectedTemplate.name}]\n\n${renderedFull}` : undefined,
+        category: selectedTemplate.category || 'UTILITY'
       }
 
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/cloud/send-template`, {
@@ -441,9 +447,9 @@ export default function ModalSelectorPlantillasMeta({
         throw new Error(data.detail || data.error || 'Error devuelto por Meta al despachar la plantilla')
       }
 
-      // Registrar mensaje en la tabla mensajes para visualización en el chat
+      // El backend ya persiste de forma segura e inmediata en public.mensajes con Service Role
+      // Actualizamos como respaldo local por si no hay conexión temporal
       if (conversacionId) {
-        const renderedFull = getFullRenderedMessage()
         try {
           const metaTpl: any = {
             tipo: 'template',
@@ -456,19 +462,12 @@ export default function ModalSelectorPlantillasMeta({
           if (currentUserId) metaTpl.operador_id = currentUserId
           if (currentUserName) metaTpl.operador_nombre = currentUserName
 
-          await supabase.from('mensajes').insert({
-            conversacion_id: conversacionId,
-            emisor: 'operador',
-            contenido: `📄 [PLANTILLA OFICIAL: ${selectedTemplate.name}]\n\n${renderedFull}`,
-            metadata_json: metaTpl
-          } as any)
-
-          await supabase.from('conversaciones').update({
+          await (supabase.from as any)('conversaciones').update({
             ultimo_mensaje: `📄 ${selectedTemplate.name}`,
             updated_at: new Date().toISOString()
-          } as any).eq('id', conversacionId)
+          }).eq('id', conversacionId)
         } catch (dbErr) {
-          console.warn('Advertencia al registrar mensaje en base de datos:', dbErr)
+          // Ignorar fallo de cliente ya que el backend garantizó la persistencia
         }
       }
 

@@ -513,6 +513,39 @@ def despachar_indicacion_por_whatsapp(
         )
         if wa_send and (wa_send.get("code") == "WINDOW_CLOSED" or not wa_send.get("enviado_real")):
             is_window_open = False
+        elif wa_send and (wa_send.get("success") or wa_send.get("enviado_real")) and conv_id:
+            wamid = wa_send.get("wamid") or wa_send.get("message_id")
+            meta_doc: Dict[str, Any] = {
+                "tipo": "documento",
+                "delivery_status": "enviado",
+                "provider": "meta_cloud_api",
+                "wamid": wamid,
+                "emision_indicacion_id": emision_uuid,
+                "media_url": full_pdf_link,
+                "filename": pdf_filename,
+                "caption": mensaje_wa,
+                "mime_type": "application/pdf"
+            }
+            if operador_id:
+                meta_doc["operador_id"] = operador_id
+            if operador_nombre:
+                meta_doc["operador_nombre"] = operador_nombre
+
+            guardar_mensaje(
+                conversacion_id=conv_id,
+                emisor="operador",
+                contenido=f"📄 [PEDIDO / INDICACIÓN MÉDICA]\n\n{mensaje_wa}\n\n📎 Archivo adjunto: {pdf_filename}",
+                whatsapp_message_id=wamid,
+                metadata_json=meta_doc
+            )
+            try:
+                if supabase:
+                    supabase.table("conversaciones").update({
+                        "ultimo_mensaje": f"📄 {pdf_filename}",
+                        "ultimo_mensaje_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", conv_id).execute()
+            except Exception as upd_e:
+                logger.warning(f"Error actualizando conversacion tras pedido medico: {upd_e}")
 
     if not is_window_open:
         from app.services.whatsapp_cloud.client import (

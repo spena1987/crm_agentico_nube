@@ -323,6 +323,7 @@ export default function OpticaVortixChatPage() {
   const [selectedConv, setSelectedConv] = useState<OpticaConversacion | null>(null)
   const [mensajes, setMensajes] = useState<OpticaMensaje[]>([])
   const [loadingMsgs, setLoadingMsgs] = useState(false)
+  const messagesCacheRef = useRef<Record<string, OpticaMensaje[]>>({})
   const [showFicha360, setShowFicha360] = useState(true)
 
   // Drag & Drop y Modal Multimedia Staged
@@ -703,9 +704,19 @@ export default function OpticaVortixChatPage() {
     setSelectedConv(conv)
     setReplyingToMessage(null)
 
-    if (isDifferentConv && !isSilent) {
+    // Visualización instantánea desde memoria caché para evitar pantallas en negro
+    const cached = messagesCacheRef.current[conv.id]
+    if (cached && cached.length > 0) {
+      setMensajes(cached)
+      setLoadingMsgs(false)
+    } else if (isDifferentConv && !isSilent) {
       setLoadingMsgs(true)
     }
+
+    // Timeout de resguardo de 3 segundos para que el spinner nunca se congele indefinidamente
+    const fallbackTimer = setTimeout(() => {
+      setLoadingMsgs(false)
+    }, 3000)
 
     if (conv.graduacion_actual_json) {
       setGraduacion({ ...EMPTY_GRADUACION, ...conv.graduacion_actual_json })
@@ -719,11 +730,14 @@ export default function OpticaVortixChatPage() {
         const resM = await apiFetch(`/api/optica-vortix/conversaciones/${conv.id}/mensajes`, { cache: 'no-store' })
         if (resM.ok) {
           const dataM = await resM.json()
-          setMensajes(Array.isArray(dataM) ? dataM : dataM.items || [])
+          const msgsList = Array.isArray(dataM) ? dataM : dataM.items || []
+          setMensajes(msgsList)
+          messagesCacheRef.current[conv.id] = msgsList
         }
       } catch (err) {
         console.error('Error cargando mensajes de óptica:', err)
       } finally {
+        clearTimeout(fallbackTimer)
         setLoadingMsgs(false)
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 80)
       }

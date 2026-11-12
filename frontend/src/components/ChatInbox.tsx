@@ -759,7 +759,7 @@ export default function ChatInbox() {
         if (selectedConvIdRef.current === convId) {
           setMensajes(finalMsgs)
         }
-      } else {
+      } else if (!cached || cached.length === 0) {
         messagesCacheRef.current[convId] = []
         if (selectedConvIdRef.current === convId) {
           setMensajes([])
@@ -848,42 +848,60 @@ export default function ChatInbox() {
     // Sincronizar lectura con backend (el backend verifica si unread_count > 0 antes de persistir)
     apiFetch(`/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
 
-    const intervalMsgs = setInterval(() => {
+    const intervalMsgs = setInterval(async () => {
       if (!selectedConvId) return
-      supabase
-        .from('mensajes')
-        .select('*')
-        .eq('conversacion_id', selectedConvId)
-        .order('created_at', { ascending: true })
-        .then(({ data }) => {
-          if (data && data.length > 0) {
-            const uniqueMap = new Map<string, Mensaje>()
-            for (const m of (data as unknown as Mensaje[])) {
-              const dedupKey = m.metadata_json?.wamid || m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json?.wamid || m.metadata_json?.whatsapp_message_id}` : m.id
-              uniqueMap.set(dedupKey, m)
-            }
-            const newArr = Array.from(uniqueMap.values())
-            messagesCacheRef.current[selectedConvId] = newArr
-            setMensajes((prev) => {
-              if (prev.length === newArr.length && prev.length > 0) {
-                const lastPrev = prev[prev.length - 1]
-                const lastNew = newArr[newArr.length - 1]
-                const sameLastId = lastPrev.id === lastNew.id
-                const sameDelivery = lastPrev.metadata_json?.delivery_status === lastNew.metadata_json?.delivery_status
-                if (sameLastId && sameDelivery) {
-                  return prev
-                }
-              }
-              return newArr
-            })
-          } else if (data && data.length === 0) {
-            if (selectedConvIdRef.current === selectedConvId) {
-              messagesCacheRef.current[selectedConvId] = []
-              setMensajes([])
+      try {
+        let fetchedMsgs: Mensaje[] = []
+
+        // 1. Priorizar endpoint seguro de backend (Service Role)
+        try {
+          const res = await apiFetch(`/api/conversaciones/${selectedConvId}/mensajes`, { cache: 'no-store' })
+          if (res.ok) {
+            const apiData = await res.json()
+            if (Array.isArray(apiData) && apiData.length > 0) {
+              fetchedMsgs = apiData
             }
           }
-        })
-    }, 25000)
+        } catch {}
+
+        // 2. Fallback a Supabase directo si el backend no respondió
+        if (fetchedMsgs.length === 0) {
+          const { data } = await supabase
+            .from('mensajes')
+            .select('*')
+            .eq('conversacion_id', selectedConvId)
+            .order('created_at', { ascending: true })
+          if (data && data.length > 0) {
+            fetchedMsgs = data as unknown as Mensaje[]
+          }
+        }
+
+        // 3. Reconciliación no destructiva: si trajo mensajes, actualizar; si vino vacío, NUNCA borrar la pantalla
+        if (fetchedMsgs.length > 0) {
+          const uniqueMap = new Map<string, Mensaje>()
+          for (const m of fetchedMsgs) {
+            const dedupKey = m.metadata_json?.wamid || m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json?.wamid || m.metadata_json?.whatsapp_message_id}` : m.id
+            uniqueMap.set(dedupKey, m)
+          }
+          const newArr = Array.from(uniqueMap.values())
+          messagesCacheRef.current[selectedConvId] = newArr
+          setMensajes((prev) => {
+            if (prev.length === newArr.length && prev.length > 0) {
+              const lastPrev = prev[prev.length - 1]
+              const lastNew = newArr[newArr.length - 1]
+              const sameLastId = lastPrev.id === lastNew.id
+              const sameDelivery = lastPrev.metadata_json?.delivery_status === lastNew.metadata_json?.delivery_status
+              if (sameLastId && sameDelivery) {
+                return prev
+              }
+            }
+            return newArr
+          })
+        }
+      } catch (pollErr) {
+        console.warn('Error en polling de mensajes:', pollErr)
+      }
+    }, 15000)
 
     return () => clearInterval(intervalMsgs)
   }, [selectedConvId])
