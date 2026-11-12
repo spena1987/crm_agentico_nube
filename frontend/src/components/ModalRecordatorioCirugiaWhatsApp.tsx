@@ -333,7 +333,7 @@ export default function ModalRecordatorioCirugiaWhatsApp({
   const LIMITE_CARACTERES_META = 1024
 
   // Generar texto completo del mensaje hidratado para previsualización real según la plantilla activa
-  const fechaVisual = formatDateArg(fecha, fecha || '[Fecha]')
+  const fechaVisual = (fecha || '').trim() || '[Fecha]'
   const cuerpoTextoRenderizado = useMemo(() => {
     if (!templateActualInfo?.body_text) {
       return `Hola ${pacienteNombre || '[Paciente]'}, le recordamos que su cirugía de ${cirugia || '[Procedimiento]'} está programada para el día ${fechaVisual} a las ${hora || '[Horario]'} hs en Centrovisión.\n\nPor favor, presione el botón inferior para confirmar su asistencia. Ante cualquier consulta, estamos a su disposición.`
@@ -556,7 +556,9 @@ export default function ModalRecordatorioCirugiaWhatsApp({
                     </div>
                     <div className="flex items-center gap-1 text-[11px] text-indigo-300 font-medium">
                       <Calendar size={12} className="text-indigo-400 shrink-0" />
-                      <span>{formatDateArg(datosOriginales.primer_ojo?.fecha, 'Fecha a confirmar')}</span>
+                      <span className="truncate" title={datosOriginales.primer_ojo?.fecha || undefined}>
+                        {datosOriginales.primer_ojo?.fecha || (datosOriginales.primer_ojo?.fecha_iso ? formatDateArg(datosOriginales.primer_ojo.fecha_iso) : 'Fecha a confirmar')}
+                      </span>
                     </div>
                     <div className="text-[10.5px] text-gray-400 flex items-center justify-between">
                       <span className="truncate">{datosOriginales.primer_ojo?.quirofano_nombre || 'Quirófano'}</span>
@@ -582,7 +584,9 @@ export default function ModalRecordatorioCirugiaWhatsApp({
                     </div>
                     <div className="flex items-center gap-1 text-[11px] text-purple-300 font-medium">
                       <Calendar size={12} className="text-purple-400 shrink-0" />
-                      <span>{formatDateArg(datosOriginales.segundo_ojo?.fecha, 'Fecha a confirmar')}</span>
+                      <span className="truncate" title={datosOriginales.segundo_ojo?.fecha || undefined}>
+                        {datosOriginales.segundo_ojo?.fecha || (datosOriginales.segundo_ojo?.fecha_iso ? formatDateArg(datosOriginales.segundo_ojo.fecha_iso) : 'Fecha a confirmar')}
+                      </span>
                     </div>
                     <div className="text-[10.5px] text-gray-400 flex items-center justify-between">
                       <span className="truncate">{datosOriginales.segundo_ojo?.quirofano_nombre || 'Quirófano'}</span>

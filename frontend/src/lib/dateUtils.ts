@@ -261,9 +261,22 @@ export const formatDateArg = (fechaInput?: string | Date | null, fallback: strin
         const [y, m, d] = parteFecha.split(/[\/-]/)
         if (y && m && d) return `${d}/${m}/${y}`
       }
+      // Si ya es un texto redactado con palabras en español (ej: "Martes 1 de Diciembre (01/12/2026)")
+      // o contiene nombres de meses / días, no mutilar el string con slice(0, 10)
+      if (/[a-zA-ZáéíóúÁÉÍÓÚñÑ]{3,}/.test(limpia)) {
+        return limpia
+      }
     }
     const d = typeof fechaInput === 'string' ? new Date(fechaInput) : fechaInput
-    if (isNaN(d.getTime())) return String(fechaInput).slice(0, 10) || fallback
+    if (isNaN(d.getTime())) {
+      // Si no es fecha válida, jamás cortar texto arbitrario a 10 letras
+      if (typeof fechaInput === 'string') {
+        const str = fechaInput.trim()
+        if (/^\d{4}/.test(str)) return str.slice(0, 10)
+        return str || fallback
+      }
+      return fallback
+    }
     const dia = String(d.getDate()).padStart(2, '0')
     const mes = String(d.getMonth() + 1).padStart(2, '0')
     const anio = d.getFullYear()
