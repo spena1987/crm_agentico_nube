@@ -306,6 +306,11 @@ export default function OpticaVortixChatPage() {
 
   // Pestañas Principales: Activas / Cerradas / Archivadas
   const [mainTab, setMainTab] = useState<'ACTIVAS' | 'CERRADAS' | 'ARCHIVADAS'>('ACTIVAS')
+  const [tabCounts, setTabCounts] = useState<{ activas: number; cerradas: number; archivadas: number }>({
+    activas: 0,
+    cerradas: 0,
+    archivadas: 0,
+  })
 
   // Estados de lista de conversaciones
   const [conversaciones, setConversaciones] = useState<OpticaConversacion[]>([])
@@ -563,6 +568,16 @@ export default function OpticaVortixChatPage() {
   const fetchConversaciones = async (isBackground = false) => {
     try {
       const params = new URLSearchParams()
+      if (mainTab === 'ARCHIVADAS') {
+        params.set('archivadas', 'true')
+      } else if (mainTab === 'CERRADAS') {
+        params.set('estado', 'cerrada')
+        params.set('archivadas', 'false')
+      } else {
+        params.set('estado', 'activa')
+        params.set('archivadas', 'false')
+      }
+
       if (filtroEtapa !== 'TODAS') params.set('etapa_comercial', filtroEtapa)
       if (searchQuery.trim()) params.set('search', searchQuery.trim())
       const res = await apiFetch(`/api/optica-vortix/conversaciones?${params.toString()}`, {
@@ -572,6 +587,9 @@ export default function OpticaVortixChatPage() {
         const data = await res.json()
         const list: OpticaConversacion[] = Array.isArray(data) ? data : data.items || []
         setConversaciones(list)
+        if (data.tab_counts) {
+          setTabCounts(data.tab_counts)
+        }
 
         // Auto-selección única inicial: solo se ejecuta la primera vez que carga la página
         if (!selectedConvIdRef.current && !hasInitialSelectedRef.current && list.length > 0) {
@@ -592,12 +610,13 @@ export default function OpticaVortixChatPage() {
   }
 
   useEffect(() => {
+    setLoadingConvs(true)
     fetchConversaciones(false)
     const interval = setInterval(() => {
       fetchConversaciones(true)
     }, 12000)
     return () => clearInterval(interval)
-  }, [filtroEtapa, searchQuery])
+  }, [filtroEtapa, searchQuery, mainTab])
 
   // Limpieza de grabador de audio al desmontar
   useEffect(() => {
@@ -1547,19 +1566,19 @@ export default function OpticaVortixChatPage() {
   }
 
   // Filtrado de conversaciones: Activas vs Cerradas vs Archivadas y subfiltros
-  const activasCount = conversaciones.filter((c) => !c.archivada && (c.estado === 'activa' || c.estado === 'abierta' || !c.estado)).length
-  const cerradasCount = conversaciones.filter((c) => !c.archivada && c.estado === 'cerrada').length
-  const archivadasCount = conversaciones.filter((c) => c.archivada || c.estado === 'archivada').length
+  const activasCount = tabCounts.activas > 0 ? tabCounts.activas : conversaciones.filter((c) => !c.archivada && (c.estado === 'activa' || c.estado === 'abierta' || !c.estado)).length
+  const cerradasCount = tabCounts.cerradas > 0 ? tabCounts.cerradas : conversaciones.filter((c) => !c.archivada && c.estado === 'cerrada').length
+  const archivadasCount = tabCounts.archivadas > 0 ? tabCounts.archivadas : conversaciones.filter((c) => c.archivada || c.estado === 'archivada').length
 
   const conversacionesFiltradas = conversaciones
     .filter((c) => {
-      if (mainTab === 'ARCHIVADAS') return Boolean(c.archivada || c.estado === 'archivada')
-      if (mainTab === 'CERRADAS') return c.estado === 'cerrada' && !c.archivada
-      // mainTab === 'ACTIVAS'
-      if (c.archivada || c.estado === 'archivada' || c.estado === 'cerrada') return false
-      if (filtroTab === 'SIN_LEER') return (c.no_leidos || 0) > 0
-      if (filtroTab === 'RECETA_HOY') return Boolean(c.receta_detectada_hoy || c.origen === 'DETECCION_RECETA_HOY')
-      if (filtroTab === 'VOUCHERS') return Boolean(c.cupon_codigo || c.origen === 'PLACA_TURNO')
+      // El backend ya segmenta por mainTab (archivada=true, estado=cerrada o estado=activa).
+      // En la pestaña ACTIVAS se aplican los subfiltros rápidos:
+      if (mainTab === 'ACTIVAS') {
+        if (filtroTab === 'SIN_LEER') return (c.no_leidos || 0) > 0
+        if (filtroTab === 'RECETA_HOY') return Boolean(c.receta_detectada_hoy || c.origen === 'DETECCION_RECETA_HOY')
+        if (filtroTab === 'VOUCHERS') return Boolean(c.cupon_codigo || c.origen === 'PLACA_TURNO')
+      }
       return true
     })
     .sort((a, b) => {

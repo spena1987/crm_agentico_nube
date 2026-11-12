@@ -1535,16 +1535,39 @@ async def listar_conversaciones_optica(
             etapas_counts[et] = etapas_counts.get(et, 0) + 1
             total_no_leidos += int(item.get("mensajes_no_leidos") or 0)
 
+        # Contadores globales de pestañas (Activas, Cerradas, Archivadas)
+        tab_counts: Dict[str, int] = {"activas": 0, "cerradas": 0, "archivadas": 0}
+        try:
+            cnt_act = supabase.table("optica_conversaciones").select("id", count="exact").in_("estado", ["activa", "abierta"]).eq("archivada", False).limit(1).execute()
+            cnt_cer = supabase.table("optica_conversaciones").select("id", count="exact").eq("estado", "cerrada").eq("archivada", False).limit(1).execute()
+            cnt_arc = supabase.table("optica_conversaciones").select("id", count="exact").eq("archivada", True).limit(1).execute()
+            tab_counts["activas"] = int(cnt_act.count or 0)
+            tab_counts["cerradas"] = int(cnt_cer.count or 0)
+            tab_counts["archivadas"] = int(cnt_arc.count or 0)
+        except Exception as cnt_err:
+            logger.warning(f"[OpticaRouter] Error calculando tab_counts: {cnt_err}")
+
         return {
             "success": True,
             "conversaciones": conversaciones,
             "items": conversaciones,
             "etapas_counts": etapas_counts,
-            "total_no_leidos": total_no_leidos
+            "total_no_leidos": total_no_leidos,
+            "tab_counts": tab_counts
         }
     except Exception as e:
         logger.error(f"[OpticaRouter] Error listando conversaciones: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@optica_vortix_router.post("/conversaciones/ejecutar-cierre-24h")
+async def ejecutar_cierre_24h_manual():
+    """
+    Fuerza el barrido y cierre de conversaciones inactivas por más de 24 horas.
+    """
+    from app.services.optica_vortix_service import ejecutar_cierre_conversaciones_inactivas_24h
+    cerradas = await ejecutar_cierre_conversaciones_inactivas_24h()
+    return {"success": True, "cerradas": cerradas}
 
 
 @optica_vortix_router.post("/conversaciones/iniciar")

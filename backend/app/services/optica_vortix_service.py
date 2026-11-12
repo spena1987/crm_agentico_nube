@@ -3209,29 +3209,50 @@ _LAST_AUTOCLOSE_RUN_TS: float = 0.0
 async def ejecutar_cierre_conversaciones_inactivas_24h() -> int:
     """
     Cierra automáticamente conversaciones en estado 'activa' o 'abierta'
-    cuya ventana de 24h de Meta haya expirado (ventana_24h_expira_at < NOW()).
+    inactivas por más de 24 horas (ventana_24h_expira_at < NOW() o último mensaje hace más de 24h).
     Preserva el modo de atención actual en 'modo_atencion_previo' y asigna 'cerrada'.
     """
     if not supabase:
         return 0
+    try:
+        # 1. Intentar ejecución atómica mediante RPC optimizado en Postgres
+        rpc_res = supabase.rpc("cerrar_conversaciones_inactivas_24h_optica").execute()
+        if rpc_res and rpc_res.data is not None:
+            cerradas_count = int(rpc_res.data)
+            if cerradas_count > 0:
+                logger.info(f"🔒 [OpticaVortix] RPC: Se cerraron {cerradas_count} conversaciones inactivas tras 24h.")
+            return cerradas_count
+    except Exception as rpc_err:
+        logger.warning(f"[OpticaVortix] RPC no disponible o falló ({rpc_err}). Usando fallback python...")
+
     now_utc = datetime.now(timezone.utc)
     now_iso = now_utc.isoformat()
+    hace_24h_iso = (now_utc - timedelta(hours=24)).isoformat()
     try:
-        res = (
+        # Fallback Python: buscar vencidas por ventana o por inactividad de mensaje/creación
+        res1 = (
             supabase.table("optica_conversaciones")
-            .select("id, modo_atencion, estado")
+            .select("id, modo_atencion, bot_paused, estado")
             .in_("estado", ["activa", "abierta"])
+            .eq("archivada", False)
             .lt("ventana_24h_expira_at", now_iso)
             .execute()
         )
-        vencidas = res.data or []
-        if not vencidas:
-            return 0
+        res2 = (
+            supabase.table("optica_conversaciones")
+            .select("id, modo_atencion, bot_paused, estado")
+            .in_("estado", ["activa", "abierta"])
+            .eq("archivada", False)
+            .lt("ultimo_mensaje_at", hace_24h_iso)
+            .execute()
+        )
+        vencidas_dict = {}
+        for r in (res1.data or []) + (res2.data or []):
+            vencidas_dict[r["id"]] = r
 
         cerradas_count = 0
-        for conv in vencidas:
-            conv_id = conv["id"]
-            modo_actual = conv.get("modo_atencion") or "autonomo"
+        for conv_id, conv in vencidas_dict.items():
+            modo_actual = conv.get("modo_atencion") or ("humano" if conv.get("bot_paused") else "autonomo")
             supabase.table("optica_conversaciones").update({
                 "estado": "cerrada",
                 "modo_atencion_previo": modo_actual,
@@ -3242,7 +3263,7 @@ async def ejecutar_cierre_conversaciones_inactivas_24h() -> int:
             cerradas_count += 1
 
         if cerradas_count > 0:
-            logger.info(f"🔒 [OpticaVortix] Se cerraron {cerradas_count} conversaciones inactivas tras 24h de expiración.")
+            logger.info(f"🔒 [OpticaVortix] Fallback: Se cerraron {cerradas_count} conversaciones inactivas tras 24h.")
         return cerradas_count
     except Exception as e:
         logger.warning(f"[OpticaVortix] Error en autocierre 24h: {e}")
