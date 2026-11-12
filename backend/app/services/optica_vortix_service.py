@@ -2427,20 +2427,33 @@ def _record_optica_outbound_msg(
     if final_client_id:
         insert_payload["client_id"] = final_client_id
 
+    ins_data = None
     try:
         ins = supabase.table("optica_mensajes").insert(insert_payload).execute()
-        if tipo != "nota_interna":
+        ins_data = ins.data[0] if (ins and ins.data) else None
+    except Exception as e:
+        logger.warning(f"[OpticaOutboundMsg] Error en insert inicial con client_id: {e}. Reintentando insert seguro...")
+        try:
+            fallback_payload = dict(insert_payload)
+            fallback_payload.pop("client_id", None)
+            ins_retry = supabase.table("optica_mensajes").insert(fallback_payload).execute()
+            ins_data = ins_retry.data[0] if (ins_retry and ins_retry.data) else None
+        except Exception as retry_err:
+            logger.error(f"[OpticaOutboundMsg] Error guardando mensaje saliente en optica_mensajes: {retry_err}")
+
+    # Actualizar optica_conversaciones de forma segura
+    if tipo != "nota_interna":
+        try:
             supabase.table("optica_conversaciones").update({
                 "ultimo_mensaje_texto": contenido[:300],
                 "ultimo_mensaje_at": now_iso,
                 "ultimo_mensaje_direccion": "outbound",
                 "updated_at": now_iso
             }).eq("id", conversacion_id).execute()
-        return ins.data[0] if ins.data else None
-    except Exception as e:
-        logger.warning(f"[OpticaOutboundMsg] Error guardando mensaje saliente: {e}")
-        return None
-        return None
+        except Exception as conv_err:
+            logger.warning(f"[OpticaOutboundMsg] Error actualizando optica_conversaciones: {conv_err}")
+
+    return ins_data or {**insert_payload, "id": None}
 
 
 def _esta_en_horario_comercial_optica(cfg: Dict[str, Any]) -> bool:

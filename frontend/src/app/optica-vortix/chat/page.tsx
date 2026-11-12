@@ -694,30 +694,39 @@ export default function OpticaVortixChatPage() {
       setGraduacion(EMPTY_GRADUACION)
     }
 
-    try {
-      const [resM, resF] = await Promise.all([
-        apiFetch(`/api/optica-vortix/conversaciones/${conv.id}/mensajes`, { cache: 'no-store' }),
-        apiFetch(`/api/optica-vortix/conversaciones/${conv.id}/ficha-optica`, { cache: 'no-store' }),
-      ])
-      if (resM.ok) {
-        const dataM = await resM.json()
-        setMensajes(Array.isArray(dataM) ? dataM : dataM.items || [])
-      }
-      if (resF.ok) {
-        const dataF = await resF.json()
-        if (dataF.graduacion) {
-          setGraduacion({ ...EMPTY_GRADUACION, ...dataF.graduacion })
+    // Carga desacoplada: Los mensajes cargan de inmediato (~50ms) sin ser bloqueados por la ficha médica Geclisa
+    const fetchMensajesPromise = (async () => {
+      try {
+        const resM = await apiFetch(`/api/optica-vortix/conversaciones/${conv.id}/mensajes`, { cache: 'no-store' })
+        if (resM.ok) {
+          const dataM = await resM.json()
+          setMensajes(Array.isArray(dataM) ? dataM : dataM.items || [])
         }
-        setEvolucionHoy(dataF.evolucion_geclisa_hoy || null)
-      }
-    } catch {
-      // ignore
-    } finally {
-      if (isDifferentConv && !isSilent) {
+      } catch (err) {
+        console.error('Error cargando mensajes de óptica:', err)
+      } finally {
         setLoadingMsgs(false)
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 80)
       }
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
-    }
+    })()
+
+    // En paralelo e independiente: Ficha médica 360° / Geclisa
+    const fetchFichaPromise = (async () => {
+      try {
+        const resF = await apiFetch(`/api/optica-vortix/conversaciones/${conv.id}/ficha-optica`, { cache: 'no-store' })
+        if (resF.ok) {
+          const dataF = await resF.json()
+          if (dataF.graduacion) {
+            setGraduacion({ ...EMPTY_GRADUACION, ...dataF.graduacion })
+          }
+          setEvolucionHoy(dataF.evolucion_geclisa_hoy || null)
+        }
+      } catch (err) {
+        console.warn('Error cargando ficha óptica / Geclisa:', err)
+      }
+    })()
+
+    await Promise.allSettled([fetchMensajesPromise, fetchFichaPromise])
   }
 
   // Envío de Texto Libre o Nota Interna con Reconciliación Optimista y Eliminación de Mensaje Doble
@@ -765,6 +774,27 @@ export default function OpticaVortixChatPage() {
 
     setMensajes((prev) => reconciliarMensajes(prev, tempMsg))
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 40)
+
+    // Actualización optimista de la conversación en la barra lateral
+    setConversaciones((prevConvs) =>
+      prevConvs
+        .map((c) =>
+          c.id === selectedConv.id
+            ? {
+                ...c,
+                ultimo_mensaje: texto,
+                ultimo_mensaje_texto: texto,
+                ultimo_mensaje_at: tempMsg.created_at,
+                ultimo_mensaje_direccion: 'outbound',
+              }
+            : c
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.ultimo_mensaje_at || 0).getTime() -
+            new Date(a.ultimo_mensaje_at || 0).getTime()
+        )
+    )
 
     setSendingMsg(true)
     try {
