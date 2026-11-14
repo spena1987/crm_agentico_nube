@@ -154,6 +154,7 @@ from app.db import (
     actualizar_item_catalogo_maestro,
     eliminar_item_catalogo_maestro,
     cambiar_estado_turno_quirofano,
+    suspender_o_reprogramar_turno_quirofano,
     subir_consentimiento_turno_a_geclisa,
     subir_parte_quirurgico_turno_a_geclisa,
     desvincular_documento_geclisa_turno,
@@ -6068,7 +6069,8 @@ def listar_turnos_quirofano(
     fecha_hasta: Optional[str] = None,
     quirofano_id: Optional[str] = None,
     cirujano_id: Optional[int] = None,
-    estado: Optional[str] = None
+    estado: Optional[str] = None,
+    incluir_cancelados: bool = True
 ):
     try:
         turnos = get_turnos_quirofano(
@@ -6076,7 +6078,8 @@ def listar_turnos_quirofano(
             fecha_hasta=fecha_hasta,
             quirofano_id=quirofano_id,
             cirujano_id=cirujano_id,
-            estado=estado
+            estado=estado,
+            incluir_cancelados=incluir_cancelados
         )
         return {"success": True, "turnos": turnos}
     except Exception as e:
@@ -8644,18 +8647,52 @@ def listar_turnos_dia_endpoint(
     fecha: str = Query(..., description="Fecha en formato YYYY-MM-DD"),
     quirofano_id: Optional[str] = Query(None),
     solo_pizarra: bool = Query(False),
-    solo_recepcion: bool = Query(False)
+    solo_recepcion: bool = Query(False),
+    incluir_cancelados: bool = Query(False)
 ):
     try:
         items = get_turnos_dia_ejecucion(
             fecha=fecha, 
             quirofano_id=quirofano_id,
             solo_pizarra=solo_pizarra,
-            solo_recepcion=solo_recepcion
+            solo_recepcion=solo_recepcion,
+            incluir_cancelados=incluir_cancelados
         )
         return {"success": True, "turnos": items, "fecha": fecha}
     except Exception as e:
         logger.error(f"Error listando turnos del día ({fecha}): {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class SuspenderReprogramarPayload(BaseModel):
+    modo: str = "reprogramar_sin_fecha"  # 'reprogramar_con_fecha' | 'reprogramar_sin_fecha' | 'cancelar_definitivo'
+    motivo: str = "Decisión del paciente"
+    observaciones: Optional[str] = None
+    usuario_nombre: Optional[str] = None
+    nueva_fecha: Optional[str] = None
+    quirofano_id: Optional[str] = None
+    hora_inicio: Optional[str] = None
+    duracion_minutos: Optional[int] = None
+    nueva_fecha_probable: Optional[str] = None
+    forzar: bool = False
+
+@app.post("/api/turnos-quirofano/{turno_id}/suspender-reprogramar")
+def suspender_reprogramar_turno_endpoint(turno_id: str, payload: SuspenderReprogramarPayload):
+    """
+    Flujo unificado para suspender o reprogramar un turno quirúrgico (incluyendo en el mismo día),
+    sincronizando atómicamente Agenda de Quirófano, Recepción, Pizarra en Vivo, Pipeline y Evolución.
+    """
+    try:
+        res = suspender_o_reprogramar_turno_quirofano(turno_id=turno_id, payload=payload.dict())
+        if not res.get("success"):
+            status_code = int(res.get("status_code") or 400)
+            if status_code == 409:
+                return JSONResponse(status_code=409, content=res)
+            raise HTTPException(status_code=status_code, detail=res.get("error") or "Error al suspender/reprogramar turno")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint suspender-reprogramar {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 class CambiarEstadoPayload(BaseModel):

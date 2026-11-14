@@ -3218,8 +3218,34 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
                     datos[k] = val if isinstance(val, dict) else {}
                 else:
                     datos[k] = val
-        # Auto-programación de SLA si el caso transiciona a 'en_analisis' o 'presupuesto_enviado'
+        # Detectar si la asesoría retrocede desde 'programado'/'confirmado' hacia una etapa previa
         nuevo_est = datos.get("estado")
+        retrocedio_desde_programado = False
+        prev_row_estado: Dict[str, Any] = {}
+        if nuevo_est:
+            try:
+                q_est = supabase.table("asesorias_quirurgicas").select("estado, paciente_id, checklist_prequirurgico, fecha_definitiva_cirugia").eq("id", asesoria_id).limit(1).execute()
+                prev_row_estado = q_est.data[0] if (q_est and q_est.data) else {}
+                prev_est = prev_row_estado.get("estado")
+                if prev_est in ["programado", "confirmado"] and nuevo_est in ["nuevo", "en_analisis", "presupuesto_enviado", "seguimiento"]:
+                    retrocedio_desde_programado = True
+                    # Limpiar fecha definitiva principal si no viene otra válida explícita
+                    if not payload.get("fecha_definitiva_cirugia"):
+                        datos["fecha_definitiva_cirugia"] = None
+                    # En casos bilaterales, limpiar también fecha_definitiva_2do_ojo si el 2do ojo no está operado
+                    chk_base = dict(datos.get("checklist_prequirurgico") or prev_row_estado.get("checklist_prequirurgico") or {})
+                    meta_b = dict(chk_base.get("_meta_bilateral") or {})
+                    prog_b = chk_base.get("_progreso_bilateral") or {}
+                    orden_b = meta_b.get("orden") or "OD_primero"
+                    segundo_ojo_operado = bool(prog_b.get("od_operado")) if orden_b == "OI_primero" else bool(prog_b.get("oi_operado"))
+                    if meta_b and not segundo_ojo_operado and not payload.get("fecha_definitiva_2do_ojo"):
+                        meta_b["fecha_definitiva_2do_ojo"] = None
+                        chk_base["_meta_bilateral"] = meta_b
+                        datos["checklist_prequirurgico"] = chk_base
+            except Exception as e_prev_est:
+                logger.warning(f"Aviso verificando retroceso de etapa en asesoría {asesoria_id}: {e_prev_est}")
+
+        # Auto-programación de SLA si el caso transiciona a 'en_analisis' o 'presupuesto_enviado'
         if nuevo_est in ["en_analisis", "presupuesto_enviado"]:
             try:
                 from datetime import datetime, timezone, timedelta
@@ -3254,11 +3280,43 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
             try:
                 supabase.table("turnos_quirofano").update({
                     "estado": "cancelado",
+                    "llegada_at": None,
+                    "ingreso_pre_quirofano_at": None,
                     "updated_at": "now()"
-                }).eq("asesoria_id", asesoria_id).execute()
+                }).eq("asesoria_id", asesoria_id).neq("estado", "operado").execute()
                 logger.info(f"Turnos de quirófano cancelados automáticamente para asesoría cancelada {asesoria_id}")
             except Exception as e_c:
                 logger.warning(f"Aviso al cancelar turnos de quirófano en cascada: {e_c}")
+        elif retrocedio_desde_programado:
+            try:
+                res_t_act = supabase.table("turnos_quirofano") \
+                    .select("id, fecha_cirugia, hora_inicio, ojo, estado") \
+                    .eq("asesoria_id", asesoria_id) \
+                    .in_("estado", ["programado", "en_espera", "pre_quirofano"]) \
+                    .execute()
+                turnos_a_liberar = res_t_act.data or []
+                if turnos_a_liberar:
+                    supabase.table("turnos_quirofano").update({
+                        "estado": "cancelado",
+                        "llegada_at": None,
+                        "ingreso_pre_quirofano_at": None,
+                        "observaciones": f"Turno liberado automáticamente al retroceder caso a '{nuevo_est}'.",
+                        "updated_at": "now()"
+                    }).eq("asesoria_id", asesoria_id).in_("estado", ["programado", "en_espera", "pre_quirofano"]).execute()
+                    logger.info(f"Liberados {len(turnos_a_liberar)} turnos de quirófano al retroceder asesoría {asesoria_id} a '{nuevo_est}'.")
+                    pac_id_ev = prev_row_estado.get("paciente_id") or (resp.data[0].get("paciente_id") if resp.data else None)
+                    if pac_id_ev:
+                        fechas_lib = ", ".join(f"{t.get('fecha_cirugia')} ({t.get('ojo') or 'Qx'})" for t in turnos_a_liberar)
+                        supabase.table("asesoria_evoluciones").insert({
+                            "asesoria_id": asesoria_id,
+                            "paciente_id": pac_id_ev,
+                            "usuario_nombre": payload.get("usuario_nombre") or "Sistema CRM (Pipeline Qx)",
+                            "tipo_contacto": "interno",
+                            "contenido": f"🔄 Caso retrocedido a etapa '{nuevo_est}'. Se liberaron los turnos de quirófano pendientes ({fechas_lib}).",
+                            "fecha_contacto": "now()"
+                        }).execute()
+            except Exception as e_ret_lib:
+                logger.warning(f"Aviso al liberar turnos tras retroceso de etapa en {asesoria_id}: {e_ret_lib}")
         elif datos.get("estado") == "operado":
             try:
                 # Obtener la asesoría actual para chequear lateralidad
@@ -3305,7 +3363,7 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
                     logger.warning(f"Aviso al sincronizar turno desde asesoría {asesoria_id}: {e_t}")
 
         # 2.b Sincronizar asignación de fecha/quirofano/hora si viene en payload o si cambió fecha definitiva / orden bilateral
-        if any(k in payload for k in [
+        if not retrocedio_desde_programado and datos.get("estado") != "cancelado" and any(k in payload for k in [
             "quirofano_id", "hora_inicio", "duracion_minutos", "fecha_definitiva_cirugia", "cancelar_turno_1",
             "quirofano_id_2do_ojo", "hora_inicio_2do_ojo", "duracion_minutos_2do_ojo", "fecha_definitiva_2do_ojo", "cancelar_turno_2",
             "checklist_prequirurgico", "modalidad_bilateral", "ojo"
@@ -6578,7 +6636,8 @@ def get_turnos_quirofano(
     fecha_hasta: Optional[str] = None,
     quirofano_id: Optional[str] = None,
     cirujano_id: Optional[int] = None,
-    estado: Optional[str] = None
+    estado: Optional[str] = None,
+    incluir_cancelados: bool = True
 ) -> List[Dict[str, Any]]:
     if not supabase:
         return []
@@ -6594,6 +6653,8 @@ def get_turnos_quirofano(
             q = q.eq("cirujano_id", cirujano_id)
         if estado:
             q = q.eq("estado", estado)
+        elif not incluir_cancelados:
+            q = q.neq("estado", "cancelado")
         
         resp = q.order("fecha_cirugia").order("hora_inicio").execute()
         return resp.data or []
@@ -9005,7 +9066,8 @@ def get_turnos_dia_ejecucion(
     fecha: str, 
     quirofano_id: Optional[str] = None,
     solo_pizarra: bool = False,
-    solo_recepcion: bool = False
+    solo_recepcion: bool = False,
+    incluir_cancelados: bool = False
 ) -> List[Dict[str, Any]]:
     """Obtiene los turnos programados para una fecha específica con todos sus joins y filtros de visibilidad."""
     if not supabase or not fecha:
@@ -9014,6 +9076,9 @@ def get_turnos_dia_ejecucion(
         q = supabase.table("turnos_quirofano") \
             .select("*, pacientes(*), quirofanos(id, nombre, codigo, color, duracion_slot_minutos, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(*)") \
             .eq("fecha_cirugia", fecha)
+            
+        if not incluir_cancelados:
+            q = q.neq("estado", "cancelado")
             
         if quirofano_id and quirofano_id != "todos":
             q = q.eq("quirofano_id", quirofano_id)
@@ -9133,6 +9198,268 @@ def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str
         return {"success": True, "turno": turno_modificado, "nuevo_estado": nuevo_estado}
     except Exception as e:
         logger.error(f"Error al cambiar estado de turno {turno_id} a {nuevo_estado}: {e}")
+        return {"success": False, "error": str(e)}
+
+def suspender_o_reprogramar_turno_quirofano(turno_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Gestiona de manera atómica e integrada (Asesoramiento + Quirófano) la suspensión o
+    reprogramación de un turno quirúrgico (incluyendo cancelaciones/reprogramaciones el mismo día).
+    Modos soportados:
+    - 'reprogramar_con_fecha': libera el turno actual ('cancelado') y agenda uno nuevo con la nueva fecha/sala/hora.
+    - 'reprogramar_sin_fecha': libera el turno actual ('cancelado'), limpia la fecha definitiva del ojo y devuelve el caso a 'en_analisis' (salvo otro ojo activo en bilaterales).
+    - 'cancelar_definitivo': libera el turno actual ('cancelado') y cierra la asesoría como 'cancelado' (salvo otro ojo operado/activo en bilaterales).
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "error": "No hay conexión a base de datos"}
+
+    try:
+        from datetime import datetime, timezone, timedelta
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+
+        t_resp = supabase.table("turnos_quirofano") \
+            .select("*, pacientes(*), quirofanos(id, nombre, codigo)") \
+            .eq("id", turno_id).limit(1).execute()
+        if not t_resp.data:
+            return {"success": False, "error": "Turno quirúrgico no encontrado", "status_code": 404}
+
+        turno_actual = t_resp.data[0]
+        estado_actual = turno_actual.get("estado")
+        if estado_actual == "operado":
+            return {"success": False, "error": "No es posible suspender o reprogramar una cirugía ya finalizada (operado).", "status_code": 400}
+        if estado_actual == "cancelado":
+            return {"success": False, "error": "El turno ya se encuentra cancelado.", "status_code": 400}
+
+        modo = (payload.get("modo") or "reprogramar_sin_fecha").strip()
+        if modo not in ["reprogramar_con_fecha", "reprogramar_sin_fecha", "cancelar_definitivo"]:
+            return {"success": False, "error": f"Modo inválido: {modo}", "status_code": 400}
+
+        motivo = (payload.get("motivo") or "Decisión del paciente").strip()
+        observaciones = (payload.get("observaciones") or "").strip()
+        usuario_nombre = (payload.get("usuario_nombre") or "Equipo Quirúrgico / Asesoramiento").strip()
+
+        asesoria_id = turno_actual.get("asesoria_id")
+        paciente_id = turno_actual.get("paciente_id")
+        ojo_turno = (turno_actual.get("ojo") or "OD").upper()
+        fecha_anterior = turno_actual.get("fecha_cirugia")
+        hora_anterior = str(turno_actual.get("hora_inicio") or "")[:5]
+
+        nuevo_turno = None
+        if modo == "reprogramar_con_fecha":
+            nueva_fecha = (payload.get("nueva_fecha") or "").strip()
+            if not nueva_fecha:
+                return {"success": False, "error": "Debe indicar la nueva fecha quirúrgica.", "status_code": 400}
+            nuevo_q_id = payload.get("quirofano_id") or turno_actual.get("quirofano_id")
+            nueva_hora = (payload.get("hora_inicio") or hora_anterior or "08:30").strip()[:5]
+            nueva_dur = int(payload.get("duracion_minutos") or turno_actual.get("duracion_minutos") or 20)
+            forzar = bool(payload.get("forzar", False))
+
+            if not forzar and nuevo_q_id:
+                conflicto = verificar_solapamiento_turno_quirofano(
+                    quirofano_id=nuevo_q_id,
+                    fecha_cirugia=nueva_fecha,
+                    hora_inicio=nueva_hora,
+                    duracion_minutos=nueva_dur,
+                    cirujano_id=turno_actual.get("cirujano_id"),
+                    cirujano_nombre=turno_actual.get("cirujano_nombre"),
+                    excluir_turno_id=turno_id
+                )
+                if conflicto:
+                    return {
+                        "success": False,
+                        "error": f"Conflicto de agenda: {conflicto.get('mensaje') or 'Slot ocupado'}",
+                        "conflicto": conflicto,
+                        "status_code": 409
+                    }
+
+            # Heredar datos clínicos y de consentimiento para el nuevo turno reprogramado
+            datos_nuevo = {
+                "asesoria_id": asesoria_id,
+                "paciente_id": paciente_id,
+                "quirofano_id": nuevo_q_id,
+                "fecha_cirugia": nueva_fecha,
+                "hora_inicio": nueva_hora,
+                "duracion_minutos": nueva_dur,
+                "ojo": turno_actual.get("ojo") or "OD",
+                "es_bilateral_escalonada": bool(turno_actual.get("es_bilateral_escalonada")),
+                "cirujano_id": turno_actual.get("cirujano_id"),
+                "cirujano_nombre": turno_actual.get("cirujano_nombre") or "A designar",
+                "ayudante_nombre": turno_actual.get("ayudante_nombre"),
+                "anestesiologo_nombre": turno_actual.get("anestesiologo_nombre"),
+                "instrumentador_nombre": turno_actual.get("instrumentador_nombre"),
+                "medico_derivador_nombre": turno_actual.get("medico_derivador_nombre"),
+                "practica_codigo": turno_actual.get("practica_codigo"),
+                "practica_nombre": turno_actual.get("practica_nombre"),
+                "codigo_obra_social": turno_actual.get("codigo_obra_social"),
+                "obra_social": turno_actual.get("obra_social"),
+                "plan_obra_social": turno_actual.get("plan_obra_social"),
+                "lleva_lente": bool(turno_actual.get("lleva_lente")),
+                "lente_tipo": turno_actual.get("lente_tipo"),
+                "lente_dioptria": turno_actual.get("lente_dioptria"),
+                "es_torico": bool(turno_actual.get("es_torico")),
+                "lente_torico_valor": turno_actual.get("lente_torico_valor"),
+                "lente_torico_eje": turno_actual.get("lente_torico_eje"),
+                "tipo_anestesia": turno_actual.get("tipo_anestesia") or "Local Asistida",
+                "lio_calculado": bool(turno_actual.get("lio_calculado")),
+                "lio_calculo_opciones": turno_actual.get("lio_calculo_opciones") or [],
+                "observaciones": f"Reprogramado desde {fecha_anterior} {hora_anterior} hs ({motivo}). {observaciones}".strip(),
+                "usuario_alta": usuario_nombre,
+                "estado": "programado"
+            }
+            nuevo_turno = crear_turno_quirofano(datos_nuevo)
+
+        # 1. Cancelar y liberar el turno original en turnos_quirofano
+        etiqueta_modo = {
+            "reprogramar_con_fecha": "Reprogramado a nueva fecha",
+            "reprogramar_sin_fecha": "Suspendido / A reprogramar",
+            "cancelar_definitivo": "Cancelado definitivamente"
+        }[modo]
+        nota_cancelacion = f"[{etiqueta_modo}] Motivo: {motivo}" + (f" | {observaciones}" if observaciones else "") + f" (por {usuario_nombre})"
+
+        upd_cancel = {
+            "estado": "cancelado",
+            "llegada_at": None,
+            "ingreso_pre_quirofano_at": None,
+            "inicio_cirugia_at": None,
+            "lio_stock_reservado": False,
+            "observaciones": nota_cancelacion,
+            "updated_at": ahora_iso
+        }
+        res_cancel = supabase.table("turnos_quirofano").update(upd_cancel).eq("id", turno_id).execute()
+        turno_cancelado = res_cancel.data[0] if res_cancel.data else {**turno_actual, **upd_cancel}
+
+        # 2. Sincronizar con asesorias_quirurgicas y registrar evolución clínica/administrativa
+        nuevo_estado_asesoria = None
+        if asesoria_id:
+            res_as = supabase.table("asesorias_quirurgicas").select("*").eq("id", asesoria_id).limit(1).execute()
+            if res_as.data:
+                asesoria_db = res_as.data[0]
+                chk = dict(asesoria_db.get("checklist_prequirurgico") or {})
+                meta_b = dict(chk.get("_meta_bilateral") or {})
+                agenda_qx = dict(chk.get("_agenda_qx") or {})
+
+                es_bilateral_esc = ((asesoria_db.get("ojo") or "").upper() == "AO") and (
+                    str(meta_b.get("modalidad") or asesoria_db.get("modalidad_bilateral") or "").lower() == "escalonada"
+                )
+                orden_b = meta_b.get("orden") or "OD_primero"
+                segundo_ojo_code = "OD" if orden_b == "OI_primero" else "OI"
+                es_segundo_ojo = es_bilateral_esc and (ojo_turno == segundo_ojo_code)
+
+                # Consultar turnos restantes (no cancelados) de la asesoría
+                res_rem = supabase.table("turnos_quirofano") \
+                    .select("id, estado, ojo, fecha_cirugia") \
+                    .eq("asesoria_id", asesoria_id) \
+                    .neq("estado", "cancelado") \
+                    .execute()
+                turnos_rem = res_rem.data or []
+                hay_otro_activo = any(t.get("estado") in ["programado", "en_espera", "pre_quirofano", "en_operacion"] for t in turnos_rem)
+                hay_otro_operado = any(t.get("estado") == "operado" for t in turnos_rem)
+
+                upd_as: Dict[str, Any] = {"updated_at": ahora_iso}
+
+                if modo == "reprogramar_con_fecha":
+                    if es_segundo_ojo:
+                        meta_b["fecha_definitiva_2do_ojo"] = payload.get("nueva_fecha")
+                        meta_b["quirofano_id_2do_ojo"] = payload.get("quirofano_id") or turno_actual.get("quirofano_id")
+                        meta_b["hora_inicio_2do_ojo"] = (payload.get("hora_inicio") or hora_anterior)[:5]
+                        chk["_meta_bilateral"] = meta_b
+                    else:
+                        upd_as["fecha_definitiva_cirugia"] = payload.get("nueva_fecha")
+                        agenda_qx["quirofano_id"] = payload.get("quirofano_id") or turno_actual.get("quirofano_id")
+                        agenda_qx["hora_inicio"] = (payload.get("hora_inicio") or hora_anterior)[:5]
+                        chk["_agenda_qx"] = agenda_qx
+                    upd_as["checklist_prequirurgico"] = chk
+                    upd_as["estado"] = "programado"
+                    nuevo_estado_asesoria = "programado"
+
+                elif modo == "reprogramar_sin_fecha":
+                    nueva_prob = (payload.get("nueva_fecha_probable") or "").strip() or None
+                    if es_segundo_ojo:
+                        meta_b["fecha_definitiva_2do_ojo"] = None
+                        if nueva_prob:
+                            meta_b["fecha_probable_2do_ojo"] = nueva_prob
+                        chk["_meta_bilateral"] = meta_b
+                    else:
+                        upd_as["fecha_definitiva_cirugia"] = None
+                        if nueva_prob:
+                            upd_as["fecha_probable_cirugia"] = nueva_prob
+                    upd_as["checklist_prequirurgico"] = chk
+
+                    if not hay_otro_activo:
+                        upd_as["estado"] = "en_analisis"
+                        nuevo_estado_asesoria = "en_analisis"
+                        manana_str = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+                        upd_as["proxima_accion_fecha"] = manana_str
+                        upd_as["proxima_accion_texto"] = f"Reprogramar cirugía ({motivo})"
+                    else:
+                        nuevo_estado_asesoria = asesoria_db.get("estado") or "programado"
+
+                elif modo == "cancelar_definitivo":
+                    if es_segundo_ojo:
+                        meta_b["fecha_definitiva_2do_ojo"] = None
+                        chk["_meta_bilateral"] = meta_b
+                    else:
+                        upd_as["fecha_definitiva_cirugia"] = None
+                    upd_as["checklist_prequirurgico"] = chk
+
+                    if not hay_otro_activo and not hay_otro_operado:
+                        upd_as["estado"] = "cancelado"
+                        nuevo_estado_asesoria = "cancelado"
+                    elif hay_otro_operado and not hay_otro_activo:
+                        upd_as["estado"] = "operado"
+                        nuevo_estado_asesoria = "operado"
+                    else:
+                        nuevo_estado_asesoria = asesoria_db.get("estado")
+
+                supabase.table("asesorias_quirurgicas").update(upd_as).eq("id", asesoria_id).execute()
+
+                # Sincronizar presupuesto si cambió estado
+                if nuevo_estado_asesoria:
+                    try:
+                        sincronizar_presupuesto_desde_caso_quirurgico(
+                            asesoria_id=asesoria_id,
+                            nuevo_estado_asesoria=nuevo_estado_asesoria,
+                            origen="SUSPENDER_REPROGRAMAR_TURNO"
+                        )
+                    except Exception as e_sp:
+                        logger.warning(f"Aviso sincronizando presupuesto en suspender/reprogramar: {e_sp}")
+
+                # Registrar evolución clínica/administrativa en el caso
+                if paciente_id:
+                    detalle_nuevo = ""
+                    if modo == "reprogramar_con_fecha" and nuevo_turno:
+                        detalle_nuevo = f"\n• Nuevo turno asignado: {nuevo_turno.get('fecha_cirugia')} a las {str(nuevo_turno.get('hora_inicio') or '')[:5]} hs."
+                    elif modo == "reprogramar_sin_fecha":
+                        detalle_nuevo = "\n• Caso devuelto a 'En Análisis' para coordinar nueva fecha." + (f" Fecha probable: {payload.get('nueva_fecha_probable')}." if payload.get("nueva_fecha_probable") else "")
+                    elif modo == "cancelar_definitivo":
+                        detalle_nuevo = "\n• Caso marcado como Cancelado." if nuevo_estado_asesoria == "cancelado" else "\n• Turno cancelado parcialmente (preservando otro ojo activo/operado)."
+
+                    contenido_ev = (
+                        f"🗓️ {etiqueta_modo} ({ojo_turno}) — Turno del {fecha_anterior} {hora_anterior} hs.\n"
+                        f"• Motivo: {motivo}"
+                        + (f"\n• Observaciones: {observaciones}" if observaciones else "")
+                        + detalle_nuevo
+                    )
+                    try:
+                        supabase.table("asesoria_evoluciones").insert({
+                            "asesoria_id": asesoria_id,
+                            "paciente_id": paciente_id,
+                            "usuario_nombre": usuario_nombre,
+                            "tipo_contacto": "interno",
+                            "contenido": contenido_ev,
+                            "fecha_contacto": ahora_iso
+                        }).execute()
+                    except Exception as e_ev:
+                        logger.warning(f"Aviso registrando evolución al suspender/reprogramar turno {turno_id}: {e_ev}")
+
+        return {
+            "success": True,
+            "modo": modo,
+            "turno_cancelado": turno_cancelado,
+            "nuevo_turno": nuevo_turno,
+            "nuevo_estado_asesoria": nuevo_estado_asesoria
+        }
+    except Exception as e:
+        logger.error(f"Error en suspender_o_reprogramar_turno_quirofano {turno_id}: {e}")
         return {"success": False, "error": str(e)}
 
 def guardar_checklist_seguridad_turno(turno_id: str, checklist_data: Dict[str, Any]) -> Dict[str, Any]:

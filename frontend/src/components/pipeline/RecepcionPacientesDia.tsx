@@ -34,9 +34,10 @@ import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentim
 import ModalVerificacionQR from '@/components/quirofano/ModalVerificacionQR'
 import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
 import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
+import ModalSuspenderReprogramarTurno from '@/components/quirofano/ModalSuspenderReprogramarTurno'
 import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
 import { reproducirBeepExito, reproducirBeepAlerta, reproducirBeepScan } from '@/lib/audioFeedback'
-import { Printer, QrCode, Camera, Barcode, Undo2 } from 'lucide-react'
+import { Printer, QrCode, Camera, Barcode, Undo2, CalendarClock, Ban } from 'lucide-react'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos, formatearHoraConFechaSiDifiere, getFechaHoyLocal, formatDateArg } from '@/lib/dateUtils'
 
 interface TurnoRecepcion {
@@ -106,6 +107,8 @@ export default function RecepcionPacientesDia() {
   const [ultimoEstadoClickeado, setUltimoEstadoClickeado] = useState<string>('todos')
   const [busqueda, setBusqueda] = useState<string>('')
   const [filtroTipoSala, setFiltroTipoSala] = useState<'todos' | 'quirofano' | 'consultorio'>('todos')
+  const [mostrarCancelados, setMostrarCancelados] = useState<boolean>(false)
+  const [turnoParaReprogramar, setTurnoParaReprogramar] = useState<TurnoRecepcion | null>(null)
 
   // Estados de Pulsera Térmica y Escáner QR
   const [pulseraTurnoId, setPulseraTurnoId] = useState<string | null>(null)
@@ -411,9 +414,13 @@ export default function RecepcionPacientesDia() {
     setFecha(d.toISOString().slice(0, 10))
   }
 
-  // Filtrar primero los turnos que están habilitados para recepción
+  // Filtrar primero los turnos activos que están habilitados para recepción (excluye cancelados)
   const turnosRecepcionables = useMemo(() => {
-    return turnos.filter((t) => (t.quirofanos?.mostrar_en_recepcion !== false))
+    return turnos.filter((t) => t.quirofanos?.mostrar_en_recepcion !== false && t.estado !== 'cancelado')
+  }, [turnos])
+
+  const turnosCanceladosCount = useMemo(() => {
+    return turnos.filter((t) => t.quirofanos?.mostrar_en_recepcion !== false && t.estado === 'cancelado').length
   }, [turnos])
 
   // Conteo de turnos por ámbito asistencial (Quirófano vs Consultorio)
@@ -441,7 +448,10 @@ export default function RecepcionPacientesDia() {
 
   // Filtrado reactivo por tipo de sala, por pestaña de estado y por buscador de texto
   const turnosFiltrados = useMemo(() => {
-    return turnosRecepcionables.filter((t) => {
+    const fuente = mostrarCancelados
+      ? turnos.filter((t) => t.quirofanos?.mostrar_en_recepcion !== false)
+      : turnosRecepcionables
+    return fuente.filter((t) => {
       // 1. Filtro por tipo de sala (Quirófano vs Consultorio)
       if (filtroTipoSala === 'quirofano' && t.quirofanos?.tipo_sala === 'consultorio') {
         return false
@@ -450,9 +460,11 @@ export default function RecepcionPacientesDia() {
         return false
       }
 
-      // 2. Filtro por multiselección de estado
+      // 2. Filtro por multiselección de estado (si mostrarCancelados está activo y se eligió 'todos', incluir cancelados)
       if (!filtrosEstado.includes('todos') && !filtrosEstado.includes(t.estado)) {
-        return false
+        if (!(mostrarCancelados && t.estado === 'cancelado')) {
+          return false
+        }
       }
 
       // 3. Filtro por buscador de texto (DNI, Nombre, Teléfono, Práctica, Cirujano)
@@ -475,7 +487,7 @@ export default function RecepcionPacientesDia() {
 
       return true
     })
-  }, [turnosRecepcionables, filtroTipoSala, filtrosEstado, busqueda])
+  }, [turnos, turnosRecepcionables, mostrarCancelados, filtroTipoSala, filtrosEstado, busqueda])
 
   const esMultiseleccionActiva = filtrosEstado.length > 1 && !filtrosEstado.includes('todos')
 
@@ -787,6 +799,28 @@ export default function RecepcionPacientesDia() {
           </button>
         </div>
 
+        {/* Toggle discreto de auditoría para turnos cancelados/reprogramados del día */}
+        {turnosCanceladosCount > 0 && (
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => setMostrarCancelados((v) => !v)}
+              className={`px-3 py-1 rounded-xl text-[11px] font-bold border flex items-center gap-1.5 transition cursor-pointer ${
+                mostrarCancelados
+                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                  : 'bg-neutral-900/70 text-gray-400 border-gray-800 hover:text-gray-200'
+              }`}
+            >
+              <Ban size={12} />
+              <span>
+                {mostrarCancelados
+                  ? `Ocultar Cancelados / Reprogramados (${turnosCanceladosCount})`
+                  : `Ver Cancelados / Reprogramados (${turnosCanceladosCount})`}
+              </span>
+            </button>
+          </div>
+        )}
+
         {/* Banner Informativo de Selección Múltiple Activa */}
         {esMultiseleccionActiva && (
           <div className="flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-blue-950/60 to-indigo-950/60 border border-blue-500/40 rounded-xl px-3.5 py-2 text-xs font-semibold text-blue-200 shadow-md animate-fade-in">
@@ -866,6 +900,7 @@ export default function RecepcionPacientesDia() {
             const esPreQuirofano = t.estado === 'pre_quirofano'
             const esEnEspera = t.estado === 'en_espera'
             const esProgramado = t.estado === 'programado'
+            const esCancelado = t.estado === 'cancelado'
             const tieneConsentimiento = t.consentimiento_estado === 'firmado_digital'
             const telefonoValido = pac.telefono || t.paciente_telefono
 
@@ -874,7 +909,11 @@ export default function RecepcionPacientesDia() {
             let badgeEstadoClasses = 'bg-blue-600/20 text-blue-300 border-blue-500/40'
             let estadoLabel = 'Citado / Por Llegar'
 
-            if (esEnEspera) {
+            if (esCancelado) {
+              cardClasses = 'border-l-4 border-l-rose-500 bg-rose-950/15 border-rose-500/30 opacity-80'
+              badgeEstadoClasses = 'bg-rose-600/20 text-rose-300 border-rose-500/40'
+              estadoLabel = '🚫 Cancelado / Reprogramado'
+            } else if (esEnEspera) {
               cardClasses = 'border-l-[6px] border-l-amber-500 bg-amber-950/20 border-amber-500/40 shadow-lg shadow-amber-950/20'
               badgeEstadoClasses = 'bg-amber-500 text-black font-black border-amber-400'
               estadoLabel = '🟡 En Sala de Espera'
@@ -1086,6 +1125,23 @@ export default function RecepcionPacientesDia() {
                       <span>Operado</span>
                     </span>
                   )}
+                  {esCancelado && (
+                    <span className="px-3 py-1.5 bg-rose-950/60 text-rose-400 border border-rose-500/30 rounded-xl text-xs font-bold flex items-center gap-1">
+                      <Ban size={12} />
+                      <span>Cancelado</span>
+                    </span>
+                  )}
+                  {(esProgramado || esEnEspera || esPreQuirofano) && (
+                    <button
+                      type="button"
+                      onClick={() => setTurnoParaReprogramar(t)}
+                      className="px-2.5 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                      title="Suspender o reprogramar esta cirugía (mismo día o posterior)"
+                    >
+                      <CalendarClock size={13} />
+                      <span className="hidden sm:inline">Reprogramar</span>
+                    </button>
+                  )}
                 </div>
               </div>
             )
@@ -1154,6 +1210,19 @@ export default function RecepcionPacientesDia() {
           pacienteNombreDefault={consentimientoModalTurno.pacientes?.nombre || consentimientoModalTurno.paciente_nombre}
           pacienteTelefonoDefault={consentimientoModalTurno.pacientes?.telefono || consentimientoModalTurno.paciente_telefono}
           onConsentimientoEnviado={() => {
+            fetchTurnosHoy()
+          }}
+        />
+      )}
+
+      {turnoParaReprogramar && (
+        <ModalSuspenderReprogramarTurno
+          isOpen={!!turnoParaReprogramar}
+          onClose={() => setTurnoParaReprogramar(null)}
+          turno={turnoParaReprogramar}
+          quirofanos={quirofanosUnicos}
+          onSuccess={() => {
+            setTurnoParaReprogramar(null)
             fetchTurnosHoy()
           }}
         />

@@ -61,13 +61,14 @@ import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
 import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
 import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
 import { reproducirBeepExito, reproducirBeepScan, reproducirBeepAlerta } from '@/lib/audioFeedback'
-import { Printer, QrCode, Camera } from 'lucide-react'
+import { Printer, QrCode, Camera, CalendarClock } from 'lucide-react'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos, formatearHoraConFechaSiDifiere, formatearTiempoEsperaSeguro, getFechaHoyLocal, formatDateArg } from '@/lib/dateUtils'
 import ModalDetalleCirugiaEnVivo from './ModalDetalleCirugiaEnVivo'
 import ModalPausaQuirurgicaOms from './modal/ModalPausaQuirurgicaOms'
 import ModalCartelesPechoA4 from './modal/ModalCartelesPechoA4'
 import ModalEnvioAgendasPrestadores from './ModalEnvioAgendasPrestadores'
 import ModalPlanillaQuirurgicaA4 from './modal/ModalPlanillaQuirurgicaA4'
+import ModalSuspenderReprogramarTurno from './ModalSuspenderReprogramarTurno'
 
 interface PizarraQuirofanoEnVivoProps {
   onEditarTurno?: (turno: any) => void
@@ -128,6 +129,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [mostrarModalAgendasWA, setMostrarModalAgendasWA] = useState<boolean>(false)
   const [mostrarModalPlanillaA4, setMostrarModalPlanillaA4] = useState<boolean>(false)
   const [turnoParaCartel, setTurnoParaCartel] = useState<string | null>(null)
+  const [turnoParaReprogramar, setTurnoParaReprogramar] = useState<any | null>(null)
 
   // Cargar preferencia de modo oscuro clínico y listener de fullscreen
   useEffect(() => {
@@ -768,7 +770,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         if (!cirNom.includes(cirujanoFiltro.toLowerCase())) return false
       }
 
-      if (filtrosEstado.includes('todos')) return true
+      if (filtrosEstado.includes('todos')) return t.estado !== 'cancelado'
       return filtrosEstado.includes(t.estado)
     })
   }, [turnos, filtrosEstado, busqueda, cirujanoFiltro])
@@ -1906,6 +1908,21 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                       </div>
                     )}
 
+                    {/* Suspender / Reprogramar Cirugía en el Día */}
+                    {t.estado !== 'operado' && t.estado !== 'cancelado' && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setTurnoParaReprogramar(t)
+                        }}
+                        className="p-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition"
+                        title="Suspender o Reprogramar cirugía (mismo día o posterior)"
+                      >
+                        <CalendarClock size={14} />
+                      </button>
+                    )}
+
                     {/* Imprimir Cartel de Pecho Individual */}
                     <button
                       type="button"
@@ -2173,6 +2190,20 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           onClose={() => setIndicacionesModalTurno(null)}
           turnoId={indicacionesModalTurno.id}
           onIndicacionesEnviadas={() => {
+            fetchTurnosDia(true)
+          }}
+        />
+      )}
+
+      {/* 9. MODAL DE SUSPENSIÓN / REPROGRAMACIÓN EN EL DÍA */}
+      {turnoParaReprogramar && (
+        <ModalSuspenderReprogramarTurno
+          isOpen={!!turnoParaReprogramar}
+          onClose={() => setTurnoParaReprogramar(null)}
+          turno={turnoParaReprogramar}
+          quirofanos={quirofanos}
+          onSuccess={() => {
+            setTurnoParaReprogramar(null)
             fetchTurnosDia(true)
           }}
         />

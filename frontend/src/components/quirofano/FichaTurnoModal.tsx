@@ -45,6 +45,7 @@ import { supabase } from '@/lib/supabase'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
 import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
 import ModalCartelesPechoA4 from '@/components/quirofano/modal/ModalCartelesPechoA4'
+import ModalSuspenderReprogramarTurno from '@/components/quirofano/ModalSuspenderReprogramarTurno'
 import { Printer } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { formatDateArg } from '@/lib/dateUtils'
@@ -119,6 +120,7 @@ export default function FichaTurnoModal({
     descripcion: ''
   })
   const [guardandoNuevoLio, setGuardandoNuevoLio] = useState(false)
+  const [mostrarModalSuspenderReprogramar, setMostrarModalSuspenderReprogramar] = useState(false)
 
   const handleCrearModeloLioRapido = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -2349,17 +2351,19 @@ export default function FichaTurnoModal({
           <div className="flex flex-wrap items-center gap-2">
             {esEdicion && (
               <>
-                {/* Botón Cancelar Turno (Devuelve a Confirmado en Asesoramiento) */}
-                <button
-                  type="button"
-                  onClick={handleCancelarTurno}
-                  disabled={cancelando || guardando}
-                  className="px-3.5 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
-                  title="Eliminar este turno y devolver el caso a 'Confirmado' en Asesoramiento Quirúrgico"
-                >
-                  {cancelando ? <Loader2 size={14} className="animate-spin" /> : <CalendarX size={14} />}
-                  <span>Cancelar Turno</span>
-                </button>
+                {/* Botón Suspender / Reprogramar / Cancelar Turno */}
+                {turno?.estado !== 'operado' && turno?.estado !== 'cancelado' && (
+                  <button
+                    type="button"
+                    onClick={() => setMostrarModalSuspenderReprogramar(true)}
+                    disabled={cancelando || guardando}
+                    className="px-3.5 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                    title="Suspender, reprogramar a otra fecha o devolver el caso a Asesoramiento Quirúrgico"
+                  >
+                    {cancelando ? <Loader2 size={14} className="animate-spin" /> : <CalendarX size={14} />}
+                    <span>Suspender / Reprogramar</span>
+                  </button>
+                )}
 
                 {/* Botón Enviar Consentimiento */}
                 <button
@@ -2582,6 +2586,21 @@ export default function FichaTurnoModal({
           onClose={() => setMostrarCartelPecho(false)}
           turnos={turno ? [turno] : []}
           initialTurnoId={turno?.id}
+        />
+      )}
+
+      {/* Modal Suspender / Reprogramar Cirugía */}
+      {mostrarModalSuspenderReprogramar && turno && (
+        <ModalSuspenderReprogramarTurno
+          isOpen={mostrarModalSuspenderReprogramar}
+          onClose={() => setMostrarModalSuspenderReprogramar(false)}
+          turno={turno}
+          quirofanos={quirofanos}
+          onSuccess={() => {
+            setMostrarModalSuspenderReprogramar(false)
+            onSaved()
+            onClose()
+          }}
         />
       )}
 </div>
