@@ -4993,6 +4993,8 @@ def crear_nueva_asesoria(payload: Dict[str, Any] = Body(...)):
     try:
         asesoria = crear_asesoria_quirurgica(payload)
         return {"success": True, "mensaje": "Caso de asesoría quirúrgica registrado.", "asesoria": asesoria}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"Error al crear asesoría quirúrgica: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -6501,12 +6503,13 @@ def obtener_datos_consentimiento_publico(token: str):
                             if item_sp.get("nombre_prestacion"):
                                 practica_nombre = item_sp["nombre_prestacion"]
                     
-                    # Actualizar turno con los datos reales encontrados
+                    # Actualizar turno con los datos reales encontrados si ya existe turno asignado
                     if practica_nombre and practica_nombre != "Nueva Cirugía / Procedimiento":
-                        supabase.table("turnos_quirofano").update({
-                            "practica_nombre": practica_nombre,
-                            "practica_codigo": practica_cod or None
-                        }).eq("id", turno["id"]).execute()
+                        if turno.get("id"):
+                            supabase.table("turnos_quirofano").update({
+                                "practica_nombre": practica_nombre,
+                                "practica_codigo": practica_cod or None
+                            }).eq("id", turno["id"]).execute()
                         turno["practica_nombre"] = practica_nombre
                         turno["practica_codigo"] = practica_cod
             except Exception as e_as:
@@ -7353,42 +7356,48 @@ async def enviar_consentimiento_whatsapp_endpoint(
     token = payload.token
     enlace = payload.enlace_firma
 
-    from app.db import supabase
+    from app.db import supabase, asegurar_consentimiento_asesoria
+    target_ojo = payload.ojo or payload.ojo_objetivo
     if as_id:
-        res_as = supabase.table("asesorias_quirurgicas").select("id, estado").eq("id", as_id).limit(1).execute()
+        res_as = supabase.table("asesorias_quirurgicas").select("id, estado, fecha_definitiva_cirugia").eq("id", as_id).limit(1).execute()
         if res_as.data:
-            caso_est = res_as.data[0].get("estado")
-            if caso_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado"):
+            caso_row = res_as.data[0]
+            caso_est = caso_row.get("estado")
+            if caso_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado") and not caso_row.get("fecha_definitiva_cirugia"):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"El Consentimiento Informado solo puede enviarse para casos quirúrgicos con turno programado en quirófano. El caso actual se encuentra en '{caso_est}'."
+                    detail=f"El Consentimiento Informado solo puede enviarse para casos con Fecha Definitiva fijada o en Quirófano. El caso actual se encuentra en '{caso_est}'."
                 )
 
     if as_id and not t_id:
-        target_ojo = payload.ojo or payload.ojo_objetivo
-        t_obj = asegurar_turno_para_consentimiento_asesoria(as_id, ojo=target_ojo, crear_si_no_existe=True)
-        if t_obj:
-            t_id = t_obj.get("id")
-            if t_obj.get("consentimiento_token"):
-                token = t_obj["consentimiento_token"]
+        c_obj = asegurar_consentimiento_asesoria(as_id, ojo=target_ojo)
+        if c_obj:
+            t_id = c_obj.get("id")
+            if c_obj.get("consentimiento_token"):
+                token = c_obj["consentimiento_token"]
+            if c_obj.get("ojo") and not target_ojo:
+                target_ojo = c_obj.get("ojo")
     elif t_id and not as_id:
         t_obj = get_turno_quirofano_by_id(t_id)
         if t_obj:
             if t_obj.get("consentimiento_token"):
                 token = t_obj["consentimiento_token"]
+            if t_obj.get("ojo") and not target_ojo:
+                target_ojo = t_obj.get("ojo")
             if t_obj.get("asesoria_id"):
                 as_id = t_obj["asesoria_id"]
-                res_as = supabase.table("asesorias_quirurgicas").select("id, estado").eq("id", as_id).limit(1).execute()
+                res_as = supabase.table("asesorias_quirurgicas").select("id, estado, fecha_definitiva_cirugia").eq("id", as_id).limit(1).execute()
                 if res_as.data:
-                    caso_est = res_as.data[0].get("estado")
-                    if caso_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado"):
+                    caso_row = res_as.data[0]
+                    caso_est = caso_row.get("estado")
+                    if caso_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado") and not caso_row.get("fecha_definitiva_cirugia"):
                         raise HTTPException(
                             status_code=400,
-                            detail=f"El Consentimiento Informado solo puede enviarse para casos quirúrgicos con turno programado en quirófano. El caso actual se encuentra en '{caso_est}'."
+                            detail=f"El Consentimiento Informado solo puede enviarse para casos con Fecha Definitiva fijada o en Quirófano. El caso actual se encuentra en '{caso_est}'."
                         )
 
-    if not t_id:
-        raise HTTPException(status_code=400, detail="No se pudo asociar un turno quirúrgico para el consentimiento.")
+    if not t_id and not as_id:
+        raise HTTPException(status_code=400, detail="No se pudo asociar una asesoría ni un turno quirúrgico para el consentimiento.")
 
     try:
         from app.services.urgencias_service import obtener_base_crm_url
@@ -7487,7 +7496,8 @@ async def enviar_consentimiento_whatsapp_endpoint(
             template_name=template_name if modo_envio == "template" else None,
             wamid=wamid,
             texto_renderizado=cuerpo_renderizado,
-            en_espera_apertura=en_espera_apertura
+            en_espera_apertura=en_espera_apertura,
+            ojo=target_ojo
         )
 
         return {
@@ -7528,39 +7538,26 @@ def descargar_consentimiento_asesoria_pdf(
     """
     try:
         from app.db import (
-            asegurar_turno_para_consentimiento_asesoria,
-            asegurar_turnos_para_consentimiento_asesoria,
+            asegurar_consentimiento_asesoria,
             get_turno_quirofano_by_id,
             generar_pdf_consentimiento_papel
         )
         turno = None
         if turno_id:
             turno = get_turno_quirofano_by_id(turno_id)
-        elif ojo:
-            info_dual = asegurar_turnos_para_consentimiento_asesoria(asesoria_id, crear_si_no_existe=True)
-            if info_dual.get("es_bilateral_escalonada"):
-                obj_l = ojo.lower()
-                p2 = info_dual.get("segundo_ojo") or {}
-                if obj_l in ["segundo_ojo", "2do_ojo", (p2.get("ojo") or "").lower()]:
-                    turno = get_turno_quirofano_by_id(p2.get("turno_id"))
-                else:
-                    p1 = info_dual.get("primer_ojo") or {}
-                    turno = get_turno_quirofano_by_id(p1.get("turno_id"))
-            else:
-                turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id, ojo=ojo, crear_si_no_existe=True)
-
         if not turno:
-            turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id, crear_si_no_existe=True)
+            turno = asegurar_consentimiento_asesoria(asesoria_id, ojo=ojo)
         if not turno:
             raise HTTPException(status_code=404, detail="Caso quirúrgico no encontrado.")
-            
-        t_id = turno["id"]
+
+        t_id = turno.get("id")
+        pdf_id = t_id or f"{asesoria_id}_{(turno.get('ojo') or 'QX').upper()}"
         estado_c = turno.get("consentimiento_estado")
-        
+
         # Si ya está firmado digitalmente y no se pide explícitamente papel en blanco
         if estado_c == "firmado_digital" and modo != "papel":
-            return servir_archivo_estatico(f"consentimiento_{t_id}.pdf")
-            
+            return servir_archivo_estatico(f"consentimiento_{pdf_id}.pdf")
+
         # Si no está firmado o es para papel, generar PDF en blanco
         filename_papel = generar_pdf_consentimiento_papel(turno)
         return servir_archivo_estatico(filename_papel)
@@ -8906,6 +8903,64 @@ def requiere_calculo_lio(nombre_practica: str, lleva_lente_flag: bool = False) -
     keywords = ["catarata", "faco", "lio", "lente", "cristalino", "icl", "vitrec", "lensectom", "sulcus", "artisan", "artiflex", "toric", "trifocal", "edof", "monofocal"]
     return any(k in nom for k in keywords)
 
+
+def _resolver_lio_propuesto_ojo(as_row: Optional[dict], ojo: str = "OD"):
+    """
+    Resuelve el LIO comercial/propuesto desde asesorias_quirurgicas.checklist_prequirurgico._lio_seleccion
+    para un ojo específico. Retorna (lio_propuesto, huella_clinica).
+    La huella clínica excluye el estado ('a_definir'/'confirmado') para evitar falsos positivos
+    de recálculo cuando el mismo lente pasa de Tentativo a Definitivo.
+    """
+    if not isinstance(as_row, dict) or not as_row:
+        return None, None
+    chk = as_row.get("checklist_prequirurgico") or {}
+    if not isinstance(chk, dict):
+        return None, None
+    sel = chk.get("_lio_seleccion")
+    if not isinstance(sel, dict) or not sel:
+        return None, None
+
+    ojo_norm = (ojo or as_row.get("ojo") or "OD").strip().upper()
+    caso_ojo = (as_row.get("ojo") or "OD").strip().upper()
+    modalidad = sel.get("modalidad_bilateral") or "mismo_lente"
+
+    if caso_ojo == "AO" and modalidad == "diferenciado":
+        if ojo_norm == "OI":
+            lente_nombre = sel.get("lente_oi")
+            lente_id = sel.get("lente_oi_id")
+            lente_codigo = sel.get("lente_oi_codigo")
+        else:
+            lente_nombre = sel.get("lente_od")
+            lente_id = sel.get("lente_od_id")
+            lente_codigo = sel.get("lente_od_codigo")
+    else:
+        lente_nombre = sel.get("lente_nombre") or (sel.get("lente_oi") if ojo_norm == "OI" else sel.get("lente_od"))
+        lente_id = sel.get("lente_id") or (sel.get("lente_oi_id") if ojo_norm == "OI" else sel.get("lente_od_id"))
+        lente_codigo = sel.get("lente_codigo") or (sel.get("lente_oi_codigo") if ojo_norm == "OI" else sel.get("lente_od_codigo"))
+
+    if not (lente_nombre and str(lente_nombre).strip()):
+        return None, None
+
+    nombre_limpio = str(lente_nombre).strip()
+    estado = (sel.get("estado") or "a_definir").strip().lower()
+    estado_label = "Definitivo" if estado == "confirmado" else "Tentativo"
+
+    lio_propuesto = {
+        "lente_nombre": nombre_limpio,
+        "lente_codigo": lente_codigo,
+        "lente_id": lente_id,
+        "estado": estado,
+        "estado_label": estado_label,
+        "observaciones": sel.get("observaciones"),
+        "ojo": ojo_norm,
+    }
+    huella_clinica = {
+        "lente_nombre": nombre_limpio,
+        "lente_id": lente_id,
+        "lente_codigo": lente_codigo,
+    }
+    return lio_propuesto, huella_clinica
+
 @app.get("/api/calculo-lio/pacientes")
 def listar_pacientes_calculo_lio(
     cirujano_nombre: Optional[str] = None,
@@ -8972,6 +9027,12 @@ def listar_pacientes_calculo_lio(
             codigo_caso = as_rel.get("codigo_caso") or (as_rel.get("checklist_prequirurgico") or {}).get("_codigo_caso") or (asegurar_codigo_caso(as_rel) if as_rel.get("id") else f"QX-26-{str(t.get('id', ''))[:4].upper()}")
             codigo_turno = t.get("codigo_turno") or f"{codigo_caso}-{ojo_turno}"
 
+            lio_propuesto, huella_actual = _resolver_lio_propuesto_ojo(as_rel, ojo_turno)
+            chk_as = (as_rel.get("checklist_prequirurgico") or {}) if isinstance(as_rel, dict) else {}
+            lio_calc_ojo = chk_as.get(f"_lio_calculo_{ojo_turno}") if isinstance(chk_as, dict) else None
+            lio_ref = lio_calc_ojo.get("lio_propuesto_ref") if isinstance(lio_calc_ojo, dict) else None
+            lio_cambio_post_calculo = bool(es_calculado and lio_ref and huella_actual and lio_ref != huella_actual)
+
             item = {
                 "tipo_registro": "turno",
                 "id_compuesto": t["id"],
@@ -9000,6 +9061,8 @@ def listar_pacientes_calculo_lio(
                 "lio_calculado_at": t.get("lio_calculado_at"),
                 "lio_calculado_por": t.get("lio_calculado_por") or (cirujano if es_calculado else None),
                 "lio_calculo_opciones": opciones,
+                "lio_propuesto": lio_propuesto,
+                "lio_cambio_post_calculo": lio_cambio_post_calculo,
                 "lio_stock_reservado": bool(t.get("lio_stock_reservado")),
                 "lio_stock_reservado_at": t.get("lio_stock_reservado_at"),
                 "lio_stock_observaciones": t.get("lio_stock_observaciones") or "",
@@ -9011,16 +9074,18 @@ def listar_pacientes_calculo_lio(
             }
             items.append(item)
 
-        # 2. Consultar asesorías confirmadas o programadas que aún no tengan turno agendado para cada ojo
+        # 2. Consultar asesorías desde en_asesoramiento hasta programado que aún no tengan turno agendado para cada ojo
         q_asesorias = supabase.table("asesorias_quirurgicas").select(
             "*, pacientes(*)"
-        ).in_("estado", ["confirmado", "programado"]).order("created_at", desc=True)
+        ).in_("estado", ["en_asesoramiento", "en_analisis", "confirmado", "programado"]).order("created_at", desc=True)
 
         res_as = q_asesorias.execute()
         for a in (res_as.data or []):
             as_id = a["id"]
             practica_nombre = a.get("practica_nombre") or "Cirugía de Catarata"
-            if not requiere_calculo_lio(practica_nombre):
+            ojo_caso = a.get("ojo") or "OD"
+            lio_preview, _ = _resolver_lio_propuesto_ojo(a, "OD" if ojo_caso == "AO" else ojo_caso)
+            if not requiere_calculo_lio(practica_nombre) and not lio_preview:
                 continue
             
             pac = a.get("pacientes") or {}
@@ -9063,6 +9128,10 @@ def listar_pacientes_calculo_lio(
                     lio_1 = lio_OD if ojo_1 == "OD" else lio_OI
                     es_calc_1 = bool(lio_1.get("lio_calculado")) if isinstance(lio_1, dict) else bool(a.get("lio_calculado"))
                     opciones_1 = (lio_1.get("opciones") if isinstance(lio_1, dict) else None) or a.get("lio_calculo_opciones") or []
+                    lio_prop_1, huella_1 = _resolver_lio_propuesto_ojo(a, ojo_1)
+                    ref_1 = lio_1.get("lio_propuesto_ref") if isinstance(lio_1, dict) else None
+                    cambio_1 = bool(es_calc_1 and ref_1 and huella_1 and ref_1 != huella_1)
+                    f_1ro = a.get("fecha_definitiva_cirugia") or a.get("fecha_probable_cirugia")
 
                     item_1 = {
                         "tipo_registro": "asesoria",
@@ -9081,8 +9150,8 @@ def listar_pacientes_calculo_lio(
                         "paciente_telefono": pac.get("telefono") or "S/D",
                         "paciente_obra_social": a.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
                         "geclisa_ficha_id": pac.get("geclisa_ficha_id"),
-                        "fecha_cirugia": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia"),
-                        "fecha_cx": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia") or "A programar",
+                        "fecha_cirugia": f_1ro,
+                        "fecha_cx": f_1ro or "A programar",
                         "hora_inicio": None,
                         "hora_cx": None,
                         "practica_nombre": practica_nombre,
@@ -9093,6 +9162,8 @@ def listar_pacientes_calculo_lio(
                         "lio_calculado_at": (lio_1.get("lio_calculado_at") if isinstance(lio_1, dict) else a.get("lio_calculado_at")),
                         "lio_calculado_por": (lio_1.get("lio_calculado_por") if isinstance(lio_1, dict) else (cirujano if es_calc_1 else None)),
                         "lio_calculo_opciones": opciones_1,
+                        "lio_propuesto": lio_prop_1,
+                        "lio_cambio_post_calculo": cambio_1,
                         "lio_stock_reservado": False,
                         "lio_stock_reservado_at": None,
                         "lio_stock_observaciones": ""
@@ -9104,7 +9175,10 @@ def listar_pacientes_calculo_lio(
                     lio_2 = lio_OI if ojo_2 == "OI" else lio_OD
                     es_calc_2 = bool(lio_2.get("lio_calculado")) if isinstance(lio_2, dict) else False
                     opciones_2 = (lio_2.get("opciones") if isinstance(lio_2, dict) else None) or []
-                    f_2do = meta_bilateral.get("fecha_probable_2do_ojo") or meta_bilateral.get("fecha_definitiva_2do_ojo") or a.get("fecha_probable_2do_ojo")
+                    lio_prop_2, huella_2 = _resolver_lio_propuesto_ojo(a, ojo_2)
+                    ref_2 = lio_2.get("lio_propuesto_ref") if isinstance(lio_2, dict) else None
+                    cambio_2 = bool(es_calc_2 and ref_2 and huella_2 and ref_2 != huella_2)
+                    f_2do = meta_bilateral.get("fecha_definitiva_2do_ojo") or a.get("fecha_definitiva_2do_ojo") or meta_bilateral.get("fecha_probable_2do_ojo") or a.get("fecha_probable_2do_ojo")
 
                     item_2 = {
                         "tipo_registro": "asesoria",
@@ -9135,6 +9209,8 @@ def listar_pacientes_calculo_lio(
                         "lio_calculado_at": (lio_2.get("lio_calculado_at") if isinstance(lio_2, dict) else None),
                         "lio_calculado_por": (lio_2.get("lio_calculado_por") if isinstance(lio_2, dict) else (cirujano if es_calc_2 else None)),
                         "lio_calculo_opciones": opciones_2,
+                        "lio_propuesto": lio_prop_2,
+                        "lio_cambio_post_calculo": cambio_2,
                         "lio_stock_reservado": False,
                         "lio_stock_reservado_at": None,
                         "lio_stock_observaciones": ""
@@ -9145,6 +9221,11 @@ def listar_pacientes_calculo_lio(
                 if (as_id, ojo_caso) not in turnos_ojos_vistos:
                     es_calculado = bool(a.get("lio_calculado"))
                     opciones = a.get("lio_calculo_opciones") or []
+                    lio_calc_uni = chk.get(f"_lio_calculo_{ojo_caso}") if isinstance(chk, dict) else None
+                    lio_prop_uni, huella_uni = _resolver_lio_propuesto_ojo(a, ojo_caso)
+                    ref_uni = lio_calc_uni.get("lio_propuesto_ref") if isinstance(lio_calc_uni, dict) else None
+                    cambio_uni = bool(es_calculado and ref_uni and huella_uni and ref_uni != huella_uni)
+                    f_uni = a.get("fecha_definitiva_cirugia") or a.get("fecha_probable_cirugia")
 
                     item = {
                         "tipo_registro": "asesoria",
@@ -9161,8 +9242,8 @@ def listar_pacientes_calculo_lio(
                         "paciente_telefono": pac.get("telefono") or "S/D",
                         "paciente_obra_social": a.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
                         "geclisa_ficha_id": pac.get("geclisa_ficha_id"),
-                        "fecha_cirugia": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia"),
-                        "fecha_cx": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia") or "A programar",
+                        "fecha_cirugia": f_uni,
+                        "fecha_cx": f_uni or "A programar",
                         "hora_inicio": None,
                         "hora_cx": None,
                         "ojo": ojo_caso,
@@ -9174,6 +9255,8 @@ def listar_pacientes_calculo_lio(
                         "lio_calculado_at": a.get("lio_calculado_at"),
                         "lio_calculado_por": a.get("lio_calculado_por") or (cirujano if es_calculado else None),
                         "lio_calculo_opciones": opciones,
+                        "lio_propuesto": lio_prop_uni,
+                        "lio_cambio_post_calculo": cambio_uni,
                         "lio_stock_reservado": False,
                         "lio_stock_reservado_at": None,
                         "lio_stock_observaciones": ""
@@ -9399,11 +9482,13 @@ def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload, request: Req
                 chk_existente = {}
 
             ojo_guardar = payload.ojo or ojo_actual_caso or "OD"
+            _, huella_actual = _resolver_lio_propuesto_ojo(as_existente, ojo_guardar)
             chk_existente[f"_lio_calculo_{ojo_guardar}"] = {
                 "lio_calculado": es_confirmado,
                 "lio_calculado_at": ahora_iso if es_confirmado else None,
                 "lio_calculado_por": firmado_por if es_confirmado else None,
-                "opciones": opciones_dict
+                "opciones": opciones_dict,
+                "lio_propuesto_ref": huella_actual,
             }
 
             if ojo_actual_caso == "AO":

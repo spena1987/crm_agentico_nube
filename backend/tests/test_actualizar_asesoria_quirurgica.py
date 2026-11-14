@@ -123,3 +123,98 @@ def test_actualizar_asesoria_rechaza_medicos_vacios_o_placeholders():
         for placeholder in ["", "   ", "Sin asignar", "Cirujano sin asignar", "a designar"]:
             with pytest.raises(ValueError, match="El Médico Cirujano \\(Qx\\) es obligatorio"):
                 actualizar_asesoria_quirurgica("qx-test", {"medico_cirujano_nombre": placeholder})
+
+
+def test_crear_asesoria_rechaza_campos_obligatorios_faltantes():
+    """
+    Verifica que crear_asesoria_quirurgica rechace payloads sin práctica, derivador o cirujano válidos.
+    """
+    from app.db import crear_asesoria_quirurgica
+    with patch("app.db.supabase"):
+        with pytest.raises(ValueError, match="La práctica quirúrgica es obligatoria"):
+            crear_asesoria_quirurgica({
+                "paciente_id": "pac-1",
+                "practica_nombre": "Nueva Cirugía / Procedimiento",
+                "medico_derivador_nombre": "Dra. López",
+                "medico_cirujano_nombre": "Dr. Pérez",
+            })
+        with pytest.raises(ValueError, match="El Médico Derivador es obligatorio"):
+            crear_asesoria_quirurgica({
+                "paciente_id": "pac-1",
+                "practica_nombre": "Facoemulsificación",
+                "medico_derivador_nombre": "",
+                "medico_cirujano_nombre": "Dr. Pérez",
+            })
+        with pytest.raises(ValueError, match="El Médico Cirujano \\(Qx\\) es obligatorio"):
+            crear_asesoria_quirurgica({
+                "paciente_id": "pac-1",
+                "practica_nombre": "Facoemulsificación",
+                "medico_derivador_nombre": "Dra. López",
+                "medico_cirujano_nombre": "Sin asignar",
+            })
+
+
+def test_auto_transicion_a_programado_al_fijar_fecha_definitiva():
+    """
+    Verifica que fijar fecha_definitiva_cirugia transicione automáticamente
+    el estado de en_asesoramiento/confirmado a 'programado' aunque no haya sala ni horario.
+    """
+    asesoria_id = "qx-auto-prog"
+    payload = {
+        "practica_nombre": "Facoemulsificación",
+        "medico_derivador_nombre": "Dra. Ana López",
+        "medico_cirujano_nombre": "Dr. Juan Pérez",
+        "estado": "en_asesoramiento",
+        "fecha_definitiva_cirugia": "2026-12-01",
+    }
+
+    with patch("app.db.supabase") as mock_sb:
+        mock_as = MagicMock()
+        mock_as.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[{"id": asesoria_id, "estado": "en_asesoramiento", "fecha_definitiva_cirugia": None, "turnos_quirofano": []}]
+        )
+        fila_upd = {"id": asesoria_id, "paciente_id": "pac-1", **payload, "estado": "programado"}
+        mock_as.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[fila_upd])
+
+        mock_turnos = MagicMock()
+        mock_turnos.select.return_value.eq.return_value.neq.return_value.execute.return_value = MagicMock(data=[])
+
+        mock_sb.table.side_effect = lambda t: mock_as if t == "asesorias_quirurgicas" else (mock_turnos if t == "turnos_quirofano" else MagicMock())
+
+        with patch("app.db.sincronizar_presupuesto_desde_caso_quirurgico"), \
+             patch("app.db.get_configuracion_automatismos", return_value={"recontacto_humano_en_analisis_activo": False}):
+            actualizar_asesoria_quirurgica(asesoria_id, payload)
+
+        datos_guardados = mock_as.update.call_args[0][0]
+        assert datos_guardados["estado"] == "programado"
+
+
+def test_get_asesorias_confirmadas_pendientes_incluye_programados_sin_turno():
+    """
+    Verifica que get_asesorias_confirmadas_pendientes incluya casos en estado 'programado'
+    sin turno activo en Quirófano y priorice fecha_definitiva_cirugia como fecha_sugerida.
+    """
+    from app.db import get_asesorias_confirmadas_pendientes
+
+    with patch("app.db.supabase") as mock_sb:
+        mock_as = MagicMock()
+        mock_as.select.return_value.in_.return_value.order.return_value.execute.return_value = MagicMock(data=[{
+            "id": "as-prog-1",
+            "paciente_id": "pac-1",
+            "practica_nombre": "Catarata con Facoemulsificación",
+            "ojo": "OD",
+            "estado": "programado",
+            "fecha_probable_cirugia": "2026-11-20",
+            "fecha_definitiva_cirugia": "2026-12-05",
+            "checklist_prequirurgico": {},
+            "pacientes": {"id": "pac-1", "nombre": "Peña, Sebastián"}
+        }])
+        mock_turnos = MagicMock()
+        mock_turnos.select.return_value.neq.return_value.execute.return_value = MagicMock(data=[])
+
+        mock_sb.table.side_effect = lambda t: mock_as if t == "asesorias_quirurgicas" else mock_turnos
+
+        pendientes = get_asesorias_confirmadas_pendientes()
+        assert len(pendientes) == 1
+        assert pendientes[0]["id"] == "as-prog-1"
+        assert pendientes[0]["fecha_sugerida"] == "2026-12-05"

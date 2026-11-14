@@ -896,6 +896,25 @@ export default function CalculoLioPage() {
                       <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 truncate mt-0.5">
                         {p.practica_nombre || 'Cirugía de Catarata'}
                       </p>
+                      {p.lio_propuesto?.lente_nombre && (
+                        <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30 text-[10px] font-bold">
+                            <span>💎 {p.lio_propuesto.lente_nombre}</span>
+                            <span className={`px-1.5 py-0 rounded text-[9px] font-black uppercase ${
+                              p.lio_propuesto.estado_label === 'Definitivo'
+                                ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+                                : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                            }`}>
+                              {p.lio_propuesto.estado_label || 'Tentativo'}
+                            </span>
+                          </span>
+                          {p.lio_cambio_post_calculo && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-rose-500/15 text-rose-600 dark:text-rose-300 border border-rose-500/30 text-[9px] font-black uppercase">
+                              ⚠ Recalcular
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between pt-1 border-t border-[var(--border)]/60 text-[10px] text-[var(--secondary)]">
@@ -961,6 +980,38 @@ export default function CalculoLioPage() {
                   <p className="text-xs text-[var(--secondary)]">
                     DNI: <b className="font-mono text-[var(--foreground)]">{pacienteActivo.paciente_dni || 'N/A'}</b> • {pacienteActivo.obra_social || 'Particular'} • Cirujano: <b className="text-[var(--foreground)]">{pacienteActivo.cirujano_nombre || 'Asignado'}</b>
                   </p>
+                  {pacienteActivo.lio_propuesto?.lente_nombre && (
+                    <div className="mt-2 flex flex-col gap-1.5">
+                      <div className="inline-flex items-center gap-2 flex-wrap px-3 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-xs">
+                        <span className="font-bold text-cyan-700 dark:text-cyan-300">
+                          💎 LIO Elegido en Asesoramiento ({pacienteActivo.ojo || 'OD'}):
+                        </span>
+                        <span className="font-black text-[var(--foreground)]">
+                          {pacienteActivo.lio_propuesto.lente_nombre}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase ${
+                          pacienteActivo.lio_propuesto.estado_label === 'Definitivo'
+                            ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                            : 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30'
+                        }`}>
+                          {pacienteActivo.lio_propuesto.estado_label || 'Tentativo'}
+                        </span>
+                        {pacienteActivo.lio_propuesto.observaciones && (
+                          <span className="text-[11px] text-[var(--secondary)] italic">
+                            — {pacienteActivo.lio_propuesto.observaciones}
+                          </span>
+                        )}
+                      </div>
+                      {pacienteActivo.lio_cambio_post_calculo && (
+                        <div className="px-3 py-1.5 rounded-xl bg-rose-500/10 border border-rose-500/40 text-rose-700 dark:text-rose-300 text-xs font-bold flex items-center gap-2">
+                          <AlertCircle size={14} className="shrink-0" />
+                          <span>
+                            El LIO elegido por el paciente cambió después del último cálculo guardado. Verificá si corresponde recalcular la dioptría.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Botón Ver Biometría & Estudios Geclisa */}

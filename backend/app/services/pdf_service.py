@@ -1020,7 +1020,11 @@ def generar_pdf_consentimiento_informado(
     from reportlab.platypus import Image as RLImage
     from reportlab.lib.units import inch
 
-    turno_id = turno.get("id") or str(uuid.uuid4())
+    turno_id = turno.get("id") or (
+        f"{turno.get('asesoria_id')}_{(turno.get('ojo') or 'QX').upper()}"
+        if turno.get("asesoria_id")
+        else str(uuid.uuid4())
+    )
     pdf_filename = f"consentimiento_{turno_id}.pdf"
     pdf_path = os.path.join(PDF_DIR, pdf_filename)
 

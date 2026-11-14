@@ -2478,7 +2478,7 @@ def render_consent_template(template_str: str, context: Dict[str, Any]) -> str:
     cirujano_val = str(context.get("cirujano") or context.get("medico") or "Médico Cirujano")
     practica_val = str(context.get("practica") or context.get("cirugia") or "Cirugía Oftalmológica")
     ojo_desc = str(context.get("ojo_intervenido") or context.get("ojo_desc") or "Ojo Correspondiente")
-    quirofano_val = str(context.get("quirofano") or "Quirófano Central")
+    quirofano_val = str(context.get("quirofano") or "A confirmar por Quirófano")
     fecha_val = str(context.get("fecha") or context.get("fecha_cirugia") or "")
     hora_val = str(context.get("hora_cirugia") or context.get("hora_inicio") or "")[:5]
     
@@ -3089,6 +3089,31 @@ def get_asesorias_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
         logger.error(f"Error al obtener asesorías quirúrgicas del paciente {paciente_id}: {e}")
         return []
 
+def _validar_campos_obligatorios_asesoria(
+    datos: Dict[str, Any],
+    validar_practica: bool = True,
+    validar_derivador: bool = True,
+    validar_cirujano: bool = True,
+) -> None:
+    """Valida que práctica quirúrgica, médico derivador y cirujano no estén vacíos ni con placeholders."""
+    if validar_practica:
+        nom_p = str(datos.get("practica_nombre") or "").strip()
+        if not nom_p or nom_p in (
+            "Nueva Cirugía / Procedimiento",
+            "Práctica Quirúrgica a Determinar",
+            "Cirugía / Procedimiento sin determinar",
+        ):
+            raise ValueError("La práctica quirúrgica es obligatoria para guardar el caso quirúrgico.")
+    if validar_derivador:
+        nom_d = str(datos.get("medico_derivador_nombre") or "").strip()
+        if not nom_d or nom_d.lower() in ("sin asignar", "a designar", "derivador sin asignar"):
+            raise ValueError("El Médico Derivador es obligatorio para guardar el caso quirúrgico.")
+    if validar_cirujano:
+        nom_c = str(datos.get("medico_cirujano_nombre") or "").strip()
+        if not nom_c or nom_c.lower() in ("sin asignar", "cirujano sin asignar", "a designar"):
+            raise ValueError("El Médico Cirujano (Qx) es obligatorio para guardar el caso quirúrgico.")
+
+
 def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
     """
     Crea un nuevo caso de asesoramiento quirúrgico para un paciente con su código institucional.
@@ -3096,6 +3121,7 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
     if not supabase:
         raise RuntimeError("Supabase no está conectado.")
     try:
+        _validar_campos_obligatorios_asesoria(payload)
         paciente_id = payload.get("paciente_id")
         nuevo_codigo = generar_siguiente_codigo_caso()
         
@@ -3104,16 +3130,21 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
             chk_init = {}
         chk_init["_codigo_caso"] = nuevo_codigo
         
+        fecha_def_init = payload.get("fecha_definitiva_cirugia") or None
+        estado_init = payload.get("estado") or "en_asesoramiento"
+        if fecha_def_init and estado_init not in ("operado", "cancelado"):
+            estado_init = "programado"
+
         datos = {
             "paciente_id": paciente_id,
             "codigo_caso": nuevo_codigo,
             "practica_codigo": payload.get("practica_codigo") or None,
-            "practica_nombre": payload.get("practica_nombre") or "Nueva Cirugía / Procedimiento",
+            "practica_nombre": str(payload.get("practica_nombre")).strip(),
             "medico_derivador_id": int(payload.get("medico_derivador_id")) if payload.get("medico_derivador_id") else None,
-            "medico_derivador_nombre": payload.get("medico_derivador_nombre") or None,
+            "medico_derivador_nombre": str(payload.get("medico_derivador_nombre")).strip(),
             "medico_derivador_matricula": payload.get("medico_derivador_matricula") or None,
             "medico_cirujano_id": int(payload.get("medico_cirujano_id")) if payload.get("medico_cirujano_id") else None,
-            "medico_cirujano_nombre": payload.get("medico_cirujano_nombre") or None,
+            "medico_cirujano_nombre": str(payload.get("medico_cirujano_nombre")).strip(),
             "medico_cirujano_matricula": payload.get("medico_cirujano_matricula") or None,
             "cobertura_obra_social": payload.get("cobertura_obra_social") or None,
             "monto_extra": float(payload.get("monto_extra") or 0),
@@ -3123,8 +3154,8 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
             "medio_pago": payload.get("medio_pago") or None,
             "presupuesto_id": payload.get("presupuesto_id") or None,
             "fecha_probable_cirugia": payload.get("fecha_probable_cirugia") or None,
-            "fecha_definitiva_cirugia": payload.get("fecha_definitiva_cirugia") or None,
-            "estado": payload.get("estado") or "en_asesoramiento",
+            "fecha_definitiva_cirugia": fecha_def_init,
+            "estado": estado_init,
             "ojo": payload.get("ojo") or "OD",
             "situacion_paciente": payload.get("situacion_paciente") or "",
             "checklist_prequirurgico": chk_init,
@@ -3190,20 +3221,23 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
             if k in payload:
                 val = payload[k]
                 if k == "practica_nombre":
-                    nom_p = str(val or "").strip()
-                    if not nom_p or nom_p in ("Nueva Cirugía / Procedimiento", "Práctica Quirúrgica a Determinar", "Cirugía / Procedimiento sin determinar"):
-                        raise ValueError("La práctica quirúrgica es obligatoria para guardar el caso quirúrgico.")
-                    datos[k] = nom_p
+                    _validar_campos_obligatorios_asesoria(
+                        {"practica_nombre": val},
+                        validar_practica=True, validar_derivador=False, validar_cirujano=False
+                    )
+                    datos[k] = str(val).strip()
                 elif k == "medico_derivador_nombre":
-                    nom_d = str(val or "").strip()
-                    if not nom_d or nom_d.lower() in ("sin asignar", "a designar", "derivador sin asignar"):
-                        raise ValueError("El Médico Derivador es obligatorio para guardar el caso quirúrgico.")
-                    datos[k] = nom_d
+                    _validar_campos_obligatorios_asesoria(
+                        {"medico_derivador_nombre": val},
+                        validar_practica=False, validar_derivador=True, validar_cirujano=False
+                    )
+                    datos[k] = str(val).strip()
                 elif k == "medico_cirujano_nombre":
-                    nom_c = str(val or "").strip()
-                    if not nom_c or nom_c.lower() in ("sin asignar", "cirujano sin asignar", "a designar"):
-                        raise ValueError("El Médico Cirujano (Qx) es obligatorio para guardar el caso quirúrgico.")
-                    datos[k] = nom_c
+                    _validar_campos_obligatorios_asesoria(
+                        {"medico_cirujano_nombre": val},
+                        validar_practica=False, validar_derivador=False, validar_cirujano=True
+                    )
+                    datos[k] = str(val).strip()
                 elif k in ["medico_derivador_id", "medico_cirujano_id"]:
                     datos[k] = int(val) if val else None
                 elif k in ["monto_extra", "monto_sena"]:
@@ -3218,32 +3252,76 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
                     datos[k] = val if isinstance(val, dict) else {}
                 else:
                     datos[k] = val
+
+        # Obtener estado y fechas previas para detectar transiciones, retrocesos y cambios de fecha definitiva
+        prev_row_estado: Dict[str, Any] = {}
+        try:
+            q_est = supabase.table("asesorias_quirurgicas").select(
+                "estado, paciente_id, checklist_prequirurgico, fecha_definitiva_cirugia, ojo, modalidad_bilateral"
+            ).eq("id", asesoria_id).limit(1).execute()
+            prev_row_estado = q_est.data[0] if (q_est and q_est.data) else {}
+        except Exception as e_prev_est:
+            logger.warning(f"Aviso leyendo estado previo en asesoría {asesoria_id}: {e_prev_est}")
+
+        prev_est = prev_row_estado.get("estado")
+        prev_chk = prev_row_estado.get("checklist_prequirurgico") or {}
+        if not isinstance(prev_chk, dict):
+            prev_chk = {}
+        prev_meta_b = prev_chk.get("_meta_bilateral") or {}
+        if not isinstance(prev_meta_b, dict):
+            prev_meta_b = {}
+
+        # Transición automática a 'programado' al fijar fecha definitiva (sin requerir sala ni horario)
+        fecha_def_nueva = datos.get("fecha_definitiva_cirugia")
+        chk_nuevo = datos.get("checklist_prequirurgico") if isinstance(datos.get("checklist_prequirurgico"), dict) else prev_chk
+        meta_b_nuevo = chk_nuevo.get("_meta_bilateral") if isinstance(chk_nuevo, dict) else {}
+        if not isinstance(meta_b_nuevo, dict):
+            meta_b_nuevo = {}
+        fecha_def_2_nueva = payload.get("fecha_definitiva_2do_ojo") or meta_b_nuevo.get("fecha_definitiva_2do_ojo")
+
+        estado_solicitado = datos.get("estado")
+        if fecha_def_nueva and estado_solicitado not in ("cancelado", "operado") and prev_est not in ("operado", "cancelado"):
+            datos["estado"] = "programado"
+        elif fecha_def_2_nueva and prev_est == "operado" and estado_solicitado not in ("cancelado", "operado"):
+            prog_b_chk = (chk_nuevo.get("_progreso_bilateral") or {}) if isinstance(chk_nuevo, dict) else {}
+            orden_b_chk = meta_b_nuevo.get("orden") or "OD_primero"
+            segundo_operado = bool(prog_b_chk.get("od_operado")) if orden_b_chk == "OI_primero" else bool(prog_b_chk.get("oi_operado"))
+            if not segundo_operado:
+                datos["estado"] = "programado"
+        elif "fecha_definitiva_cirugia" in payload and not fecha_def_nueva and not fecha_def_2_nueva:
+            if prev_est == "programado" and (not estado_solicitado or estado_solicitado == "programado"):
+                datos["estado"] = "en_asesoramiento"
+
         # Detectar si la asesoría retrocede desde 'programado'/'confirmado' hacia una etapa previa
         nuevo_est = datos.get("estado")
         retrocedio_desde_programado = False
-        prev_row_estado: Dict[str, Any] = {}
-        if nuevo_est:
-            try:
-                q_est = supabase.table("asesorias_quirurgicas").select("estado, paciente_id, checklist_prequirurgico, fecha_definitiva_cirugia").eq("id", asesoria_id).limit(1).execute()
-                prev_row_estado = q_est.data[0] if (q_est and q_est.data) else {}
-                prev_est = prev_row_estado.get("estado")
-                if prev_est in ["programado", "confirmado"] and nuevo_est in ["nuevo", "en_analisis", "presupuesto_enviado", "seguimiento"]:
-                    retrocedio_desde_programado = True
-                    # Limpiar fecha definitiva principal si no viene otra válida explícita
-                    if not payload.get("fecha_definitiva_cirugia"):
-                        datos["fecha_definitiva_cirugia"] = None
-                    # En casos bilaterales, limpiar también fecha_definitiva_2do_ojo si el 2do ojo no está operado
-                    chk_base = dict(datos.get("checklist_prequirurgico") or prev_row_estado.get("checklist_prequirurgico") or {})
-                    meta_b = dict(chk_base.get("_meta_bilateral") or {})
-                    prog_b = chk_base.get("_progreso_bilateral") or {}
-                    orden_b = meta_b.get("orden") or "OD_primero"
-                    segundo_ojo_operado = bool(prog_b.get("od_operado")) if orden_b == "OI_primero" else bool(prog_b.get("oi_operado"))
-                    if meta_b and not segundo_ojo_operado and not payload.get("fecha_definitiva_2do_ojo"):
-                        meta_b["fecha_definitiva_2do_ojo"] = None
-                        chk_base["_meta_bilateral"] = meta_b
-                        datos["checklist_prequirurgico"] = chk_base
-            except Exception as e_prev_est:
-                logger.warning(f"Aviso verificando retroceso de etapa en asesoría {asesoria_id}: {e_prev_est}")
+        if nuevo_est and prev_est in ["programado", "confirmado"] and nuevo_est in [
+            "nuevo", "en_asesoramiento", "en_analisis", "presupuesto_enviado", "seguimiento"
+        ]:
+            retrocedio_desde_programado = True
+            if not payload.get("fecha_definitiva_cirugia"):
+                datos["fecha_definitiva_cirugia"] = None
+            chk_base = dict(datos.get("checklist_prequirurgico") or prev_chk or {})
+            meta_b = dict(chk_base.get("_meta_bilateral") or {})
+            prog_b = chk_base.get("_progreso_bilateral") or {}
+            orden_b = meta_b.get("orden") or "OD_primero"
+            segundo_ojo_operado = bool(prog_b.get("od_operado")) if orden_b == "OI_primero" else bool(prog_b.get("oi_operado"))
+            if meta_b and not segundo_ojo_operado and not payload.get("fecha_definitiva_2do_ojo"):
+                meta_b["fecha_definitiva_2do_ojo"] = None
+                chk_base["_meta_bilateral"] = meta_b
+                datos["checklist_prequirurgico"] = chk_base
+
+        # Detectar cambio o limpieza de fecha definitiva (1er ojo / 2do ojo) para liberar turno asignado si no se envía sala/hora
+        prev_f1_str = str(prev_row_estado.get("fecha_definitiva_cirugia") or "")[:10]
+        new_f1_str = str(datos.get("fecha_definitiva_cirugia") or "")[:10] if "fecha_definitiva_cirugia" in datos else prev_f1_str
+        fecha_1_cambio = ("fecha_definitiva_cirugia" in datos) and (new_f1_str != prev_f1_str)
+
+        prev_f2_str = str(prev_meta_b.get("fecha_definitiva_2do_ojo") or "")[:10]
+        if "fecha_definitiva_2do_ojo" in payload or ("checklist_prequirurgico" in datos and "_meta_bilateral" in chk_nuevo):
+            new_f2_str = str(fecha_def_2_nueva or "")[:10]
+            fecha_2_cambio = (new_f2_str != prev_f2_str)
+        else:
+            fecha_2_cambio = False
 
         # Auto-programación de SLA si el caso transiciona a 'en_analisis' o 'presupuesto_enviado'
         if nuevo_est in ["en_analisis", "presupuesto_enviado"]:
@@ -3362,12 +3440,61 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
                 except Exception as e_t:
                     logger.warning(f"Aviso al sincronizar turno desde asesoría {asesoria_id}: {e_t}")
 
-        # 2.b Sincronizar asignación de fecha/quirofano/hora si viene en payload o si cambió fecha definitiva / orden bilateral
-        if not retrocedio_desde_programado and datos.get("estado") != "cancelado" and any(k in payload for k in [
-            "quirofano_id", "hora_inicio", "duracion_minutos", "fecha_definitiva_cirugia", "cancelar_turno_1",
-            "quirofano_id_2do_ojo", "hora_inicio_2do_ojo", "duracion_minutos_2do_ojo", "fecha_definitiva_2do_ojo", "cancelar_turno_2",
-            "checklist_prequirurgico", "modalidad_bilateral", "ojo"
-        ]):
+        # 2.b Liberar turnos previos si cambió/se limpió fecha definitiva sin asignar nueva sala/hora, o sincronizar si Quirófano envió sala/hora
+        tiene_agenda_explicita_1 = bool(payload.get("quirofano_id") and payload.get("hora_inicio"))
+        tiene_agenda_explicita_2 = bool(payload.get("quirofano_id_2do_ojo") and payload.get("hora_inicio_2do_ojo"))
+        turnos_liberados_por_fecha = False
+
+        if not retrocedio_desde_programado and datos.get("estado") != "cancelado" and (
+            (fecha_1_cambio and not tiene_agenda_explicita_1) or (fecha_2_cambio and not tiene_agenda_explicita_2)
+        ):
+            try:
+                as_actual_upd = resp.data[0] if resp.data else prev_row_estado
+                ojo_as_upd = (as_actual_upd.get("ojo") or "OD").upper()
+                chk_upd = as_actual_upd.get("checklist_prequirurgico") or {}
+                meta_upd = chk_upd.get("_meta_bilateral") if isinstance(chk_upd, dict) else {}
+                mod_upd = (meta_upd or {}).get("modalidad") or as_actual_upd.get("modalidad_bilateral")
+                es_esc_upd = (ojo_as_upd == "AO" and str(mod_upd or "").lower() == "escalonada")
+
+                ojos_a_liberar = []
+                if es_esc_upd:
+                    orden_upd = (meta_upd or {}).get("orden") or "OD_primero"
+                    p1_ojo_upd = "OI" if orden_upd == "OI_primero" else "OD"
+                    p2_ojo_upd = "OD" if p1_ojo_upd == "OI" else "OI"
+                    if fecha_1_cambio and not tiene_agenda_explicita_1:
+                        ojos_a_liberar.append(p1_ojo_upd)
+                    if fecha_2_cambio and not tiene_agenda_explicita_2:
+                        ojos_a_liberar.append(p2_ojo_upd)
+
+                q_lib = supabase.table("turnos_quirofano") \
+                    .select("id, ojo, fecha_cirugia, estado") \
+                    .eq("asesoria_id", asesoria_id) \
+                    .in_("estado", ["programado", "en_espera", "pre_quirofano"]) \
+                    .execute()
+                candidatos_lib = q_lib.data or []
+                ids_a_cancelar = [
+                    t["id"] for t in candidatos_lib
+                    if (not es_esc_upd) or (t.get("ojo") in ojos_a_liberar)
+                ]
+                if ids_a_cancelar:
+                    supabase.table("turnos_quirofano").update({
+                        "estado": "cancelado",
+                        "motivo_cancelacion": "reprogramado_asesoramiento",
+                        "llegada_at": None,
+                        "ingreso_pre_quirofano_at": None,
+                        "observaciones": "Turno liberado por cambio de fecha definitiva en Asesoramiento.",
+                        "updated_at": "now()"
+                    }).in_("id", ids_a_cancelar).execute()
+                    turnos_liberados_por_fecha = True
+                    logger.info(f"Liberados {len(ids_a_cancelar)} turno(s) de quirófano por cambio de fecha en asesoría {asesoria_id}.")
+            except Exception as e_lib_f:
+                logger.warning(f"Aviso al liberar turno por cambio de fecha en asesoría {asesoria_id}: {e_lib_f}")
+
+        if not retrocedio_desde_programado and not turnos_liberados_por_fecha and datos.get("estado") != "cancelado" and any(k in payload for k in [
+            "quirofano_id", "hora_inicio", "duracion_minutos", "cancelar_turno_1",
+            "quirofano_id_2do_ojo", "hora_inicio_2do_ojo", "duracion_minutos_2do_ojo", "cancelar_turno_2",
+            "modalidad_bilateral", "ojo"
+        ]) or (tiene_agenda_explicita_1 or tiene_agenda_explicita_2):
             try:
                 sincronizar_turno_quirofano_desde_asesoria(asesoria_id, payload, resp.data[0])
             except Exception as e_sq:
@@ -3513,7 +3640,7 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str, ojo: Optional[str] = Non
                     return f"{h_cit} hs (Procedimiento {h_clean} hs)", h_clean, h_cit
                 except Exception:
                     return f"{h_clean} hs", h_clean, h_clean
-            return "07:30 hs (a confirmar)", "08:15", "07:30"
+            return "", "", ""
 
         def _extraer_estado_rec(t_obj: Optional[Dict[str, Any]], chk_eye: Optional[Dict[str, Any]] = None):
             t_chk = (t_obj.get("checks_adicionales") or {}) if t_obj else {}
@@ -3632,11 +3759,11 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str, ojo: Optional[str] = Non
 
             f1_iso = (turno_1.get("fecha_cirugia") if turno_1 else None) or fecha_1
             h1_disp, h1_cir, h1_cit = _fmt_hora(turno_1.get("hora_inicio") if turno_1 else None)
-            q1_nom = (turno_1.get("quirofanos") or {}).get("nombre") if (turno_1 and turno_1.get("quirofanos")) else "Centrovisión - Quirófano Central"
+            q1_nom = (turno_1.get("quirofanos") or {}).get("nombre") if (turno_1 and turno_1.get("quirofanos")) else "A confirmar por Quirófano"
 
             f2_iso = (turno_2.get("fecha_cirugia") if turno_2 else None) or fecha_2
             h2_disp, h2_cir, h2_cit = _fmt_hora(turno_2.get("hora_inicio") if turno_2 else None)
-            q2_nom = (turno_2.get("quirofanos") or {}).get("nombre") if (turno_2 and turno_2.get("quirofanos")) else "Centrovisión - Quirófano Central"
+            q2_nom = (turno_2.get("quirofanos") or {}).get("nombre") if (turno_2 and turno_2.get("quirofanos")) else "A confirmar por Quirófano"
 
             p1_desc = _describir_ojo(primer_ojo)
             p2_desc = _describir_ojo(segundo_ojo)
@@ -3693,7 +3820,7 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str, ojo: Optional[str] = Non
             turno_elegido = turnos_activos[0] if turnos_activos else None
             fecha_cirugia = caso.get("fecha_definitiva_cirugia") or (turno_elegido.get("fecha_cirugia") if turno_elegido else None) or caso.get("fecha_probable_cirugia")
             hora_cirugia = turno_elegido.get("hora_inicio") if turno_elegido else None
-            q_nom = (turno_elegido.get("quirofanos") or {}).get("nombre") if (turno_elegido and turno_elegido.get("quirofanos")) else "Centrovisión - Quirófano Central"
+            q_nom = (turno_elegido.get("quirofanos") or {}).get("nombre") if (turno_elegido and turno_elegido.get("quirofanos")) else "A confirmar por Quirófano"
             h_disp, h_cir, h_cit = _fmt_hora(hora_cirugia)
 
             rec_qx = chk.get("_recordatorio_qx") or {}
@@ -4041,28 +4168,62 @@ def get_datos_consentimiento_whatsapp(
         if not turno and not caso:
             return None
 
-        # Si no hay turno aún pero existe asesoría, generar un objeto de contexto quirúrgico
+        # Si no hay turno aún pero existe asesoría, generar/leer consentimiento directo sobre asesorias_quirurgicas
         if not turno and caso:
-            tok = caso.get("consentimiento_token")
+            import secrets
+            chk_c = caso.get("checklist_prequirurgico") or {}
+            if not isinstance(chk_c, dict):
+                chk_c = {}
+            ojo_caso_raw = (caso.get("ojo") or "OD").upper()
+            meta_bi_c = chk_c.get("_meta_bilateral") or {}
+            es_esc_c = (ojo_caso_raw == "AO") and (str(meta_bi_c.get("modalidad") or "").lower() == "escalonada")
+            orden_c = meta_bi_c.get("orden") or "OD_primero"
+            p1_c = "OI" if orden_c == "OI_primero" else "OD"
+            p2_c = "OD" if p1_c == "OI" else "OI"
+
+            ojo_target = ojo_caso_raw
+            fecha_target = caso.get("fecha_definitiva_cirugia") or caso.get("fecha_probable_cirugia")
+            if es_esc_c:
+                ojo_req_l = (ojo or "").lower()
+                if ojo_req_l in ("segundo_ojo", "2do_ojo", p2_c.lower()):
+                    ojo_target = p2_c
+                    fecha_target = meta_bi_c.get("fecha_definitiva_2do_ojo") or meta_bi_c.get("fecha_probable_2do_ojo") or fecha_target
+                else:
+                    ojo_target = p1_c
+                c_key = f"_consentimiento_qx_{ojo_target}"
+            else:
+                c_key = "_consentimiento_qx"
+
+            c_obj = dict(chk_c.get(c_key) or {})
+            tok = c_obj.get("token") or (caso.get("consentimiento_token") if c_key == "_consentimiento_qx" else None)
             if not tok:
-                import secrets
                 tok = secrets.token_urlsafe(24)
+                c_obj["token"] = tok
+                if not c_obj.get("estado"):
+                    c_obj["estado"] = "pendiente_envio"
+                chk_c[c_key] = c_obj
                 try:
-                    supabase.table("asesorias_quirurgicas").update({"consentimiento_token": tok, "updated_at": "now()"}).eq("id", caso["id"]).execute()
+                    supabase.table("asesorias_quirurgicas").update({
+                        "checklist_prequirurgico": chk_c,
+                        "updated_at": "now()"
+                    }).eq("id", caso["id"]).execute()
                 except Exception:
                     pass
+
             turno = {
                 "id": None,
                 "asesoria_id": caso.get("id"),
                 "paciente_id": caso.get("paciente_id"),
                 "consentimiento_token": tok,
-                "consentimiento_estado": caso.get("consentimiento_estado") or "pendiente_envio",
+                "consentimiento_estado": c_obj.get("estado") or "pendiente_envio",
                 "practica_nombre": caso.get("practica_nombre"),
                 "practica_codigo": caso.get("practica_codigo"),
-                "ojo": caso.get("ojo"),
+                "ojo": ojo_target,
+                "es_bilateral_escalonada": es_esc_c,
                 "cirujano_nombre": caso.get("medico_cirujano_nombre"),
-                "fecha_cirugia": caso.get("fecha_definitiva_cirugia") or caso.get("fecha_probable_cirugia"),
-                "hora_inicio": "08:00:00"
+                "fecha_cirugia": fecha_target,
+                "hora_inicio": None,
+                "quirofanos": {"nombre": "A confirmar por Quirófano"}
             }
 
         paciente_id = (paciente.get("id") if paciente else None) or (turno.get("paciente_id") if turno else None)
@@ -4132,8 +4293,8 @@ def get_datos_consentimiento_whatsapp(
         cirugia_completa = f"{cirugia_nombre} ({ojo_desc})"
 
         cirujano_nombre = turno.get("cirujano_nombre") or (caso.get("medico_cirujano_nombre") if caso else None) or "Médico Cirujano"
-        quirofano_nombre = (turno.get("quirofanos") or {}).get("nombre") if isinstance(turno.get("quirofanos"), dict) else "Centrovisión - Quirófano Central"
-        hora_cirugia = str(turno.get("hora_inicio") or "08:00")[:5]
+        quirofano_nombre = ((turno.get("quirofanos") or {}).get("nombre") if isinstance(turno.get("quirofanos"), dict) else None) or "A confirmar por Quirófano"
+        hora_cirugia = str(turno.get("hora_inicio") or "")[:5] or "A confirmar"
 
         # 4. Estado de la Ventana de 24 horas de Meta
         is_window_open = False
@@ -4191,7 +4352,7 @@ def get_datos_consentimiento_whatsapp(
 
 
 def registrar_envio_consentimiento_quirurgico(
-    turno_id: str,
+    turno_id: Optional[str],
     asesoria_id: Optional[str],
     paciente_id: str,
     telefono: str,
@@ -4202,16 +4363,17 @@ def registrar_envio_consentimiento_quirurgico(
     wamid: Optional[str] = None,
     usuario_nombre: Optional[str] = None,
     texto_renderizado: Optional[str] = None,
-    en_espera_apertura: bool = False
+    en_espera_apertura: bool = False,
+    ojo: Optional[str] = None
 ) -> bool:
     """
     Registra el impacto del envío del consentimiento en:
-    - turnos_quirofano (consentimiento_estado: 'enviado_whatsapp', consentimiento_enviado_at)
-    - asesorias_quirurgicas.checklist_prequirurgico (último contacto, estado de consentimiento)
+    - asesorias_quirurgicas.checklist_prequirurgico (fuente canónica por ojo)
+    - turnos_quirofano (si existe turno asignado)
     - Bitácora de evolución clínica del caso
     - Conversación de chat de WhatsApp
     """
-    if not supabase or not turno_id:
+    if not supabase or (not turno_id and not asesoria_id):
         return False
     try:
         from datetime import datetime, timezone, timedelta
@@ -4221,30 +4383,38 @@ def registrar_envio_consentimiento_quirurgico(
 
         nuevo_estado = "esperando_apertura" if en_espera_apertura else "enviado_whatsapp"
 
-        # 1. Actualizar turnos_quirofano
-        upd_turno = {
-            "consentimiento_estado": "enviado_whatsapp",
-            "consentimiento_enviado_at": ahora_iso,
-            "updated_at": ahora_iso
-        }
-        supabase.table("turnos_quirofano").update(upd_turno).eq("id", turno_id).execute()
+        # 1. Actualizar turnos_quirofano solo si existe turno real
+        if turno_id:
+            upd_turno = {
+                "consentimiento_estado": "enviado_whatsapp",
+                "consentimiento_enviado_at": ahora_iso,
+                "updated_at": ahora_iso
+            }
+            supabase.table("turnos_quirofano").update(upd_turno).eq("id", turno_id).execute()
 
-        # 2. Sincronizar asesorias_quirurgicas si existe
+        # 2. Actualizar asesorias_quirurgicas (propiedad canónica única por ojo)
         if asesoria_id:
             try:
-                caso_res = supabase.table("asesorias_quirurgicas").select("checklist_prequirurgico").eq("id", asesoria_id).limit(1).execute()
-                chk = {}
-                if caso_res.data and isinstance(caso_res.data[0].get("checklist_prequirurgico"), dict):
-                    chk = dict(caso_res.data[0]["checklist_prequirurgico"])
-                chk["_consentimiento_qx"] = {
+                caso_res = supabase.table("asesorias_quirurgicas").select("ojo, checklist_prequirurgico").eq("id", asesoria_id).limit(1).execute()
+                row_as = caso_res.data[0] if caso_res.data else {}
+                chk = dict(row_as.get("checklist_prequirurgico")) if isinstance(row_as.get("checklist_prequirurgico"), dict) else {}
+                meta_bi = chk.get("_meta_bilateral") or {}
+                es_esc = (str(row_as.get("ojo") or "").upper() == "AO") and (str(meta_bi.get("modalidad") or "").lower() == "escalonada")
+                c_key = f"_consentimiento_qx_{ojo.upper()}" if (es_esc and ojo and ojo.upper() in ("OD", "OI")) else "_consentimiento_qx"
+                c_prev = dict(chk.get(c_key) or {})
+                c_prev.update({
                     "estado": nuevo_estado,
                     "enviado_at": ahora_iso,
                     "modo": modo_envio,
                     "template": template_name,
                     "enlace_firma": enlace_firma,
                     "token": token,
-                    "wamid": wamid
-                }
+                    "wamid": wamid,
+                    "ojo": (ojo.upper() if ojo else row_as.get("ojo") or "OD")
+                })
+                chk[c_key] = c_prev
+                if c_key != "_consentimiento_qx":
+                    chk["_consentimiento_qx"] = c_prev
                 supabase.table("asesorias_quirurgicas").update({
                     "ultimo_contacto_at": ahora_iso,
                     "checklist_prequirurgico": chk,
@@ -6836,19 +7006,22 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
         # Optimización: Obtener turnos existentes de todas las asesorías en una sola consulta por lotes (evita N+1)
         casos_ids = [c["id"] for c in casos if c.get("id")]
         turnos_por_asesoria: Dict[str, List[Dict[str, Any]]] = {}
+        reprogramados_por_asesoria: Dict[str, set] = {}
         if casos_ids:
             try:
                 t_resp = supabase.table("turnos_quirofano") \
-                    .select("id, asesoria_id, ojo, fecha_cirugia, hora_inicio, estado") \
+                    .select("id, asesoria_id, ojo, fecha_cirugia, hora_inicio, estado, motivo_cancelacion") \
                     .in_("asesoria_id", casos_ids) \
-                    .neq("estado", "cancelado") \
                     .execute()
                 for t in (t_resp.data or []):
                     as_id = t.get("asesoria_id")
-                    if as_id:
-                        if as_id not in turnos_por_asesoria:
-                            turnos_por_asesoria[as_id] = []
-                        turnos_por_asesoria[as_id].append(t)
+                    if not as_id:
+                        continue
+                    if t.get("estado") == "cancelado":
+                        if t.get("motivo_cancelacion") == "reprogramado_asesoramiento":
+                            reprogramados_por_asesoria.setdefault(as_id, set()).add((t.get("ojo") or "OD").upper())
+                        continue
+                    turnos_por_asesoria.setdefault(as_id, []).append(t)
             except Exception as e_t:
                 logger.warning(f"Aviso al cargar turnos en lote para asesorias confirmadas: {e_t}")
 
@@ -6880,7 +7053,8 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                 tiene_t1 = any(t.get("ojo") == ojo_1 for t in turnos_existentes)
                 tiene_t2 = any(t.get("ojo") == ojo_2 for t in turnos_existentes)
                 
-                f_2do = (meta_bilateral or {}).get("fecha_probable_2do_ojo") or (meta_bilateral or {}).get("fecha_definitiva_2do_ojo") or caso.get("fecha_probable_2do_ojo")
+                f_2do = (meta_bilateral or {}).get("fecha_definitiva_2do_ojo") or (meta_bilateral or {}).get("fecha_probable_2do_ojo") or caso.get("fecha_probable_2do_ojo")
+                reprog_ojos = reprogramados_por_asesoria.get(asesoria_id, set())
                 
                 codigo_base = asegurar_codigo_caso(caso)
 
@@ -6892,7 +7066,8 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                     c1["id_compuesto"] = f"{caso['id']}_{ojo_1}"
                     c1["codigo_caso"] = codigo_base
                     c1["codigo_turno"] = f"{codigo_base}-{ojo_1}"
-                    c1["fecha_sugerida"] = caso.get("fecha_probable_cirugia") or caso.get("fecha_definitiva_cirugia")
+                    c1["fecha_sugerida"] = caso.get("fecha_definitiva_cirugia") or caso.get("fecha_probable_cirugia")
+                    c1["reprogramado_asesoramiento"] = ojo_1 in reprog_ojos
 
                     # Extraer datos de cálculo de LIO para Ojo 1
                     lio_1 = (chk.get(f"_lio_calculo_{ojo_1}") if isinstance(chk, dict) else None)
@@ -6926,6 +7101,7 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                     c2["codigo_caso"] = codigo_base
                     c2["codigo_turno"] = f"{codigo_base}-{ojo_2}"
                     c2["fecha_sugerida"] = f_2do
+                    c2["reprogramado_asesoramiento"] = ojo_2 in reprog_ojos
 
                     # Extraer datos de cálculo de LIO para Ojo 2
                     lio_2 = (chk.get(f"_lio_calculo_{ojo_2}") if isinstance(chk, dict) else None)
@@ -6950,13 +7126,15 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
 
                     resultado.append(c2)
             else:
-                # Caso Unilateral (OD u OI) o AO Simultáneo: solo si no tiene turno y está confirmado
-                if len(turnos_existentes) == 0 and caso.get("estado") == "confirmado":
+                # Caso Unilateral (OD u OI) o AO Simultáneo: pendiente si no tiene turno activo y está confirmado o programado
+                if len(turnos_existentes) == 0 and caso.get("estado") in ["confirmado", "programado"]:
                     codigo_base = asegurar_codigo_caso(caso)
                     c_uni = dict(caso)
                     c_uni["id_compuesto"] = caso["id"]
                     c_uni["codigo_caso"] = codigo_base
                     c_uni["codigo_turno"] = f"{codigo_base}-{ojo_caso}"
+                    c_uni["fecha_sugerida"] = caso.get("fecha_definitiva_cirugia") or caso.get("fecha_probable_cirugia")
+                    c_uni["reprogramado_asesoramiento"] = bool(reprogramados_por_asesoria.get(asesoria_id))
 
                     lio_u = (chk.get(f"_lio_calculo_{ojo_caso}") if isinstance(chk, dict) else None)
                     opciones_u = (lio_u.get("opciones") if isinstance(lio_u, dict) else None) or caso.get("lio_calculo_opciones") or []
@@ -7507,6 +7685,17 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                 if upd_res.data:
                     turnos_procesados.append(upd_res.data[0])
             else:
+                # Heredar consentimiento previo asentado en asesorias_quirurgicas
+                c1_chk = (chk.get(f"_consentimiento_qx_{ojo_p1}") if es_bilateral_escalonada else None) or chk.get("_consentimiento_qx") or {}
+                if isinstance(c1_chk, dict):
+                    if c1_chk.get("token"):
+                        datos_turno_1["consentimiento_token"] = c1_chk["token"]
+                    if c1_chk.get("estado"):
+                        datos_turno_1["consentimiento_estado"] = c1_chk["estado"]
+                    if c1_chk.get("pdf_url"):
+                        datos_turno_1["consentimiento_pdf_url"] = c1_chk["pdf_url"]
+                    if c1_chk.get("firmado_at"):
+                        datos_turno_1["consentimiento_firmado_at"] = c1_chk["firmado_at"]
                 # Crear nuevo turno en turnos_quirofano
                 t_nuevo = crear_turno_quirofano(datos_turno_1)
                 if t_nuevo:
@@ -7552,6 +7741,16 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                     if upd_res2.data:
                         turnos_procesados.append(upd_res2.data[0])
                 else:
+                    c2_chk = chk.get(f"_consentimiento_qx_{segundo_ojo}") or {}
+                    if isinstance(c2_chk, dict):
+                        if c2_chk.get("token"):
+                            datos_turno_2["consentimiento_token"] = c2_chk["token"]
+                        if c2_chk.get("estado"):
+                            datos_turno_2["consentimiento_estado"] = c2_chk["estado"]
+                        if c2_chk.get("pdf_url"):
+                            datos_turno_2["consentimiento_pdf_url"] = c2_chk["pdf_url"]
+                        if c2_chk.get("firmado_at"):
+                            datos_turno_2["consentimiento_firmado_at"] = c2_chk["firmado_at"]
                     t_nuevo2 = crear_turno_quirofano(datos_turno_2)
                     if t_nuevo2:
                         turnos_procesados.append(t_nuevo2)
@@ -7571,11 +7770,78 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
 
 
 
+def _extraer_consent_key_y_obj(chk: Dict[str, Any], token: str) -> Optional[tuple]:
+    """Busca un token en las claves de consentimiento dentro de checklist_prequirurgico."""
+    if not isinstance(chk, dict) or not token:
+        return None
+    for key in ("_consentimiento_qx_OD", "_consentimiento_qx_OI", "_consentimiento_qx"):
+        obj = chk.get(key)
+        if isinstance(obj, dict) and obj.get("token") == token:
+            return key, obj
+    return None
+
+
 def get_consentimiento_by_token(token: str) -> Optional[Dict[str, Any]]:
-    """Obtiene los datos del turno y paciente a través de su token público seguro."""
+    """
+    Obtiene los datos del procedimiento y paciente por su token público seguro.
+    Fuente canónica: asesorias_quirurgicas.checklist_prequirurgico (por ojo).
+    Respaldo de solo lectura: turnos_quirofano.consentimiento_token para enlaces históricos.
+    """
     if not supabase or not token:
         return None
     try:
+        # 1. Buscar primero en asesorias_quirurgicas (fuente canónica)
+        try:
+            res_as = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").execute()
+            for as_row in (res_as.data or []):
+                chk = as_row.get("checklist_prequirurgico") or {}
+                match = _extraer_consent_key_y_obj(chk, token)
+                if match or as_row.get("consentimiento_token") == token:
+                    key, c_obj = match if match else ("_consentimiento_qx", {})
+                    ojo_key = "OD" if key.endswith("_OD") else ("OI" if key.endswith("_OI") else (as_row.get("ojo") or "OD"))
+                    meta_bi = (chk.get("_meta_bilateral") or {}) if isinstance(chk, dict) else {}
+                    es_esc = (str(as_row.get("ojo") or "").upper() == "AO") and (str(meta_bi.get("modalidad") or "").lower() == "escalonada")
+                    orden = meta_bi.get("orden") or "OD_primero"
+                    p1_ojo = "OI" if orden == "OI_primero" else "OD"
+                    fecha_obj = as_row.get("fecha_definitiva_cirugia") or as_row.get("fecha_probable_cirugia")
+                    if es_esc and ojo_key != p1_ojo:
+                        fecha_obj = meta_bi.get("fecha_definitiva_2do_ojo") or meta_bi.get("fecha_probable_2do_ojo") or fecha_obj
+
+                    # Buscar si ya existe turno activo asignado en Quirófano para heredar sala/horario reales
+                    turno_activo = None
+                    try:
+                        q_t = supabase.table("turnos_quirofano").select("*, quirofanos(nombre, codigo)").eq("asesoria_id", as_row["id"]).neq("estado", "cancelado")
+                        if es_esc and ojo_key in ("OD", "OI"):
+                            q_t = q_t.eq("ojo", ojo_key)
+                        r_t = q_t.limit(1).execute()
+                        if r_t.data:
+                            turno_activo = r_t.data[0]
+                    except Exception:
+                        pass
+
+                    return {
+                        "id": turno_activo.get("id") if turno_activo else None,
+                        "asesoria_id": as_row["id"],
+                        "paciente_id": as_row.get("paciente_id"),
+                        "pacientes": as_row.get("pacientes") or {},
+                        "quirofanos": (turno_activo.get("quirofanos") if turno_activo else None) or {"nombre": "A confirmar por Quirófano"},
+                        "fecha_cirugia": (turno_activo.get("fecha_cirugia") if turno_activo else None) or fecha_obj,
+                        "hora_inicio": turno_activo.get("hora_inicio") if turno_activo else None,
+                        "ojo": ojo_key,
+                        "es_bilateral_escalonada": es_esc,
+                        "practica_codigo": (turno_activo.get("practica_codigo") if turno_activo else None) or as_row.get("practica_codigo"),
+                        "practica_nombre": (turno_activo.get("practica_nombre") if turno_activo else None) or as_row.get("practica_nombre"),
+                        "cirujano_nombre": (turno_activo.get("cirujano_nombre") if turno_activo else None) or as_row.get("medico_cirujano_nombre"),
+                        "consentimiento_token": token,
+                        "consentimiento_estado": c_obj.get("estado") or (turno_activo.get("consentimiento_estado") if turno_activo else None) or as_row.get("consentimiento_estado") or "pendiente_envio",
+                        "consentimiento_pdf_url": c_obj.get("pdf_url") or (turno_activo.get("consentimiento_pdf_url") if turno_activo else None),
+                        "consentimiento_firmado_at": c_obj.get("firmado_at") or (turno_activo.get("consentimiento_firmado_at") if turno_activo else None),
+                        "_consent_key": key,
+                    }
+        except Exception as e_as_tok:
+            logger.warning(f"Aviso buscando token en asesorias_quirurgicas: {e_as_tok}")
+
+        # 2. Respaldo de solo lectura en turnos_quirofano (enlaces históricos)
         resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("consentimiento_token", token).limit(1).execute()
         if resp.data and len(resp.data) > 0:
             return resp.data[0]
@@ -7742,7 +8008,8 @@ def registrar_firma_consentimiento(
     
     # Hash integral de trazabilidad (Ley 25.506 Art. 5)
     sig_hash = hashlib.sha256(firma_base64.encode("utf-8")).hexdigest()
-    hash_payload = f"{turno['id']}:{paciente.get('dni')}:{now_utc_str}:{ip_origen}:{user_agent}:{sig_hash}"
+    id_traza = turno.get("id") or turno.get("asesoria_id") or token
+    hash_payload = f"{id_traza}:{paciente.get('dni')}:{now_utc_str}:{ip_origen}:{user_agent}:{sig_hash}"
     doc_hash = hashlib.sha256(hash_payload.encode()).hexdigest()
     
     metadata = {
@@ -7767,37 +8034,50 @@ def registrar_firma_consentimiento(
         )
         pdf_url = f"/static/{pdf_filename}"
         
-        # Actualizar en Supabase turnos_quirofano
-        update_payload = {
-            "consentimiento_estado": "firmado_digital",
-            "consentimiento_firmado_at": now_dt_utc.isoformat(),
-            "consentimiento_firma_ip": ip_origen,
-            "consentimiento_firma_img": firma_base64, # 100% completo para estampar en el PDF
-            "consentimiento_pdf_url": pdf_url,
-            "updated_at": "now()"
-        }
-        
-        supabase.table("turnos_quirofano").update(update_payload).eq("id", turno["id"]).execute()
+        # Actualizar turnos_quirofano solo si existe turno real vinculado
+        if turno.get("id"):
+            update_payload = {
+                "consentimiento_estado": "firmado_digital",
+                "consentimiento_firmado_at": now_dt_utc.isoformat(),
+                "consentimiento_firma_ip": ip_origen,
+                "consentimiento_firma_img": firma_base64, # 100% completo para estampar en el PDF
+                "consentimiento_pdf_url": pdf_url,
+                "updated_at": "now()"
+            }
+            supabase.table("turnos_quirofano").update(update_payload).eq("id", turno["id"]).execute()
 
-        # Sincronizar checklist_prequirurgico y bitácora en asesorias_quirurgicas si existe
+        # Actualizar fuente canónica en asesorias_quirurgicas.checklist_prequirurgico (por ojo)
         if turno.get("asesoria_id"):
             try:
                 as_id = turno["asesoria_id"]
-                res_a = supabase.table("asesorias_quirurgicas").select("checklist_prequirurgico, paciente_id").eq("id", as_id).limit(1).execute()
+                res_a = supabase.table("asesorias_quirurgicas").select("ojo, checklist_prequirurgico, paciente_id").eq("id", as_id).limit(1).execute()
                 if res_a.data:
-                    chk = res_a.data[0].get("checklist_prequirurgico") or {}
+                    row_a = res_a.data[0]
+                    chk = row_a.get("checklist_prequirurgico") or {}
                     if not isinstance(chk, dict):
                         chk = {}
+                    meta_bi = chk.get("_meta_bilateral") or {}
+                    es_esc = bool(turno.get("es_bilateral_escalonada")) or (
+                        str(row_a.get("ojo") or "").upper() == "AO" and str(meta_bi.get("modalidad") or "").lower() == "escalonada"
+                    )
+                    ojo_t = str(turno.get("ojo") or "").upper()
+                    c_key = turno.get("_consent_key") or (
+                        f"_consentimiento_qx_{ojo_t}" if (es_esc and ojo_t in ("OD", "OI")) else "_consentimiento_qx"
+                    )
                     chk["consentimiento_firmado"] = True
                     chk["_consentimiento_modo"] = "digital"
                     chk["_consentimiento_firmado_at"] = now_dt_utc.isoformat()
-                    chk["_consentimiento_qx"] = {
+                    consent_entry = {
                         "estado": "firmado_digital",
                         "firmado_at": now_dt_utc.isoformat(),
                         "modo": "digital",
                         "token": token,
-                        "pdf_url": pdf_url
+                        "pdf_url": pdf_url,
+                        "ojo": ojo_t or row_a.get("ojo") or "OD"
                     }
+                    chk[c_key] = consent_entry
+                    if c_key != "_consentimiento_qx":
+                        chk["_consentimiento_qx"] = consent_entry
                     supabase.table("asesorias_quirurgicas").update({
                         "checklist_prequirurgico": chk,
                         "ultimo_contacto_at": now_dt_utc.isoformat(),
@@ -7895,66 +8175,100 @@ def asegurar_turno_para_consentimiento_asesoria(
 
             return turno
 
-        # 2. Si no existe y no se solicitó crear, salir limpiamente sin ensuciar la base de datos
-        if not crear_si_no_existe:
-            return None
-
-        # 3. Si se solicitó explícitamente crear turno:
-        if not as_data:
-            res_a = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").eq("id", asesoria_id).limit(1).execute()
-            if not res_a.data or len(res_a.data) == 0:
-                raise ValueError(f"Asesoría quirúrgica {asesoria_id} no encontrada.")
-            as_data = res_a.data[0]
-            
-        pac = as_data.get("pacientes") or {}
-        pac_id = as_data.get("paciente_id") or pac.get("id")
-        
-        # Obtener un quirófano disponible o el primero activo
-        q_resp = supabase.table("quirofanos").select("id, nombre, codigo").eq("activo", True).limit(1).execute()
-        if not q_resp.data:
-            q_resp = supabase.table("quirofanos").select("id, nombre, codigo").limit(1).execute()
-        quirofano_id = q_resp.data[0]["id"] if q_resp.data else None
-        if not quirofano_id:
-            raise ValueError("No hay quirófanos configurados en la clínica.")
-
-        fecha_cx = as_data.get("fecha_definitiva_cirugia") or as_data.get("fecha_probable_cirugia") or date.today().isoformat()
-        ojo_val = ojo.upper() if ojo else (as_data.get("ojo") or "OD")
-        if ojo_val == "AO" and not ojo:
-            ojo_val = "OD"
-            
-        tok = secrets.token_urlsafe(24)
-        nuevo_turno_payload = {
-            "asesoria_id": asesoria_id,
-            "paciente_id": pac_id,
-            "quirofano_id": quirofano_id,
-            "fecha_cirugia": str(fecha_cx),
-            "hora_inicio": "08:00:00",
-            "duracion_minutos": 30,
-            "ojo": ojo_val,
-            "cirujano_id": as_data.get("medico_cirujano_id") or None,
-            "cirujano_nombre": as_data.get("medico_cirujano_nombre") or "Médico Cirujano",
-            "medico_derivador_nombre": as_data.get("medico_derivador_nombre") or None,
-            "practica_codigo": as_data.get("practica_codigo") or None,
-            "practica_nombre": as_data.get("practica_nombre") or "Cirugía Oftalmológica",
-            "obra_social": as_data.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
-            "plan_obra_social": pac.get("plan_cobertura") or None,
-            "estado": "programado",
-            "consentimiento_estado": "pendiente_envio",
-            "consentimiento_token": tok,
-            "created_at": "now()",
-            "updated_at": "now()"
-        }
-        
-        ins = supabase.table("turnos_quirofano").insert(nuevo_turno_payload).execute()
-        if ins.data and len(ins.data) > 0:
-            turno_creado = ins.data[0]
-            turno_creado["pacientes"] = pac
-            turno_creado["quirofanos"] = q_resp.data[0] if q_resp.data else {}
-            return turno_creado
-        raise RuntimeError("No se pudo instanciar el turno para consentimiento.")
+        # 2. Nunca crear turnos ficticios en turnos_quirofano sin sala/horario reales
+        return None
     except Exception as e:
         logger.error(f"Error en asegurar_turno_para_consentimiento_asesoria ({asesoria_id}): {e}")
         raise
+
+
+def asegurar_consentimiento_asesoria(
+    asesoria_id: str,
+    ojo: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene el contexto de consentimiento para una asesoría y ojo ('OD'/'OI' o unilateral):
+    - Si existe turno activo en turnos_quirofano, lo retorna.
+    - Si NO existe turno en Quirófano, persiste/lee el token y estado directamente en
+      asesorias_quirurgicas.checklist_prequirurgico sin crear turnos ficticios.
+    """
+    if not supabase or not asesoria_id:
+        return None
+    try:
+        import secrets
+        res_a = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").eq("id", asesoria_id).limit(1).execute()
+        if not res_a.data:
+            return None
+        as_data = res_a.data[0]
+        pac = as_data.get("pacientes") or {}
+        chk = dict(as_data.get("checklist_prequirurgico") or {}) if isinstance(as_data.get("checklist_prequirurgico"), dict) else {}
+        meta_bi = chk.get("_meta_bilateral") or {}
+        ojo_caso = (as_data.get("ojo") or "OD").upper()
+        es_esc = (ojo_caso == "AO") and (str(meta_bi.get("modalidad") or "").lower() == "escalonada")
+        orden = meta_bi.get("orden") or "OD_primero"
+        p1_ojo = "OI" if orden == "OI_primero" else "OD"
+        p2_ojo = "OD" if p1_ojo == "OI" else "OI"
+
+        ojo_target = ojo_caso
+        fecha_target = as_data.get("fecha_definitiva_cirugia") or as_data.get("fecha_probable_cirugia")
+        if es_esc:
+            ojo_l = (ojo or "").lower()
+            if ojo_l in ("segundo_ojo", "2do_ojo", p2_ojo.lower()):
+                ojo_target = p2_ojo
+                fecha_target = meta_bi.get("fecha_definitiva_2do_ojo") or meta_bi.get("fecha_probable_2do_ojo") or fecha_target
+            else:
+                ojo_target = p1_ojo
+            c_key = f"_consentimiento_qx_{ojo_target}"
+        else:
+            if ojo and ojo.upper() in ("OD", "OI"):
+                ojo_target = ojo.upper()
+            c_key = "_consentimiento_qx"
+
+        turno_real = asegurar_turno_para_consentimiento_asesoria(
+            asesoria_id,
+            ojo=ojo_target if es_esc else (ojo.upper() if ojo and ojo.upper() in ("OD", "OI") else None),
+            crear_si_no_existe=False
+        )
+        if turno_real:
+            return turno_real
+
+        c_obj = dict(chk.get(c_key) or {})
+        tok = c_obj.get("token") or (as_data.get("consentimiento_token") if c_key == "_consentimiento_qx" else None)
+        if not tok:
+            tok = secrets.token_urlsafe(24)
+            c_obj["token"] = tok
+            if not c_obj.get("estado"):
+                c_obj["estado"] = "pendiente_envio"
+            c_obj["ojo"] = ojo_target
+            chk[c_key] = c_obj
+            supabase.table("asesorias_quirurgicas").update({
+                "checklist_prequirurgico": chk,
+                "updated_at": "now()"
+            }).eq("id", asesoria_id).execute()
+
+        return {
+            "id": None,
+            "asesoria_id": asesoria_id,
+            "paciente_id": as_data.get("paciente_id") or pac.get("id"),
+            "pacientes": pac,
+            "quirofanos": {"nombre": "A confirmar por Quirófano"},
+            "fecha_cirugia": str(fecha_target) if fecha_target else None,
+            "hora_inicio": None,
+            "ojo": ojo_target,
+            "es_bilateral_escalonada": es_esc,
+            "cirujano_id": as_data.get("medico_cirujano_id"),
+            "cirujano_nombre": as_data.get("medico_cirujano_nombre") or "Médico Cirujano",
+            "practica_codigo": as_data.get("practica_codigo"),
+            "practica_nombre": as_data.get("practica_nombre") or "Cirugía Oftalmológica",
+            "consentimiento_token": tok,
+            "consentimiento_estado": c_obj.get("estado") or "pendiente_envio",
+            "consentimiento_pdf_url": c_obj.get("pdf_url"),
+            "consentimiento_firmado_at": c_obj.get("firmado_at"),
+            "_consent_key": c_key,
+        }
+    except Exception as e_ac:
+        logger.error(f"Error en asegurar_consentimiento_asesoria ({asesoria_id}): {e_ac}")
+        return None
 
 
 def asegurar_turnos_para_consentimiento_asesoria(
@@ -8005,6 +8319,9 @@ def asegurar_turnos_para_consentimiento_asesoria(
             )
             f_unica = as_data.get("fecha_definitiva_cirugia") or as_data.get("fecha_probable_cirugia")
             if not t_unico:
+                c_uni_chk = dict(chk.get("_consentimiento_qx") or {})
+                c_est_u = c_uni_chk.get("estado") or ("firmado_papel" if chk.get("consentimiento_firmado") else "pendiente")
+                es_firmado_u = bool(c_uni_chk.get("firmado_at") or chk.get("consentimiento_firmado") or c_est_u in ("firmado_digital", "firmado_papel", "firmado"))
                 return {
                     "ok": True,
                     "es_bilateral_escalonada": False,
@@ -8016,12 +8333,12 @@ def asegurar_turnos_para_consentimiento_asesoria(
                         "turno_id": None,
                         "ojo": ojo_caso or "OD",
                         "ojo_desc": ojo_desc_unico,
-                        "estado": "pendiente",
-                        "firmado": False,
-                        "modo_firma": None,
-                        "token": None,
-                        "pdf_url": None,
-                        "firmado_at": None,
+                        "estado": c_est_u,
+                        "firmado": es_firmado_u,
+                        "modo_firma": "papel" if c_est_u == "firmado_papel" else ("digital" if es_firmado_u else None),
+                        "token": c_uni_chk.get("token") or as_data.get("consentimiento_token"),
+                        "pdf_url": c_uni_chk.get("pdf_url"),
+                        "firmado_at": c_uni_chk.get("firmado_at") or chk.get("_consentimiento_firmado_at"),
                         "fecha": f_unica,
                         "fecha_cirugia": f_unica,
                         "hora_inicio": None,
@@ -8075,7 +8392,13 @@ def asegurar_turnos_para_consentimiento_asesoria(
         primer_ojo_desc = f"1° Ojo a Operar ({'OD' if primer_ojo == 'OD' else 'OI'})"
         segundo_ojo_desc = f"2° Ojo a Operar ({'OD' if segundo_ojo == 'OD' else 'OI'})"
 
-        if not turnos and not crear_si_no_existe:
+        if not turnos:
+            c1 = dict(chk.get(f"_consentimiento_qx_{primer_ojo}") or chk.get("_consentimiento_qx") or {})
+            c2 = dict(chk.get(f"_consentimiento_qx_{segundo_ojo}") or {})
+            est1 = c1.get("estado") or "pendiente"
+            est2 = c2.get("estado") or "pendiente"
+            f1_b = bool(c1.get("firmado_at") or est1 in ("firmado_digital", "firmado_papel", "firmado"))
+            f2_b = bool(c2.get("firmado_at") or est2 in ("firmado_digital", "firmado_papel", "firmado"))
             p1_mock = {
                 "turno_id": None,
                 "ojo": primer_ojo,
@@ -8086,12 +8409,12 @@ def asegurar_turnos_para_consentimiento_asesoria(
                 "fecha": str(fecha_1),
                 "fecha_cirugia": str(fecha_1),
                 "hora_inicio": None,
-                "estado": "pendiente",
-                "firmado": False,
-                "modo_firma": None,
-                "token": None,
-                "pdf_url": None,
-                "firmado_at": None,
+                "estado": est1,
+                "firmado": f1_b,
+                "modo_firma": "papel" if est1 == "firmado_papel" else ("digital" if est1 in ("firmado_digital", "firmado") else None),
+                "token": c1.get("token"),
+                "pdf_url": c1.get("pdf_url"),
+                "firmado_at": c1.get("firmado_at"),
                 "practica_nombre": as_data.get("practica_nombre"),
                 "cirujano_nombre": as_data.get("medico_cirujano_nombre")
             }
@@ -8105,15 +8428,19 @@ def asegurar_turnos_para_consentimiento_asesoria(
                 "fecha": str(fecha_2),
                 "fecha_cirugia": str(fecha_2),
                 "hora_inicio": None,
-                "estado": "pendiente",
-                "firmado": False,
-                "modo_firma": None,
-                "token": None,
-                "pdf_url": None,
-                "firmado_at": None,
+                "estado": est2,
+                "firmado": f2_b,
+                "modo_firma": "papel" if est2 == "firmado_papel" else ("digital" if est2 in ("firmado_digital", "firmado") else None),
+                "token": c2.get("token"),
+                "pdf_url": c2.get("pdf_url"),
+                "firmado_at": c2.get("firmado_at"),
                 "practica_nombre": as_data.get("practica_nombre"),
                 "cirujano_nombre": as_data.get("medico_cirujano_nombre")
             }
+            ambos_f = f1_b and f2_b
+            alguno_f = f1_b or f2_b
+            alguno_env = est1 in ("enviado_wa", "enviado_whatsapp") or est2 in ("enviado_wa", "enviado_whatsapp")
+            est_cons = "firmado_digital" if ambos_f else ("parcialmente_firmado" if alguno_f else ("enviado_whatsapp" if alguno_env else "pendiente"))
             return {
                 "ok": True,
                 "es_bilateral_escalonada": True,
@@ -8123,8 +8450,8 @@ def asegurar_turnos_para_consentimiento_asesoria(
                 "turno_principal": None,
                 "consentimiento": {
                     **p1_mock,
-                    "estado_consolidado": "pendiente",
-                    "ambos_firmados": False
+                    "estado_consolidado": est_cons,
+                    "ambos_firmados": ambos_f
                 }
             }
 
@@ -8151,14 +8478,11 @@ def asegurar_turnos_para_consentimiento_asesoria(
             except Exception as e_upd_o1:
                 logger.warning(f"Aviso actualizando lateralidad de turno 1 en consentimiento: {e_upd_o1}")
 
-        # Si no existe turno 1 y se pide crear:
-        if not turno_1 and crear_si_no_existe:
-            turno_1 = asegurar_turno_para_consentimiento_asesoria(asesoria_id, ojo=primer_ojo, crear_si_no_existe=True)
-        elif turno_1:
-            if not turno_1.get("consentimiento_token"):
-                tok1 = secrets.token_urlsafe(24)
-                supabase.table("turnos_quirofano").update({"consentimiento_token": tok1, "updated_at": "now()"}).eq("id", turno_1["id"]).execute()
-                turno_1["consentimiento_token"] = tok1
+        # Nunca crear turnos ficticios si falta turno_1 o turno_2; usar checklist_prequirurgico como respaldo
+        if turno_1 and not turno_1.get("consentimiento_token"):
+            tok1 = (chk.get(f"_consentimiento_qx_{primer_ojo}") or {}).get("token") or secrets.token_urlsafe(24)
+            supabase.table("turnos_quirofano").update({"consentimiento_token": tok1, "updated_at": "now()"}).eq("id", turno_1["id"]).execute()
+            turno_1["consentimiento_token"] = tok1
 
         # 2. Emparejar turno del 2° ojo (prioridad: fecha_2; respaldo: siguiente turno cronológico)
         turno_2 = None
@@ -8179,47 +8503,16 @@ def asegurar_turnos_para_consentimiento_asesoria(
             except Exception as e_upd_o2:
                 logger.warning(f"Aviso actualizando lateralidad de turno 2 en consentimiento: {e_upd_o2}")
 
-        # Si no existe turno 2 y se pide crear con la fecha del 2° ojo:
-        if not turno_2 and crear_si_no_existe and turno_1:
-            q_id = turno_1.get("quirofano_id")
-            if not q_id:
-                q_resp = supabase.table("quirofanos").select("id").limit(1).execute()
-                q_id = q_resp.data[0]["id"] if q_resp.data else None
+        if turno_2 and not turno_2.get("consentimiento_token"):
+            tok2 = (chk.get(f"_consentimiento_qx_{segundo_ojo}") or {}).get("token") or secrets.token_urlsafe(24)
+            supabase.table("turnos_quirofano").update({"consentimiento_token": tok2, "updated_at": "now()"}).eq("id", turno_2["id"]).execute()
+            turno_2["consentimiento_token"] = tok2
 
-            tok2 = secrets.token_urlsafe(24)
-            nuevo_t2 = {
-                "asesoria_id": asesoria_id,
-                "paciente_id": pac_id,
-                "quirofano_id": q_id,
-                "fecha_cirugia": str(fecha_2),
-                "hora_inicio": "08:00:00",
-                "duracion_minutos": 30,
-                "ojo": segundo_ojo,
-                "cirujano_id": as_data.get("medico_cirujano_id") or turno_1.get("cirujano_id"),
-                "cirujano_nombre": as_data.get("medico_cirujano_nombre") or turno_1.get("cirujano_nombre"),
-                "practica_codigo": as_data.get("practica_codigo") or turno_1.get("practica_codigo"),
-                "practica_nombre": as_data.get("practica_nombre") or turno_1.get("practica_nombre"),
-                "obra_social": as_data.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
-                "plan_obra_social": pac.get("plan_cobertura") or None,
-                "estado": "programado",
-                "consentimiento_estado": "pendiente_envio",
-                "consentimiento_token": tok2,
-                "created_at": "now()",
-                "updated_at": "now()"
-            }
-            ins_res = supabase.table("turnos_quirofano").insert(nuevo_t2).execute()
-            if ins_res.data:
-                turno_2 = ins_res.data[0]
-                turno_2["pacientes"] = pac
-        elif turno_2:
-            if not turno_2.get("consentimiento_token"):
-                tok2 = secrets.token_urlsafe(24)
-                supabase.table("turnos_quirofano").update({"consentimiento_token": tok2, "updated_at": "now()"}).eq("id", turno_2["id"]).execute()
-                turno_2["consentimiento_token"] = tok2
-
-        # Armar estructuras por ojo
-        c_est1 = (turno_1.get("consentimiento_estado") if turno_1 else "pendiente") or "pendiente"
-        c_est2 = (turno_2.get("consentimiento_estado") if turno_2 else "pendiente") or "pendiente"
+        # Armar estructuras por ojo (heredando de checklist_prequirurgico si un ojo aún no tiene turno)
+        c1_chk = dict(chk.get(f"_consentimiento_qx_{primer_ojo}") or chk.get("_consentimiento_qx") or {})
+        c2_chk = dict(chk.get(f"_consentimiento_qx_{segundo_ojo}") or {})
+        c_est1 = ((turno_1.get("consentimiento_estado") if turno_1 else None) or c1_chk.get("estado") or "pendiente")
+        c_est2 = ((turno_2.get("consentimiento_estado") if turno_2 else None) or c2_chk.get("estado") or "pendiente")
 
         f1_val = str((turno_1.get("fecha_cirugia") if turno_1 else None) or fecha_1 or "")
         f2_val = str((turno_2.get("fecha_cirugia") if turno_2 else None) or fecha_2 or "")
@@ -8430,7 +8723,7 @@ def generar_pdf_consentimiento_papel(turno_o_asesoria: Dict[str, Any]) -> str:
             "cirugia": turno.get("practica_nombre") or "Cirugía Oftalmológica",
             "ojo_intervenido": ojo_desc,
             "ojo": ojo_desc,
-            "quirofano": (turno.get("quirofanos") or {}).get("nombre") or "Quirófano Central",
+            "quirofano": (turno.get("quirofanos") or {}).get("nombre") or "A confirmar por Quirófano",
             "fecha": str(turno.get("fecha_cirugia") or ""),
             "fecha_cirugia": str(turno.get("fecha_cirugia") or ""),
             "hora_cirugia": str(turno.get("hora_inicio") or "")[:5],

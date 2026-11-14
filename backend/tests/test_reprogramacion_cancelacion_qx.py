@@ -255,3 +255,66 @@ def test_suspender_reprogramar_bilateral_preserva_otro_ojo_activo():
     assert res["nuevo_estado_asesoria"] == "programado"
     upd_chk = calls["asesorias_update"][0]["checklist_prequirurgico"]
     assert upd_chk["_meta_bilateral"]["fecha_definitiva_2do_ojo"] is None
+
+
+def test_cambio_fecha_definitiva_en_asesoria_cancela_turno_existente_sin_reemplazarlo():
+    """
+    Verifica que si Asesoramiento cambia fecha_definitiva_cirugia sin enviar sala/hora,
+    se cancele el turno activo previo con motivo 'reprogramado_asesoramiento'
+    y no se cree un turno nuevo automáticamente.
+    """
+    asesoria_orig = {
+        "id": "as-reprog",
+        "paciente_id": "pac-1",
+        "practica_nombre": "Catarata",
+        "medico_derivador_nombre": "Dra. López",
+        "medico_cirujano_nombre": "Dr. Pérez",
+        "estado": "programado",
+        "ojo": "OD",
+        "fecha_definitiva_cirugia": "2026-11-16",
+        "checklist_prequirurgico": {},
+    }
+    turno_activo = {
+        "id": "t-viejo",
+        "asesoria_id": "as-reprog",
+        "ojo": "OD",
+        "estado": "programado",
+        "fecha_cirugia": "2026-11-16",
+    }
+
+    turnos_updates = []
+
+    def table_router(name):
+        if name == "asesorias_quirurgicas":
+            q = MagicMock()
+            q.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[asesoria_orig])
+            q.update.return_value.eq.return_value.execute.return_value = MagicMock(
+                data=[{**asesoria_orig, "fecha_definitiva_cirugia": "2026-12-02"}]
+            )
+            return q
+        if name == "turnos_quirofano":
+            q = MagicMock()
+            q.select.return_value = FakeQuery(data=[turno_activo])
+            def update_fn(payload):
+                turnos_updates.append(payload)
+                return FakeQuery(data=[{**turno_activo, **payload}])
+            q.update = update_fn
+            return q
+        return FakeQuery()
+
+    fake_sb = MagicMock()
+    fake_sb.table.side_effect = table_router
+
+    with patch.object(db, "supabase", fake_sb), \
+         patch.object(db, "sincronizar_presupuesto_desde_caso_quirurgico"), \
+         patch.object(db, "get_configuracion_automatismos", return_value={"recontacto_humano_en_analisis_activo": False}):
+        db.actualizar_asesoria_quirurgica("as-reprog", {
+            "practica_nombre": "Catarata",
+            "medico_derivador_nombre": "Dra. López",
+            "medico_cirujano_nombre": "Dr. Pérez",
+            "fecha_definitiva_cirugia": "2026-12-02",
+        })
+
+    cancel_updates = [u for u in turnos_updates if u.get("estado") == "cancelado"]
+    assert len(cancel_updates) == 1
+    assert cancel_updates[0]["motivo_cancelacion"] == "reprogramado_asesoramiento"

@@ -129,3 +129,70 @@ def test_sincronizar_turno_quirofano_no_crea_sin_quirofano_ni_hora():
         turnos = sincronizar_turno_quirofano_desde_asesoria("as-sin-quirofano", payload_agenda, asesoria_db)
         assert turnos == []
         mock_table.insert.assert_not_called()
+
+
+def test_asegurar_consentimiento_sin_turno_persiste_en_asesoria_y_genera_pdf():
+    """
+    Verifica que asegurar_consentimiento_asesoria y registrar_envio_consentimiento_quirurgico
+    persistan el token por ojo en asesorias_quirurgicas.checklist_prequirurgico sin crear turnos dummy,
+    y que generar_pdf_consentimiento_informado funcione con turno['id'] == None.
+    """
+    from app.db import asegurar_consentimiento_asesoria, registrar_envio_consentimiento_quirurgico
+    from app.services.pdf_service import generar_pdf_consentimiento_informado
+
+    as_row = {
+        "id": "as-cons-sin-turno",
+        "paciente_id": "pac-1",
+        "codigo_caso": "QX-26-0999",
+        "practica_nombre": "Catarata con Facoemulsificación",
+        "ojo": "OD",
+        "estado": "programado",
+        "fecha_definitiva_cirugia": "2026-12-10",
+        "checklist_prequirurgico": {},
+        "pacientes": {"id": "pac-1", "nombre": "Peña, Sebastián", "dni": "33516799"},
+    }
+
+    with patch("app.db.supabase") as mock_sb:
+        mock_as = MagicMock()
+        mock_as.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[as_row])
+        mock_as.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[as_row])
+        mock_as.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[as_row])
+
+        mock_turnos = MagicMock()
+        mock_turnos.select.return_value.eq.return_value.neq.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+
+        mock_sb.table.side_effect = lambda t: mock_as if t == "asesorias_quirurgicas" else mock_turnos
+
+        turno_virtual = asegurar_consentimiento_asesoria("as-cons-sin-turno", ojo="OD")
+        assert turno_virtual is not None
+        assert turno_virtual["id"] is None
+        assert turno_virtual["hora_inicio"] is None
+        mock_turnos.insert.assert_not_called()
+
+        reg = registrar_envio_consentimiento_quirurgico(
+            turno_id=None,
+            paciente_id="pac-1",
+            telefono="5492610000000",
+            modo_envio="whatsapp",
+            token="tok-sin-turno-123",
+            enlace_firma="https://example.com/consentimiento/tok-sin-turno-123",
+            asesoria_id="as-cons-sin-turno",
+            ojo="OD",
+        )
+        assert reg is True
+        assert any(
+            "checklist_prequirurgico" in c[0][0]
+            and c[0][0]["checklist_prequirurgico"].get("_consentimiento_qx", {}).get("token") == "tok-sin-turno-123"
+            for c in mock_as.update.call_args_list
+        )
+
+        pdf_res = generar_pdf_consentimiento_informado(
+            turno_virtual,
+            as_row["pacientes"],
+            "<p>Contenido de prueba</p>",
+        )
+        assert pdf_res is not None
+        if isinstance(pdf_res, str):
+            assert "as-cons-sin-turno_OD" in pdf_res
+        else:
+            assert isinstance(pdf_res, (bytes, bytearray)) and len(pdf_res) > 100

@@ -81,7 +81,10 @@ export default function PanelAsesoriaQuirurgica({
         }
       }
 
-      setAsesorias(lista)
+      setAsesorias((prev) => {
+        const borradoresLocales = prev.filter((c) => c.esBorrador)
+        return [...borradoresLocales, ...lista]
+      })
       // Todas las cirugías inician colapsadas por defecto para una vista panorámica limpia
     } catch (err: any) {
       console.error('Error cargando asesorías:', err)
@@ -130,80 +133,48 @@ export default function PanelAsesoriaQuirurgica({
     }))
   }
 
-  // Crear una nueva cirugía / procedimiento para este paciente
-  const handleCrearNuevaCirugia = async () => {
-    try {
-      setCreandoNuevo(true)
-      setError(null)
-
-      const payload = {
-        paciente_id: pacienteId,
-        practica_nombre: 'Nueva Cirugía / Procedimiento',
-        cobertura_obra_social: obraSocialDefault || null,
-        estado: 'en_asesoramiento',
-        moneda_extra: 'ARS',
-        monto_extra: 0
-      }
-
-      const res = await apiFetch('/api/asesorias-quirurgicas/', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      })
-
-      const data = await res.json()
-      if (!res.ok || !data.success) {
-        throw new Error(data.detail || data.mensaje || 'Error al crear nuevo caso.')
-      }
-
-      const nuevaAsesoria: AsesoriaQuirurgica = data.asesoria
-      setAsesorias((prev) => [nuevaAsesoria, ...prev])
-      
-      // Desplegar automáticamente el nuevo caso creado
-      setDesplegados((prev) => ({
-        ...prev,
-        [nuevaAsesoria.id]: true
-      }))
-
-      setMensajeExito(`✔ Nuevo sector de cirugía #${asesorias.length + 1} habilitado para configurar.`)
-      setTimeout(() => setMensajeExito(null), 3500)
-    } catch (err: any) {
-      console.error('Error al crear nuevo caso:', err)
-      // Fallback Supabase directo
-      try {
-        const { data: sbData, error: sbErr } = await supabase
-          .from('asesorias_quirurgicas')
-          .insert({
-            paciente_id: pacienteId,
-            practica_nombre: 'Nueva Cirugía / Procedimiento',
-            cobertura_obra_social: obraSocialDefault || null,
-            estado: 'en_asesoramiento',
-            moneda_extra: 'ARS',
-            monto_extra: 0
-          })
-          .select()
-
-        if (!sbErr && sbData && sbData.length > 0) {
-          const nueva = sbData[0] as AsesoriaQuirurgica
-          setAsesorias((prev) => [nueva, ...prev])
-          setDesplegados((prev) => ({ ...prev, [nueva.id]: true }))
-          setMensajeExito(`✔ Nuevo sector de cirugía #${asesorias.length + 1} habilitado.`)
-          setTimeout(() => setMensajeExito(null), 3500)
-        } else {
-          throw sbErr || new Error('No se pudo crear el caso en Supabase.')
-        }
-      } catch (fallbackErr: any) {
-        setError(fallbackErr.message || 'Error inesperado al crear nuevo caso.')
-      }
-    } finally {
-      setCreandoNuevo(false)
+  // Crear una nueva cirugía / procedimiento como borrador diferido en memoria (sin persistir en BD hasta completar campos obligatorios)
+  const handleCrearNuevaCirugia = () => {
+    setError(null)
+    const draftId = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    const ahora = new Date().toISOString()
+    const borrador: AsesoriaQuirurgica = {
+      id: draftId,
+      esBorrador: true,
+      paciente_id: pacienteId,
+      practica_nombre: '',
+      cobertura_obra_social: obraSocialDefault || null,
+      estado: 'en_asesoramiento',
+      moneda_extra: 'ARS',
+      monto_extra: 0,
+      ojo: 'OD',
+      checklist_prequirurgico: {},
+      created_at: ahora,
+      updated_at: ahora,
     }
+    setAsesorias((prev) => [borrador, ...prev])
+    setDesplegados((prev) => ({
+      ...prev,
+      [draftId]: true,
+    }))
+    setMensajeExito('Completá Práctica, Derivador y Cirujano para guardar el nuevo caso en base de datos.')
+    setTimeout(() => setMensajeExito(null), 4000)
   }
 
-  // Callback cuando se actualiza un caso
-  const handleCasoActualizado = (casoActualizado: AsesoriaQuirurgica) => {
+  // Callback cuando se actualiza (o promueve desde borrador) un caso
+  const handleCasoActualizado = (casoActualizado: AsesoriaQuirurgica, idAnterior?: string) => {
+    const idTarget = idAnterior || casoActualizado.id
     setAsesorias((prev) =>
-      prev.map((c) => (c.id === casoActualizado.id ? casoActualizado : c))
+      prev.map((c) => (c.id === idTarget ? { ...casoActualizado, esBorrador: false } : c))
     )
+    if (idAnterior && idAnterior !== casoActualizado.id) {
+      setDesplegados((prev) => {
+        const next = { ...prev }
+        delete next[idAnterior]
+        next[casoActualizado.id] = true
+        return next
+      })
+    }
   }
 
   // Callback cuando se elimina un caso

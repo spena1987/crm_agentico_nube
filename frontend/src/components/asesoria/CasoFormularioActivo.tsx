@@ -224,6 +224,35 @@ export default function CasoFormularioActivo({
   const [buscandoPractica, setBuscandoPractica] = useState(false)
   const [mostrarDropdownPractica, setMostrarDropdownPractica] = useState(false)
 
+  // Cerrar desplegables (Práctica, Derivador, Cirujano) al hacer clic fuera o presionar Escape
+  useEffect(() => {
+    const handlePointerDownOutside = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (practicaCardRef.current && !practicaCardRef.current.contains(target)) {
+        setMostrarDropdownPractica(false)
+      }
+      if (derivadorCardRef.current && !derivadorCardRef.current.contains(target)) {
+        setMostrarDropdownDerivador(false)
+      }
+      if (cirujanoCardRef.current && !cirujanoCardRef.current.contains(target)) {
+        setMostrarDropdownCirujano(false)
+      }
+    }
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMostrarDropdownPractica(false)
+        setMostrarDropdownDerivador(false)
+        setMostrarDropdownCirujano(false)
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDownOutside)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDownOutside)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [])
+
   // Selector colapsable de presupuestos históricos del paciente
   const [mostrarOtrosPresupuestos, setMostrarOtrosPresupuestos] = useState(false)
 
@@ -507,11 +536,18 @@ export default function CasoFormularioActivo({
     window.open(url, '_blank')
   }
 
-  const esProgramadoQx = ['programado', 'en_espera', 'pre_quirofano', 'en_operacion', 'operado'].includes(estado)
+  const esProgramadoQx =
+    ['programado', 'en_espera', 'pre_quirofano', 'en_operacion', 'operado'].includes(estado) ||
+    Boolean(fechaDefinitiva)
 
   const abrirModalWhatsApp = (ojo?: string) => {
+    if (caso.esBorrador) {
+      setAvisoValidacion('⚠️ Guardá el expediente quirúrgico primero para habilitar el envío de Consentimiento.')
+      setTimeout(() => setAvisoValidacion(null), 5000)
+      return
+    }
     if (!esProgramadoQx) {
-      setAvisoValidacion('⚠️ El Consentimiento Informado por WhatsApp solo puede enviarse cuando el turno quirúrgico esté programado en Quirófano.')
+      setAvisoValidacion('⚠️ El Consentimiento Informado por WhatsApp solo puede enviarse cuando el caso tenga Fecha Definitiva o esté Programado.')
       setTimeout(() => setAvisoValidacion(null), 6000)
       return
     }
@@ -520,6 +556,11 @@ export default function CasoFormularioActivo({
   }
 
   const abrirModalFirmaPapel = (ojoObjetivo: 'primer_ojo' | 'segundo_ojo' | 'ambos' = 'ambos') => {
+    if (caso.esBorrador) {
+      setAvisoValidacion('⚠️ Guardá el expediente quirúrgico primero para registrar firma en papel.')
+      setTimeout(() => setAvisoValidacion(null), 5000)
+      return
+    }
     setOjoObjetivoFirmaPapel(ojoObjetivo)
     setMostrandoModalFirmaPapel(true)
   }
@@ -867,6 +908,7 @@ export default function CasoFormularioActivo({
       proximaAccionFecha !== (caso.proxima_accion_fecha || '') ||
       proximaAccionTexto !== (caso.proxima_accion_texto || '') ||
       situacionPaciente !== (caso.situacion_paciente || '') ||
+      JSON.stringify(lioSeleccion) !== JSON.stringify(lioSeleccionInicial) ||
       JSON.stringify(checklist) !== JSON.stringify(caso.checklist_prequirurgico || {})
     )
   }, [
@@ -896,10 +938,22 @@ export default function CasoFormularioActivo({
     proximaAccionFecha,
     proximaAccionTexto,
     situacionPaciente,
+    lioSeleccion,
+    lioSeleccionInicial,
     checklist,
     caso,
     obraSocialDefault
   ])
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [hasUnsavedChanges])
 
   // Filtrado reactivo en memoria para médicos Geclisa
   const derivadoresFiltrados = useMemo(() => {
@@ -1355,6 +1409,7 @@ export default function CasoFormularioActivo({
   }
 
   const handleGuardarCambios = () => {
+    if (guardando) return
     let cleanPracticaNombre = (practicaNombre || '').trim()
     if (!cleanPracticaNombre && busquedaPractica) {
       cleanPracticaNombre = busquedaPractica.replace(/^\[.*?\]\s*/, '').trim()
@@ -1387,9 +1442,11 @@ export default function CasoFormularioActivo({
 
     const derivNombre = (medicoDerivador.nombre || busquedaDerivador || '').trim() || null
     const cirujNombre = (medicoCirujano.nombre || busquedaCirujano || '').trim() || null
+    const etapasPreviasAProgramado = ['derivado', 'en_asesoramiento', 'en_analisis', 'presupuesto_enviado', 'confirmado']
+    const estadoEfectivo = (fechaDefinitiva && etapasPreviasAProgramado.includes(estado)) ? 'programado' : estado
 
     const payload: Partial<AsesoriaQuirurgica> & Record<string, any> = {
-      estado,
+      estado: estadoEfectivo,
       cobertura_obra_social: (cobertura || '').trim() || null,
       medico_derivador_id: medicoDerivador.id || null,
       medico_derivador_nombre: derivNombre,
@@ -1408,24 +1465,8 @@ export default function CasoFormularioActivo({
       fecha_probable_cirugia: fechaProbable || null,
       fecha_definitiva_cirugia: fechaDefinitiva || null,
       ojo: ojo,
-      // Datos de agenda de quirófano sincronizada bidireccionalmente
-      quirofano_id: quirofanoId || null,
-      hora_inicio: horaInicio || null,
-      duracion_minutos: duracionMinutos || 45,
-      ...(ojo === 'AO' && modalidadBilateral === 'escalonada'
-        ? {
-            quirofano_id_2do_ojo: quirofanoId2doOjo || null,
-            hora_inicio_2do_ojo: horaInicio2doOjo || null,
-            duracion_minutos_2do_ojo: duracionMinutos2doOjo || 45
-          }
-        : {}),
       checklist_prequirurgico: {
         ...checklist,
-        _agenda_qx: {
-          quirofano_id: quirofanoId || null,
-          hora_inicio: horaInicio || null,
-          duracion_minutos: duracionMinutos || 45
-        },
         _pagos: {
           sena_ars: senaArs,
           sena_usd: senaUsd,
@@ -1436,10 +1477,7 @@ export default function CasoFormularioActivo({
           modalidad: ojo === 'AO' ? modalidadBilateral : null,
           orden: ojo === 'AO' && modalidadBilateral === 'escalonada' ? ordenOjos : null,
           fecha_probable_2do_ojo: ojo === 'AO' ? fechaProbable2doOjo || null : null,
-          fecha_definitiva_2do_ojo: ojo === 'AO' ? fechaDefinitiva2doOjo || null : null,
-          quirofano_id_2do_ojo: ojo === 'AO' && modalidadBilateral === 'escalonada' ? quirofanoId2doOjo || null : null,
-          hora_inicio_2do_ojo: ojo === 'AO' && modalidadBilateral === 'escalonada' ? horaInicio2doOjo || null : null,
-          duracion_minutos_2do_ojo: ojo === 'AO' && modalidadBilateral === 'escalonada' ? duracionMinutos2doOjo || 45 : null
+          fecha_definitiva_2do_ojo: ojo === 'AO' ? fechaDefinitiva2doOjo || null : null
         },
         _lio_seleccion: {
           estado: lioSeleccion.estado || 'a_definir',
@@ -1671,12 +1709,16 @@ export default function CasoFormularioActivo({
                   buscarPracticasNomenclador(busquedaPractica)
                   setMostrarDropdownPractica(true)
                 }}
-                onBlur={() => {
-                  setTimeout(() => {
-                    if (!busquedaPractica.trim() && practicaNombre) {
-                      setBusquedaPractica(practicaCodigo ? `[${practicaCodigo}] ${practicaNombre}` : practicaNombre)
-                    }
-                  }, 250)
+                onBlur={(e) => {
+                  const nextFocus = e.relatedTarget as Node | null
+                  if (!nextFocus || !practicaCardRef.current?.contains(nextFocus)) {
+                    setTimeout(() => {
+                      setMostrarDropdownPractica(false)
+                      if (!busquedaPractica.trim() && practicaNombre) {
+                        setBusquedaPractica(practicaCodigo ? `[${practicaCodigo}] ${practicaNombre}` : practicaNombre)
+                      }
+                    }, 180)
+                  }
                 }}
                 className={`w-full pl-3 pr-14 py-2 text-xs rounded-xl font-medium focus:outline-none transition-all ${
                   esPracticaInvalida
@@ -2142,151 +2184,32 @@ export default function CasoFormularioActivo({
                     </div>
                   </div>
 
-                  {/* Asignación de Quirófano y Horario (Activo solo con fecha definitiva fijada) */}
+                  {/* Estado de Asignación de Quirófano y Horario (Solo lectura: gestionado por Quirófano) */}
                   {fechaDefinitiva ? (
-                    <div className="pt-2.5 border-t border-neutral-800 bg-neutral-950/40 p-2.5 rounded-xl space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
-                          <Building2 size={13} className="text-amber-400" />
-                          Asignación de Agenda y Quirófano
-                        </span>
-                        <span className="text-[10px] text-gray-400 font-mono flex items-center gap-1">
-                          {cargandoAgendaFecha ? (
-                            <Loader2 size={11} className="animate-spin text-amber-400" />
-                          ) : (
-                            <span className="text-emerald-400">● Sincronizado en tiempo real</span>
-                          )}
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                        {/* Quirófano / Sala */}
-                        <div>
-                          <label className="text-[10px] text-gray-400 block mb-1 font-semibold">
-                            Quirófano / Sala:
-                          </label>
-                          <select
-                            disabled={guardando}
-                            value={quirofanoId}
-                            onChange={(e) => setQuirofanoId(e.target.value)}
-                            className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-amber-400 font-semibold"
-                          >
-                            <option value="">-- Seleccionar Quirófano / Sala --</option>
-                            {quirofanos.filter((q: any) => q.tipo_sala !== 'consultorio').length > 0 && (
-                              <optgroup label="🏥 Quirófanos Estériles">
-                                {quirofanos
-                                  .filter((q: any) => q.tipo_sala !== 'consultorio')
-                                  .map((q: any) => (
-                                    <option key={q.id} value={q.id}>
-                                      {q.nombre} ({q.codigo || 'Qx'})
-                                    </option>
-                                  ))}
-                              </optgroup>
-                            )}
-                            {quirofanos.filter((q: any) => q.tipo_sala === 'consultorio').length > 0 && (
-                              <optgroup label="🏢 Salas de Consultorio / Tratamientos">
-                                {quirofanos
-                                  .filter((q: any) => q.tipo_sala === 'consultorio')
-                                  .map((q: any) => (
-                                    <option key={q.id} value={q.id}>
-                                      {q.nombre} ({q.codigo || 'Consultorio'})
-                                    </option>
-                                  ))}
-                              </optgroup>
-                            )}
-                          </select>
+                    (() => {
+                      const turnoAsignado = turnosActivos[0]
+                      return (
+                        <div className="p-2.5 rounded-xl bg-neutral-950/60 border border-emerald-500/30 text-[11px] flex items-center justify-between gap-2 flex-wrap">
+                          <span className="flex items-center gap-1.5 text-emerald-300 font-semibold">
+                            <Building2 size={13} className="text-emerald-400 shrink-0" />
+                            {turnoAsignado?.hora_inicio
+                              ? `Sala asignada por Quirófano: ${turnoAsignado?.quirofanos?.nombre || 'Quirófano'} — ${String(turnoAsignado.hora_inicio).slice(0, 5)} hs`
+                              : 'Fecha Definitiva fijada. Pendiente de asignación de sala y horario por Quirófano.'}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            turnoAsignado?.hora_inicio
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : 'bg-amber-500/20 text-amber-300'
+                          }`}>
+                            {turnoAsignado?.hora_inicio ? 'Sala & Horario OK' : 'Pendiente de Quirófano'}
+                          </span>
                         </div>
-
-                        {/* Hora de Inicio con slots en vivo */}
-                        <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="text-[10px] text-gray-400 font-semibold">
-                              Hora de Inicio:
-                            </label>
-                            {(() => {
-                              const slotEstado = getSlotInfo(horaInicio, quirofanoId, fechaDefinitiva, turnosFecha, bloqueosFecha)
-                              if (slotEstado.estado === 'sin_asignar') {
-                                return <span className="text-[9px] font-medium text-gray-500">Pendiente</span>
-                              }
-                              return (
-                                <span
-                                  className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                    slotEstado.estado === 'libre'
-                                      ? 'bg-emerald-500/20 text-emerald-300'
-                                      : slotEstado.estado === 'ocupado'
-                                      ? 'bg-red-500/20 text-red-300'
-                                      : 'bg-amber-500/20 text-amber-300'
-                                  }`}
-                                >
-                                  {(slotEstado as any).badge || (slotEstado.estado === 'libre' ? '🟢 Libre' : slotEstado.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado')}
-                                </span>
-                              )
-                            })()}
-                          </div>
-                          {(() => {
-                            const qActual = quirofanos.find((q: any) => q.id === quirofanoId) || quirofanos[0]
-                            const slots = generarSlotsHorarios(qActual)
-                            return (
-                              <select
-                                disabled={guardando || !quirofanoId}
-                                value={horaInicio}
-                                onChange={(e) => setHoraInicio(e.target.value)}
-                                className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-amber-400 font-mono font-bold disabled:opacity-50"
-                              >
-                                <option value="">-- Seleccionar Horario --</option>
-                                {slots.map((s) => {
-                                  const info = getSlotInfo(s, quirofanoId, fechaDefinitiva, turnosFecha, bloqueosFecha)
-                                  return (
-                                    <option key={s} value={s}>
-                                      {info.label}
-                                    </option>
-                                  )
-                                })}
-                              </select>
-                            )
-                          })()}
-                        </div>
-
-                        {/* Duración */}
-                        <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="text-[10px] text-gray-400 font-semibold">
-                              Duración Estimada:
-                            </label>
-                            <span className="text-[9px] font-mono text-gray-400">
-                              Fin: {horaInicio ? `${minutosAHora(horaAMinutos(horaInicio) + Number(duracionMinutos))} hs` : '--:--'}
-                            </span>
-                          </div>
-                          <select
-                            disabled={guardando}
-                            value={duracionMinutos}
-                            onChange={(e) => setDuracionMinutos(Number(e.target.value))}
-                            className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-amber-400 font-semibold"
-                          >
-                            <option value={15}>15 minutos</option>
-                            <option value={20}>20 minutos</option>
-                            <option value={30}>30 minutos</option>
-                            <option value={45}>45 minutos</option>
-                            <option value={60}>60 minutos (1 hora)</option>
-                            <option value={90}>90 minutos (1h 30m)</option>
-                            <option value={120}>120 minutos (2 horas)</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="text-[10.5px] text-gray-400 flex items-center gap-1.5 pt-0.5">
-                        <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
-                        <span>
-                          {quirofanoId && horaInicio
-                            ? 'Al guardar, se creará o actualizará el turno en la Agenda de Quirófano.'
-                            : 'Seleccione Quirófano y Horario cuando la cirugía esté lista para impactar en la agenda.'}
-                        </span>
-                      </div>
-                    </div>
+                      )
+                    })()
                   ) : (
                     <div className="p-2 rounded-lg bg-neutral-950/40 border border-neutral-800/80 text-[10.5px] text-gray-400 flex items-center gap-1.5">
                       <Info size={12} className="text-amber-400/80 shrink-0" />
-                      <span>Fije la <strong>Fecha Definitiva</strong> para habilitar la asignación de quirófano y franja horaria.</span>
+                      <span>Fije la <strong>Fecha Definitiva</strong> para pasar a Programado y habilitar el caso en Quirófano.</span>
                     </div>
                   )}
                 </div>
@@ -2382,110 +2305,20 @@ export default function CasoFormularioActivo({
 
                     {/* Asignación Quirófano 1° Ojo */}
                     {fechaDefinitiva ? (
-                      <div className="pt-2 border-t border-neutral-800 bg-neutral-950/40 p-2.5 rounded-xl space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10.5px] font-bold text-blue-300 flex items-center gap-1.5">
-                            <Building2 size={12} className="text-blue-400" />
-                            Quirófano y Horario (1° Ojo)
-                          </span>
-                          <span className="text-[10px] text-gray-400 font-mono">
-                            {cargandoAgendaFecha ? <Loader2 size={10} className="animate-spin text-blue-400" /> : '● En vivo'}
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                          <div>
-                            <label className="text-[10px] text-gray-400 block mb-1 font-semibold">Quirófano / Sala:</label>
-                            <select
-                              disabled={guardando}
-                              value={quirofanoId}
-                              onChange={(e) => setQuirofanoId(e.target.value)}
-                              className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-blue-400 font-semibold"
-                            >
-                              <option value="">-- Seleccionar Quirófano / Sala --</option>
-                              {quirofanos.filter((q: any) => q.tipo_sala !== 'consultorio').length > 0 && (
-                                <optgroup label="🏥 Quirófanos Estériles">
-                                  {quirofanos
-                                    .filter((q: any) => q.tipo_sala !== 'consultorio')
-                                    .map((q: any) => (
-                                      <option key={q.id} value={q.id}>
-                                        {q.nombre} ({q.codigo || 'Qx'})
-                                      </option>
-                                    ))}
-                                </optgroup>
-                              )}
-                              {quirofanos.filter((q: any) => q.tipo_sala === 'consultorio').length > 0 && (
-                                <optgroup label="🏢 Salas de Consultorio / Tratamientos">
-                                  {quirofanos
-                                    .filter((q: any) => q.tipo_sala === 'consultorio')
-                                    .map((q: any) => (
-                                      <option key={q.id} value={q.id}>
-                                        {q.nombre} ({q.codigo || 'Consultorio'})
-                                      </option>
-                                    ))}
-                                </optgroup>
-                              )}
-                            </select>
+                      (() => {
+                        const ojo1Code = ordenOjos === 'OI_primero' ? 'OI' : 'OD'
+                        const turno1 = turnosActivos.find((t: any) => (t.ojo || 'OD') === ojo1Code)
+                        return (
+                          <div className="p-2 rounded-xl bg-neutral-950/60 border border-blue-500/30 text-[10.5px] flex items-center justify-between gap-2 flex-wrap">
+                            <span className="flex items-center gap-1.5 text-blue-300 font-semibold">
+                              <Building2 size={12} className="text-blue-400 shrink-0" />
+                              {turno1?.hora_inicio
+                                ? `1° Ojo (${ojo1Code}): ${turno1?.quirofanos?.nombre || 'Quirófano'} — ${String(turno1.hora_inicio).slice(0, 5)} hs`
+                                : `1° Ojo (${ojo1Code}): Pendiente de sala y horario por Quirófano.`}
+                            </span>
                           </div>
-
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="text-[10px] text-gray-400 font-semibold">Hora Inicio:</label>
-                              {(() => {
-                                const slotEstado = getSlotInfo(horaInicio, quirofanoId, fechaDefinitiva, turnosFecha, bloqueosFecha)
-                                if (slotEstado.estado === 'sin_asignar') return <span className="text-[9px] text-gray-500">Pendiente</span>
-                                return (
-                                  <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                    slotEstado.estado === 'libre' ? 'bg-emerald-500/20 text-emerald-300' : slotEstado.estado === 'ocupado' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'
-                                  }`}>
-                                    {(slotEstado as any).badge || (slotEstado.estado === 'libre' ? '🟢 Libre' : slotEstado.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado')}
-                                  </span>
-                                )
-                              })()}
-                            </div>
-                            {(() => {
-                              const qActual = quirofanos.find((q: any) => q.id === quirofanoId) || quirofanos[0]
-                              const slots = generarSlotsHorarios(qActual)
-                              return (
-                                <select
-                                  disabled={guardando || !quirofanoId}
-                                  value={horaInicio}
-                                  onChange={(e) => setHoraInicio(e.target.value)}
-                                  className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-blue-400 font-mono font-bold disabled:opacity-50"
-                                >
-                                  <option value="">-- Seleccionar Horario --</option>
-                                  {slots.map((s) => (
-                                    <option key={s} value={s}>{getSlotInfo(s, quirofanoId, fechaDefinitiva, turnosFecha, bloqueosFecha).label}</option>
-                                  ))}
-                                </select>
-                              )
-                            })()}
-                          </div>
-
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="text-[10px] text-gray-400 font-semibold">Duración:</label>
-                              <span className="text-[9px] font-mono text-gray-400">
-                                Fin: {horaInicio ? `${minutosAHora(horaAMinutos(horaInicio) + Number(duracionMinutos))} hs` : '--:--'}
-                              </span>
-                            </div>
-                            <select
-                              disabled={guardando}
-                              value={duracionMinutos}
-                              onChange={(e) => setDuracionMinutos(Number(e.target.value))}
-                              className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-blue-400 font-semibold"
-                            >
-                              <option value={15}>15 minutos</option>
-                              <option value={20}>20 minutos</option>
-                              <option value={30}>30 minutos</option>
-                              <option value={45}>45 minutos</option>
-                              <option value={60}>60 minutos (1 hora)</option>
-                              <option value={90}>90 minutos (1h 30m)</option>
-                              <option value={120}>120 minutos (2 horas)</option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
+                        )
+                      })()
                     ) : (
                       <div className="p-2 rounded-lg bg-neutral-950/40 border border-neutral-800/80 text-[10.5px] text-gray-400 flex items-center gap-1.5">
                         <Info size={11} className="text-blue-400 shrink-0" />
@@ -2542,110 +2375,20 @@ export default function CasoFormularioActivo({
 
                     {/* Asignación Quirófano 2° Ojo */}
                     {fechaDefinitiva2doOjo ? (
-                      <div className="pt-2 border-t border-purple-500/20 bg-purple-950/20 p-2.5 rounded-xl space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10.5px] font-bold text-purple-300 flex items-center gap-1.5">
-                            <Building2 size={12} className="text-purple-400" />
-                            Quirófano y Horario (2° Ojo)
-                          </span>
-                          <span className="text-[10px] text-gray-400 font-mono">
-                            {cargandoAgendaFecha2doOjo ? <Loader2 size={10} className="animate-spin text-purple-400" /> : '● En vivo'}
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                          <div>
-                            <label className="text-[10px] text-gray-400 block mb-1 font-semibold">Quirófano / Sala:</label>
-                            <select
-                              disabled={guardando}
-                              value={quirofanoId2doOjo}
-                              onChange={(e) => setQuirofanoId2doOjo(e.target.value)}
-                              className="w-full p-2 rounded-lg bg-neutral-900 border border-purple-500/40 text-xs text-white outline-none focus:border-purple-400 font-semibold"
-                            >
-                              <option value="">-- Seleccionar Quirófano / Sala --</option>
-                              {quirofanos.filter((q: any) => q.tipo_sala !== 'consultorio').length > 0 && (
-                                <optgroup label="🏥 Quirófanos Estériles">
-                                  {quirofanos
-                                    .filter((q: any) => q.tipo_sala !== 'consultorio')
-                                    .map((q: any) => (
-                                      <option key={q.id} value={q.id}>
-                                        {q.nombre} ({q.codigo || 'Qx'})
-                                      </option>
-                                    ))}
-                                </optgroup>
-                              )}
-                              {quirofanos.filter((q: any) => q.tipo_sala === 'consultorio').length > 0 && (
-                                <optgroup label="🏢 Salas de Consultorio / Tratamientos">
-                                  {quirofanos
-                                    .filter((q: any) => q.tipo_sala === 'consultorio')
-                                    .map((q: any) => (
-                                      <option key={q.id} value={q.id}>
-                                        {q.nombre} ({q.codigo || 'Consultorio'})
-                                      </option>
-                                    ))}
-                                </optgroup>
-                              )}
-                            </select>
+                      (() => {
+                        const ojo2Code = ordenOjos === 'OI_primero' ? 'OD' : 'OI'
+                        const turno2 = turnosActivos.find((t: any) => (t.ojo || 'OI') === ojo2Code)
+                        return (
+                          <div className="p-2 rounded-xl bg-purple-950/20 border border-purple-500/20 text-[10.5px] flex items-center justify-between gap-2 flex-wrap">
+                            <span className="flex items-center gap-1.5 text-purple-300 font-semibold">
+                              <Building2 size={12} className="text-purple-400 shrink-0" />
+                              {turno2?.hora_inicio
+                                ? `2° Ojo (${ojo2Code}): ${turno2?.quirofanos?.nombre || 'Quirófano'} — ${String(turno2.hora_inicio).slice(0, 5)} hs`
+                                : `2° Ojo (${ojo2Code}): Pendiente de sala y horario por Quirófano.`}
+                            </span>
                           </div>
-
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="text-[10px] text-gray-400 font-semibold">Hora Inicio:</label>
-                              {(() => {
-                                const slotEstado2 = getSlotInfo(horaInicio2doOjo, quirofanoId2doOjo, fechaDefinitiva2doOjo, turnosFecha2doOjo, bloqueosFecha2doOjo)
-                                if (slotEstado2.estado === 'sin_asignar') return <span className="text-[9px] text-gray-500">Pendiente</span>
-                                return (
-                                  <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                    slotEstado2.estado === 'libre' ? 'bg-emerald-500/20 text-emerald-300' : slotEstado2.estado === 'ocupado' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'
-                                  }`}>
-                                    {(slotEstado2 as any).badge || (slotEstado2.estado === 'libre' ? '🟢 Libre' : slotEstado2.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado')}
-                                  </span>
-                                )
-                              })()}
-                            </div>
-                            {(() => {
-                              const qActual2 = quirofanos.find((q: any) => q.id === quirofanoId2doOjo) || quirofanos[0]
-                              const slots2 = generarSlotsHorarios(qActual2)
-                              return (
-                                <select
-                                  disabled={guardando || !quirofanoId2doOjo}
-                                  value={horaInicio2doOjo}
-                                  onChange={(e) => setHoraInicio2doOjo(e.target.value)}
-                                  className="w-full p-2 rounded-lg bg-neutral-900 border border-purple-500/40 text-xs text-white outline-none focus:border-purple-400 font-mono font-bold disabled:opacity-50"
-                                >
-                                  <option value="">-- Seleccionar Horario --</option>
-                                  {slots2.map((s) => (
-                                    <option key={s} value={s}>{getSlotInfo(s, quirofanoId2doOjo, fechaDefinitiva2doOjo, turnosFecha2doOjo, bloqueosFecha2doOjo).label}</option>
-                                  ))}
-                                </select>
-                              )
-                            })()}
-                          </div>
-
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="text-[10px] text-gray-400 font-semibold">Duración:</label>
-                              <span className="text-[9px] font-mono text-gray-400">
-                                Fin: {horaInicio2doOjo ? `${minutosAHora(horaAMinutos(horaInicio2doOjo) + Number(duracionMinutos2doOjo))} hs` : '--:--'}
-                              </span>
-                            </div>
-                            <select
-                              disabled={guardando}
-                              value={duracionMinutos2doOjo}
-                              onChange={(e) => setDuracionMinutos2doOjo(Number(e.target.value))}
-                              className="w-full p-2 rounded-lg bg-neutral-900 border border-purple-500/40 text-xs text-white outline-none focus:border-purple-400 font-semibold"
-                            >
-                              <option value={15}>15 minutos</option>
-                              <option value={20}>20 minutos</option>
-                              <option value={30}>30 minutos</option>
-                              <option value={45}>45 minutos</option>
-                              <option value={60}>60 minutos (1 hora)</option>
-                              <option value={90}>90 minutos (1h 30m)</option>
-                              <option value={120}>120 minutos (2 horas)</option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
+                        )
+                      })()
                     ) : (
                       <div className="p-2 rounded-lg bg-neutral-950/40 border border-purple-500/20 text-[10.5px] text-gray-400 flex items-center gap-1.5">
                         <Info size={11} className="text-purple-400 shrink-0" />
@@ -3873,17 +3616,6 @@ export default function CasoFormularioActivo({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setOjoObjetivoFirmaPapel('segundo_ojo')}
-                      className={`px-2 py-0.5 rounded border text-[10px] font-semibold ${
-                        ojoObjetivoFirmaPapel === 'segundo_ojo'
-                          ? 'bg-blue-600 text-white border-blue-500'
-                          : 'bg-neutral-900 text-gray-400 border-neutral-700'
-                      }`}
-                    >
-                      2° Ojo ({segundoOjoConsentimiento?.ojo || 'OI'})
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => setOjoObjetivoFirmaPapel('ambos')}
                       className={`px-2 py-0.5 rounded border text-[10px] font-semibold ${
                         ojoObjetivoFirmaPapel === 'ambos'
@@ -3961,8 +3693,13 @@ export default function CasoFormularioActivo({
                 <button
                   type="button"
                   onClick={onAbrirModalWhatsApp}
-                  className="px-2.5 py-1 bg-emerald-700/80 hover:bg-emerald-600 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow-sm border border-emerald-500/40 cursor-pointer"
-                  title="Abrir modal para enviar plantillas quirúrgicas por WhatsApp"
+                  disabled={Boolean(caso.esBorrador)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow-sm border ${
+                    caso.esBorrador
+                      ? 'bg-neutral-800 text-gray-500 border-neutral-700 cursor-not-allowed opacity-60'
+                      : 'bg-emerald-700/80 hover:bg-emerald-600 text-white border-emerald-500/40 cursor-pointer'
+                  }`}
+                  title={caso.esBorrador ? 'Guardá el caso primero para contactar por WhatsApp' : 'Abrir modal para enviar plantillas quirúrgicas por WhatsApp'}
                 >
                   <Send size={12} />
                   <span>Contactar WhatsApp</span>

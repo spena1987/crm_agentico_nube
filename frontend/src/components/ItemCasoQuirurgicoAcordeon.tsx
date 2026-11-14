@@ -47,6 +47,7 @@ export interface PresupuestoPaciente {
 
 export interface AsesoriaQuirurgica {
   id: string
+  esBorrador?: boolean
   codigo_caso?: string | null
   paciente_id: string
   medico_derivador_id?: number | null
@@ -135,7 +136,7 @@ interface ItemCasoQuirurgicoAcordeonProps {
   pacienteDni?: string | null
   pacienteTelefono?: string | null
   obraSocialDefault?: string | null
-  onCasoActualizado: (casoActualizado: AsesoriaQuirurgica) => void
+  onCasoActualizado: (casoActualizado: AsesoriaQuirurgica, idAnterior?: string) => void
   onCasoEliminado: (casoId: string) => void
 }
 
@@ -305,54 +306,59 @@ export default function ItemCasoQuirurgicoAcordeon({
   }
 
   useEffect(() => {
-    if (isExpanded) {
+    if (isExpanded && !caso.esBorrador) {
       fetchConsentimiento()
       fetchPresupuestos()
     }
-  }, [isExpanded, pacienteId, caso.id])
+  }, [isExpanded, pacienteId, caso.id, caso.esBorrador])
 
-  // Guardar Cambios en Backend
+  // Guardar Cambios en Backend (o promover borrador inicial mediante POST)
   const handleGuardarCambios = async (datosActualizados: Partial<AsesoriaQuirurgica>) => {
     setGuardando(true)
     setErrorAccion(null)
     setMensajeGuardado(null)
 
     try {
-      const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}`, {
-        method: 'PUT',
-        body: JSON.stringify(datosActualizados)
+      const esAltaInicial = Boolean(caso.esBorrador)
+      const url = esAltaInicial
+        ? '/api/asesorias-quirurgicas/'
+        : `/api/asesorias-quirurgicas/${caso.id}`
+      const method = esAltaInicial ? 'POST' : 'PUT'
+      const bodyPayload = esAltaInicial
+        ? {
+            paciente_id: pacienteId,
+            cobertura_obra_social: obraSocialDefault || null,
+            estado: 'en_asesoramiento',
+            moneda_extra: 'ARS',
+            monto_extra: 0,
+            ...datosActualizados,
+          }
+        : datosActualizados
+
+      const res = await apiFetch(url, {
+        method,
+        body: JSON.stringify(bodyPayload)
       })
 
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (!res.ok || !data.success) {
         throw new Error(data.detail || data.mensaje || 'Error al guardar cambios.')
       }
 
       const casoGuardado: AsesoriaQuirurgica = data.asesoria
-      onCasoActualizado(casoGuardado)
-      fetchPresupuestos()
-      setMensajeGuardado('✔ Caso quirúrgico actualizado correctamente.')
+      onCasoActualizado(casoGuardado, esAltaInicial ? caso.id : undefined)
+      if (!esAltaInicial) {
+        fetchPresupuestos()
+      }
+      setMensajeGuardado(
+        esAltaInicial
+          ? '✔ Caso quirúrgico creado correctamente.'
+          : '✔ Caso quirúrgico actualizado correctamente.'
+      )
       setTimeout(() => setMensajeGuardado(null), 3000)
     } catch (err: any) {
       console.error('Error guardando caso:', err)
-      // Fallback Supabase directo
-      try {
-        const { data: sbData, error: sbErr } = await supabase
-          .from('asesorias_quirurgicas')
-          .update(datosActualizados as any)
-          .eq('id', caso.id)
-          .select()
-
-        if (!sbErr && sbData && sbData.length > 0) {
-          onCasoActualizado(sbData[0] as AsesoriaQuirurgica)
-          setMensajeGuardado('✔ Caso actualizado en CRM.')
-          setTimeout(() => setMensajeGuardado(null), 3000)
-        } else {
-          throw sbErr || new Error('No se pudo guardar.')
-        }
-      } catch (fallbackErr: any) {
-        setErrorAccion(fallbackErr.message || 'Error al guardar modificaciones.')
-      }
+      setErrorAccion(err.message || 'Error al guardar modificaciones.')
     } finally {
       setGuardando(false)
     }
@@ -377,12 +383,22 @@ export default function ItemCasoQuirurgicoAcordeon({
     await handleGuardarCambios({ [campo]: nuevoValor })
   }
 
-  // Eliminar caso
+  // Eliminar caso (o descartar borrador local sin tocar BD)
   const handleEliminarCaso = async () => {
-    const confirmacion = window.confirm('¿Seguro que deseas eliminar este caso quirúrgico?')
+    const confirmacion = window.confirm(
+      caso.esBorrador
+        ? '¿Descartar este borrador de caso quirúrgico?'
+        : '¿Seguro que deseas eliminar este caso quirúrgico?'
+    )
     if (!confirmacion) return
 
+    if (caso.esBorrador) {
+      onCasoEliminado(caso.id)
+      return
+    }
+
     setGuardando(true)
+    setErrorAccion(null)
     try {
       const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}`, {
         method: 'DELETE'
@@ -390,11 +406,12 @@ export default function ItemCasoQuirurgicoAcordeon({
       if (res.ok) {
         onCasoEliminado(caso.id)
       } else {
-        await supabase.from('asesorias_quirurgicas').delete().eq('id', caso.id)
-        onCasoEliminado(caso.id)
+        const data = await res.json().catch(() => ({}))
+        setErrorAccion(data.detail || data.mensaje || 'No se pudo eliminar el caso quirúrgico.')
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Error al eliminar caso:', e)
+      setErrorAccion(e.message || 'Error de conexión al eliminar caso.')
     } finally {
       setGuardando(false)
     }

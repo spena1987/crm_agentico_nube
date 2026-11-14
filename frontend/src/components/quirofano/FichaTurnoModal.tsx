@@ -1850,6 +1850,38 @@ export default function FichaTurnoModal({
 
               {formData.lleva_lente ? (
                 <div className="space-y-3.5 pt-2 border-t border-[var(--border)] animate-fade-in">
+                  {(() => {
+                    const casoRel = casosConfirmados.find((c) => c.id === formData.asesoria_id)
+                    const selLio =
+                      turno?.asesorias_quirurgicas?.checklist_prequirurgico?._lio_seleccion ||
+                      casoConfirmadoInicial?.checklist_prequirurgico?._lio_seleccion ||
+                      casoRel?.checklist_prequirurgico?._lio_seleccion
+                    if (!selLio || typeof selLio !== 'object') return null
+                    const ojoTurnoNorm = (formData.ojo || 'OD').toUpperCase()
+                    const esDif = selLio.modalidad_bilateral === 'diferenciado'
+                    const lenteAsesoria = esDif
+                      ? (ojoTurnoNorm === 'OI' ? selLio.lente_oi : selLio.lente_od)
+                      : (selLio.lente_nombre || (ojoTurnoNorm === 'OI' ? selLio.lente_oi : selLio.lente_od))
+                    if (!lenteAsesoria) return null
+                    const esDefinitivo = selLio.estado === 'confirmado'
+                    return (
+                      <div className="px-3 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-between gap-2 flex-wrap text-xs">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-cyan-700 dark:text-cyan-300">
+                            💎 LIO Optado en Asesoramiento ({ojoTurnoNorm}):
+                          </span>
+                          <span className="font-black text-[var(--foreground)]">{lenteAsesoria}</span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase ${
+                          esDefinitivo
+                            ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                            : 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30'
+                        }`}>
+                          {esDefinitivo ? 'Definitivo' : 'Tentativo'}
+                        </span>
+                      </div>
+                    )
+                  })()}
                   {/* BANNER DE CERTIFICACIÓN DE BIOMETRÍA & LIO SELLADO */}
                   {formData.lio_calculado && (
                     <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-blue-500/10 border border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">

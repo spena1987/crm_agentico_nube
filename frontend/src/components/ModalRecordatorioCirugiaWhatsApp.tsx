@@ -198,19 +198,19 @@ export default function ModalRecordatorioCirugiaWhatsApp({
           if (d.es_bilateral_escalonada && targetOjo === 'segundo_ojo' && d.segundo_ojo) {
             setCirugia(formatCirugiaConOjoCompleto(d.segundo_ojo.cirugia || d.cirugia, d.segundo_ojo.ojo))
             setFecha(d.segundo_ojo.fecha || d.fecha || 'Fecha a confirmar')
-            setHora(d.segundo_ojo.hora || d.hora || '07:30 hs')
+            setHora(d.segundo_ojo.hora || d.hora || '')
             setTurnoIdSeleccionado(d.segundo_ojo.turno_id)
             setOjoTarget(d.segundo_ojo.ojo)
           } else if (d.es_bilateral_escalonada && d.primer_ojo) {
             setCirugia(formatCirugiaConOjoCompleto(d.primer_ojo.cirugia || d.cirugia, d.primer_ojo.ojo))
             setFecha(d.primer_ojo.fecha || d.fecha || 'Fecha a confirmar')
-            setHora(d.primer_ojo.hora || d.hora || '07:30 hs')
+            setHora(d.primer_ojo.hora || d.hora || '')
             setTurnoIdSeleccionado(d.primer_ojo.turno_id)
             setOjoTarget(d.primer_ojo.ojo)
           } else {
             setCirugia(formatCirugiaConOjoCompleto(d.cirugia, d.ojo))
             setFecha(d.fecha || 'Fecha a confirmar')
-            setHora(d.hora || '07:30 hs')
+            setHora(d.hora || '')
             setTurnoIdSeleccionado(d.turno_id)
             setOjoTarget(d.ojo || '')
           }
@@ -977,14 +977,16 @@ export default function ModalRecordatorioCirugiaWhatsApp({
             <button
               type="button"
               onClick={handleEnviarWhatsApp}
-              disabled={enviando || cargando || !isAprobadaMeta || isExcedidoLongitud}
+              disabled={enviando || cargando || !isAprobadaMeta || isExcedidoLongitud || !turnoIdSeleccionado || !hora.trim()}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 ${
-                isAprobadaMeta && !isExcedidoLongitud
+                isAprobadaMeta && !isExcedidoLongitud && !!turnoIdSeleccionado && !!hora.trim()
                   ? 'bg-gradient-to-r from-indigo-600 via-blue-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 text-white cursor-pointer'
                   : 'bg-neutral-800 text-gray-500 border border-neutral-700 cursor-not-allowed opacity-80'
               }`}
               title={
-                !isAprobadaMeta
+                !turnoIdSeleccionado || !hora.trim()
+                  ? 'Quirófano debe asignar sala y horario al turno antes de enviar el recordatorio.'
+                  : !isAprobadaMeta
                   ? 'La plantilla debe estar autorizada por Meta para poder ser enviada.'
                   : isExcedidoLongitud
                   ? 'El texto del mensaje excede los 1.024 caracteres permitidos por WhatsApp.'
@@ -995,6 +997,11 @@ export default function ModalRecordatorioCirugiaWhatsApp({
                 <>
                   <Loader2 size={14} className="animate-spin" />
                   <span>Despachando a Meta...</span>
+                </>
+              ) : !turnoIdSeleccionado || !hora.trim() ? (
+                <>
+                  <Clock size={14} className="text-amber-400" />
+                  <span>Sin sala/horario asignado en Quirófano</span>
                 </>
               ) : isExcedidoLongitud ? (
                 <>
