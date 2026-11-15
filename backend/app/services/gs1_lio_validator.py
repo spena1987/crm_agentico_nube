@@ -377,6 +377,12 @@ def validar_lente_blister_contra_turno(turno: Dict[str, Any], datos_gs1: Dict[st
                 )
 
     # Determinar estado de validación
+    es_elemento_generico = (
+        turno.get("requiere_biometria") is False
+        or str(turno.get("naturaleza_clinica") or "").lower() in ("faquico_icl", "no_biometrico")
+    )
+    requiere_confirmacion_manual = False
+
     if esta_vencido:
         estado_validacion = "LENTE_VENCIDO"
         coincide = False
@@ -386,19 +392,30 @@ def validar_lente_blister_contra_turno(turno: Dict[str, Any], datos_gs1: Dict[st
     elif len(discrepancias) > 0:
         estado_validacion = "DISCREPANCIA"
         coincide = False
+    elif es_elemento_generico and plan_dioptria_float is None:
+        estado_validacion = "CONCILIACION_ELEMENTO_GENERICO"
+        coincide = False
+        requiere_confirmacion_manual = True
     else:
         estado_validacion = "COINCIDENCIA_TOTAL"
         coincide = True
+
+    mensaje_validacion = (
+        "✔ Lente Verificado y Conforme con el Plan Quirúrgico."
+        if coincide
+        else (
+            "⚠️ Lente vinculado a elemento genérico (sin dioptría biométrica previa). Confirme manualmente el blíster antes de implantar."
+            if estado_validacion == "CONCILIACION_ELEMENTO_GENERICO"
+            else "🚨 Se detectaron discrepancias o advertencias críticas con el lente escaneado."
+        )
+    )
 
     return {
         "success": True,
         "coincide": coincide,
         "estado_validacion": estado_validacion,
-        "mensaje": (
-            "✔ Lente Verificado y Conforme con el Plan Quirúrgico."
-            if coincide
-            else "🚨 Se detectaron discrepancias o advertencias críticas con el lente escaneado."
-        ),
+        "requiere_confirmacion_manual": requiere_confirmacion_manual,
+        "mensaje": mensaje_validacion,
         "discrepancias": discrepancias,
         "escaneado": {
             "gtin": gtin,

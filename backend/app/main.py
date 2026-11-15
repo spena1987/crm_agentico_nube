@@ -90,6 +90,14 @@ from app.db import (
     crear_lio_comercial_rapido,
     guardar_lios_habilitados_practica,
     eliminar_practica_crm,
+    CrmConflictError,
+    listar_categorias_nomenclador,
+    crear_categoria_nomenclador,
+    actualizar_categoria_nomenclador,
+    cambiar_estado_categoria_nomenclador,
+    get_elementos_geclisa_modelo,
+    upsert_elemento_geclisa_modelo,
+    eliminar_elemento_geclisa_modelo,
     get_practicas_relacionadas,
     guardar_practicas_relacionadas,
     eliminar_relacion_practica,
@@ -3680,6 +3688,55 @@ def buscar_geclisa_nomenclador_practicas(nom_id: Optional[int] = None, q: Option
         logger.error(f"Error al buscar prácticas en Geclisa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/nomenclador/categorias")
+def listar_categorias_nomenclador_api(solo_activas: bool = False):
+    try:
+        cats = listar_categorias_nomenclador(solo_activas=solo_activas)
+        return {"success": True, "categorias": cats, "total": len(cats)}
+    except Exception as e:
+        logger.error(f"Error listando categorías de nomenclador: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/nomenclador/categorias")
+def crear_categoria_nomenclador_api(payload: Dict[str, Any] = Body(...)):
+    try:
+        cat = crear_categoria_nomenclador(payload)
+        return {"success": True, "categoria": cat}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except CrmConflictError as ce:
+        raise HTTPException(status_code=409, detail=str(ce))
+    except Exception as e:
+        logger.error(f"Error creando categoría de nomenclador: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/nomenclador/categorias/{cat_id}")
+def actualizar_categoria_nomenclador_api(cat_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        cat = actualizar_categoria_nomenclador(cat_id, payload)
+        return {"success": True, "categoria": cat}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except CrmConflictError as ce:
+        raise HTTPException(status_code=409, detail=str(ce))
+    except Exception as e:
+        logger.error(f"Error actualizando categoría de nomenclador {cat_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/api/nomenclador/categorias/{cat_id}/estado")
+def cambiar_estado_categoria_nomenclador_api(cat_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        activo = bool(payload.get("activo", True))
+        cat = cambiar_estado_categoria_nomenclador(cat_id, activo)
+        return {"success": True, "categoria": cat}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except CrmConflictError as ce:
+        raise HTTPException(status_code=409, detail=str(ce))
+    except Exception as e:
+        logger.error(f"Error cambiando estado categoría {cat_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/nomenclador/guardar-practica-arancel")
 def guardar_practica_arancel_api(payload: Dict[str, Any] = Body(...)):
     """
@@ -3696,6 +3753,10 @@ def guardar_practica_arancel_api(payload: Dict[str, Any] = Body(...)):
         }
     except HTTPException:
         raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except CrmConflictError as ce:
+        raise HTTPException(status_code=409, detail=str(ce))
     except Exception as e:
         logger.error(f"Error al guardar práctica y arancel: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3795,6 +3856,9 @@ class CrearLioRapidoRequest(BaseModel):
     nombre: str
     precio: float
     moneda: Optional[str] = "USD"
+    familias_lio_ids: Optional[List[str]] = None
+    condicion_toricidad: Optional[str] = None
+    categoria_id: Optional[str] = None
 
 @app.post("/api/nomenclador/crear-lio-rapido")
 def crear_lio_rapido_api(payload: CrearLioRapidoRequest):
@@ -3802,12 +3866,22 @@ def crear_lio_rapido_api(payload: CrearLioRapidoRequest):
     Da de alta un nuevo modelo de LIO comercial en el nomenclador con su arancel inicial.
     """
     try:
-        res = crear_lio_comercial_rapido(codigo=payload.codigo, nombre=payload.nombre, precio=payload.precio, moneda=payload.moneda or "USD")
+        res = crear_lio_comercial_rapido(
+            codigo=payload.codigo,
+            nombre=payload.nombre,
+            precio=payload.precio,
+            moneda=payload.moneda or "USD",
+            familias_lio_ids=payload.familias_lio_ids,
+            condicion_toricidad=payload.condicion_toricidad,
+            categoria_id=payload.categoria_id,
+        )
         if not res.get("success"):
             raise HTTPException(status_code=400, detail=res.get("error", "Error creando nuevo LIO"))
         return res
     except HTTPException:
         raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"Error en crear_lio_rapido_api: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3827,6 +3901,8 @@ def guardar_lios_habilitados_api(practica_id: str, payload: GuardarLiosHabilitad
         return res
     except HTTPException:
         raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"Error en guardar_lios_habilitados_api: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3839,6 +3915,8 @@ def eliminar_practica_crm_api(practica_id: str):
     try:
         ok = eliminar_practica_crm(practica_id)
         return {"success": ok, "mensaje": "Práctica eliminada del catálogo del CRM."}
+    except CrmConflictError as ce:
+        raise HTTPException(status_code=409, detail=str(ce))
     except Exception as e:
         logger.error(f"Error al eliminar práctica {practica_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3864,6 +3942,10 @@ def guardar_practica_integral_api(payload: Dict[str, Any] = Body(...)):
         }
     except HTTPException:
         raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except CrmConflictError as ce:
+        raise HTTPException(status_code=409, detail=str(ce))
     except Exception as e:
         logger.error(f"Error al guardar práctica integral: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -4618,6 +4700,10 @@ def guardar_practica(payload: Dict[str, Any] = Body(...)):
         return {"success": True, "mensaje": "Práctica guardada correctamente.", "practica": guardada}
     except HTTPException:
         raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except CrmConflictError as ce:
+        raise HTTPException(status_code=409, detail=str(ce))
     except Exception as e:
         logger.error(f"Error al guardar práctica: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -8260,6 +8346,10 @@ def actualizar_modelo_lio_endpoint(modelo_id: str, payload: Dict[str, Any] = Bod
     try:
         act = actualizar_modelo_lio(modelo_id, payload)
         return {"success": True, "modelo": act}
+    except CrmConflictError as ce:
+        raise HTTPException(status_code=409, detail=str(ce))
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"Error actualizando modelo de LIO {modelo_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -8269,8 +8359,41 @@ def eliminar_modelo_lio_endpoint(modelo_id: str):
     try:
         ok = eliminar_modelo_lio(modelo_id)
         return {"success": ok}
+    except CrmConflictError as ce:
+        raise HTTPException(status_code=409, detail=str(ce))
     except Exception as e:
         logger.error(f"Error eliminando modelo de LIO {modelo_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/modelos-lio/{modelo_id}/elementos-geclisa")
+def listar_elementos_geclisa_modelo_endpoint(modelo_id: str):
+    try:
+        elementos = get_elementos_geclisa_modelo(modelo_id)
+        return {"success": True, "elementos": elementos}
+    except Exception as e:
+        logger.error(f"Error listando elementos Geclisa para {modelo_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/modelos-lio/{modelo_id}/elementos-geclisa")
+def upsert_elemento_geclisa_modelo_endpoint(modelo_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        elem = upsert_elemento_geclisa_modelo(modelo_id, payload)
+        return {"success": True, "elemento": elem}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error guardando elemento Geclisa para {modelo_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/modelos-lio/{modelo_id}/elementos-geclisa/{ambito}")
+def eliminar_elemento_geclisa_modelo_endpoint(modelo_id: str, ambito: str):
+    try:
+        ok = eliminar_elemento_geclisa_modelo(modelo_id, ambito)
+        return {"success": ok}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error eliminando elemento Geclisa ({modelo_id}, {ambito}): {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- ÍTEMS / SKUS (MAPEADOS POR GTIN / DIOPTRÍA) ---
@@ -8685,14 +8808,15 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
 class ResolverSkuPayload(BaseModel):
     modelo_lio_id: Optional[str] = None
     modelo_nombre: Optional[str] = None
-    dioptria: float
+    dioptria: Optional[Union[str, float]] = None
     torico_valor: Optional[str] = None
     es_torico: Optional[bool] = False
+    condicion_toricidad: Optional[str] = None
 
 @app.post("/api/modelos-lio/resolver-sku")
 def resolver_sku_lio_endpoint(payload: ResolverSkuPayload):
     """
-    Resuelve el SKU/GTIN de Geclisa para una combinación de Modelo, Dioptría y Toricidad,
+    Resuelve el SKU/GTIN o elemento genérico de Geclisa para una combinación de Modelo, Dioptría y Toricidad,
     y consulta en tiempo real el stock en Quirófano (Dep 1) y Consignación (Dep 3) con sus lotes.
     """
     try:
@@ -8701,14 +8825,16 @@ def resolver_sku_lio_endpoint(payload: ResolverSkuPayload):
             modelo_nombre=payload.modelo_nombre,
             dioptria=payload.dioptria,
             torico_valor=payload.torico_valor,
-            es_torico=bool(payload.es_torico)
+            es_torico=bool(payload.es_torico),
+            condicion_toricidad=payload.condicion_toricidad,
         )
-        if not item:
+        if not item or not item.get("geclisa_ele_id"):
             return {
                 "success": True,
                 "mapeado": False,
-                "mensaje": "Graduación no mapeada a código GTIN Geclisa.",
-                "item": None,
+                "resolucion_tipo": item.get("resolucion_tipo") if isinstance(item, dict) else "sin_mapeo",
+                "mensaje": "Graduación o elemento genérico pendiente de mapeo a Geclisa.",
+                "item": item,
                 "stock": None,
                 "resumen": None
             }
@@ -8720,6 +8846,7 @@ def resolver_sku_lio_endpoint(payload: ResolverSkuPayload):
         return {
             "success": True,
             "mapeado": True,
+            "resolucion_tipo": item.get("resolucion_tipo") or "sku_exacto",
             "item": item,
             "stock": resumen_stock,
             "resumen": resumen_stock
@@ -8732,9 +8859,10 @@ class ResolverSkuItemPayload(BaseModel):
     id: Optional[str] = None
     modelo_lio_id: Optional[str] = None
     modelo_nombre: Optional[str] = None
-    dioptria: float
+    dioptria: Optional[Union[str, float]] = None
     torico_valor: Optional[str] = None
     es_torico: Optional[bool] = False
+    condicion_toricidad: Optional[str] = None
 
 class ResolverSkuLotePayload(BaseModel):
     opciones: List[ResolverSkuItemPayload]
@@ -8756,7 +8884,8 @@ def resolver_sku_lote_endpoint(payload: ResolverSkuLotePayload):
                 modelo_nombre=op.modelo_nombre,
                 dioptria=op.dioptria,
                 torico_valor=op.torico_valor,
-                es_torico=bool(op.es_torico)
+                es_torico=bool(op.es_torico),
+                condicion_toricidad=op.condicion_toricidad,
             )
             resumen_stock = None
             if sku and sku.get("geclisa_ele_id"):
@@ -8770,7 +8899,8 @@ def resolver_sku_lote_endpoint(payload: ResolverSkuLotePayload):
 
             return {
                 "id_solicitud": op.id,
-                "mapeado": sku is not None,
+                "mapeado": bool(sku and sku.get("geclisa_ele_id")),
+                "resolucion_tipo": sku.get("resolucion_tipo") if isinstance(sku, dict) else "sin_mapeo",
                 "item": sku,
                 "stock": resumen_stock
             }
@@ -9048,15 +9178,40 @@ def cambiar_estado_turno_geclisa_endpoint(turno_id: int, payload: CambiarEstadoT
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def requiere_calculo_lio(nombre_practica: str, lleva_lente_flag: bool = False) -> bool:
+def _cargar_codigos_requiere_lente() -> set:
+    if not supabase:
+        return set()
+    try:
+        resp = supabase.table("nomenclador_practicas").select("codigo").eq("requiere_lente", True).eq("activo", True).execute()
+        return {str(r.get("codigo") or "").strip().upper() for r in (resp.data or []) if r.get("codigo")}
+    except Exception:
+        return set()
+
+
+def requiere_calculo_lio(
+    nombre_practica: str = "",
+    lleva_lente_flag: bool = False,
+    practica_codigo: Optional[str] = None,
+    codigos_requiere_lente: Optional[set] = None,
+) -> bool:
     """
-    Retorna True si la práctica quirúrgica requiere cálculo / implante de Lente Intraocular (LIO).
+    Retorna True si la práctica quirúrgica requiere cálculo / implante de Lente Intraocular (LIO)
+    basado en el atributo estructurado `requiere_lente` del nomenclador.
     """
     if lleva_lente_flag:
         return True
-    nom = (nombre_practica or "").lower()
-    keywords = ["catarata", "faco", "lio", "lente", "cristalino", "icl", "vitrec", "lensectom", "sulcus", "artisan", "artiflex", "toric", "trifocal", "edof", "monofocal"]
-    return any(k in nom for k in keywords)
+    p_cod = str(practica_codigo or "").strip().upper()
+    if p_cod:
+        if codigos_requiere_lente is not None:
+            return p_cod in codigos_requiere_lente
+        if supabase:
+            try:
+                res = supabase.table("nomenclador_practicas").select("requiere_lente").eq("codigo", p_cod).eq("activo", True).limit(1).execute()
+                if res.data:
+                    return bool(res.data[0].get("requiere_lente"))
+            except Exception:
+                pass
+    return False
 
 
 def _resolver_lio_propuesto_ojo(
@@ -9086,6 +9241,7 @@ def listar_pacientes_calculo_lio(
         items = []
         turnos_ojos_vistos = set() # Set of (asesoria_id, ojo)
         lios_cache = obtener_lios_comerciales()
+        codigos_requiere_lente = _cargar_codigos_requiere_lente()
 
         # 1. Consultar turnos de quirófano programados / activos
         q_turnos = supabase.table("turnos_quirofano").select(
@@ -9104,7 +9260,13 @@ def listar_pacientes_calculo_lio(
                 turnos_ojos_vistos.add((as_id, ojo_turno))
 
             practica_nombre = t_raw.get("practica_nombre") or as_rel.get("practica_nombre") or "Cirugía Oftalmológica"
-            lleva_lente = bool(t_raw.get("lleva_lente")) or requiere_calculo_lio(practica_nombre)
+            practica_codigo = t_raw.get("practica_codigo") or as_rel.get("practica_codigo")
+            lleva_lente = (
+                bool(t_raw.get("lleva_lente"))
+                or bool(t_raw.get("lente_tipo"))
+                or bool(t_raw.get("lio_calculado"))
+                or requiere_calculo_lio(practica_nombre, practica_codigo=practica_codigo, codigos_requiere_lente=codigos_requiere_lente)
+            )
             if not lleva_lente:
                 continue
 
@@ -9208,7 +9370,7 @@ def listar_pacientes_calculo_lio(
             practica_nombre = a.get("practica_nombre") or "Cirugía de Catarata"
             ojo_caso = a.get("ojo") or "OD"
             lio_preview, _ = _resolver_lio_propuesto_ojo(a, "OD" if ojo_caso == "AO" else ojo_caso, lios_cache=lios_cache)
-            if not requiere_calculo_lio(practica_nombre) and not lio_preview:
+            if not requiere_calculo_lio(practica_nombre, practica_codigo=a.get("practica_codigo"), codigos_requiere_lente=codigos_requiere_lente) and not lio_preview:
                 continue
 
             pac = a.get("pacientes") or {}
@@ -9374,7 +9536,7 @@ class OpcionLioItemPayload(BaseModel):
     etiqueta: Optional[str] = None
     modelo: str
     modelo_lio_id: Optional[str] = None
-    dioptria: Union[str, float]
+    dioptria: Optional[Union[str, float]] = None
     es_torico: Optional[bool] = False
     torico_valor: Optional[Union[str, int, float]] = None
     torico_eje: Optional[Union[str, int, float]] = None
@@ -9423,14 +9585,20 @@ def normalizar_torico_eje(val: Any) -> Optional[int]:
         pass
     return 90
 
-def validar_y_normalizar_dioptria(val: Any) -> str:
+def validar_y_normalizar_dioptria(val: Any, opcional: bool = False) -> Optional[str]:
     """Valida que la dioptría esté dentro del rango médico estándar (-10.00 D a +35.00 D)."""
+    if val is None or str(val).strip() == "":
+        if opcional:
+            return None
+        raise HTTPException(status_code=422, detail="La dioptría es obligatoria para familias biométricas.")
     try:
         s = str(val).replace("+", "").replace("D", "").strip()
         d = float(s)
         if not (-10.0 <= d <= 35.0):
             raise ValueError(f"Dioptría {d:+.2f} fuera del rango clínico estándar (-10.0 D a +35.0 D).")
         return f"{d:+.2f}" if d != 0 else "0.00"
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Graduación de lente inválida: {val}. {str(e)}")
 
@@ -9472,9 +9640,19 @@ def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload, request: Req
             raise HTTPException(status_code=422, detail="Debe proporcionar al menos una opción de lente intraocular.")
 
         # Validar y serializar opciones a diccionario seguro
+        modelos_info: Dict[str, Dict[str, Any]] = {}
+        try:
+            for m_row in (get_modelos_lio(solo_activos=False) or []):
+                modelos_info[str(m_row.get("id") or "")] = m_row
+        except Exception:
+            pass
+
         opciones_dict: List[Dict[str, Any]] = []
         for op in opciones_raw:
-            diop_norm = validar_y_normalizar_dioptria(op.dioptria)
+            m_meta = modelos_info.get(str(op.modelo_lio_id or "")) or {}
+            nat = str(m_meta.get("naturaleza_clinica") or "").lower()
+            es_no_biometrico = (m_meta.get("requiere_biometria") is False) or (nat in ("faquico_icl", "no_biometrico"))
+            diop_norm = validar_y_normalizar_dioptria(op.dioptria, opcional=es_no_biometrico)
             t_val = normalizar_torico_valor(op.torico_valor) if op.es_torico else None
             t_eje = normalizar_torico_eje(op.torico_eje) if op.es_torico else None
 

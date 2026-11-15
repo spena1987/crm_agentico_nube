@@ -394,8 +394,19 @@ export default function CalculoLioPage() {
     const timers: NodeJS.Timeout[] = []
 
     opcionesLio.forEach((op) => {
+      const modObj = modelosLio.find(
+        (m: any) =>
+          (op.modelo_lio_id && m.id === op.modelo_lio_id) ||
+          `${m.modelo} (${m.marca})` === op.modelo ||
+          m.modelo === op.modelo ||
+          (op.modelo && op.modelo.includes(m.modelo))
+      ) as any
+      const esNoBiometrico =
+        modObj?.requiere_biometria === false ||
+        modObj?.naturaleza_clinica === 'faquico_icl' ||
+        modObj?.naturaleza_clinica === 'no_biometrico'
       const diopNum = parseFloat(op.dioptria)
-      if (!op.modelo || isNaN(diopNum)) {
+      if (!op.modelo || (!esNoBiometrico && isNaN(diopNum))) {
         setSkusResueltos((prev) => ({ ...prev, [op.id]: null }))
         return
       }
@@ -403,20 +414,11 @@ export default function CalculoLioPage() {
       const timer = setTimeout(async () => {
         try {
           setResolviendoSkus((prev) => ({ ...prev, [op.id]: true }))
-          
-          // Encontrar modelo_lio_id si no está asignado
-          const modObj = modelosLio.find(
-            (m) =>
-              (op.modelo_lio_id && m.id === op.modelo_lio_id) ||
-              `${m.modelo} (${m.marca})` === op.modelo ||
-              m.modelo === op.modelo ||
-              op.modelo.includes(m.modelo)
-          )
 
           const payload = {
             modelo_lio_id: modObj?.id || op.modelo_lio_id || null,
             modelo_nombre: op.modelo,
-            dioptria: diopNum,
+            dioptria: isNaN(diopNum) ? null : diopNum,
             torico_valor: op.es_torico && op.torico_valor ? `T${op.torico_valor}` : null,
             es_torico: Boolean(op.es_torico)
           }
@@ -426,7 +428,7 @@ export default function CalculoLioPage() {
             body: JSON.stringify(payload)
           })
           const data = await res.json()
-          if (res.ok && data.success && data.item) {
+          if (res.ok && data.success && (data.item || data.resolucion_tipo)) {
             setSkusResueltos((prev) => ({ ...prev, [op.id]: data }))
           } else {
             setSkusResueltos((prev) => ({ ...prev, [op.id]: null }))

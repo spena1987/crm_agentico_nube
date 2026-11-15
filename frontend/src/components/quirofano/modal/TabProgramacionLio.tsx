@@ -101,7 +101,7 @@ export default function TabProgramacionLio({
     const resolverSku = async () => {
       const mod = (formData.lente_tipo || '').replace(/\s*\([^)]*\)/g, '').trim()
       const diop = parseFloat(formData.lente_dioptria)
-      if (!mod || isNaN(diop)) {
+      if (!mod) {
         setSkuResuelto(null)
         return
       }
@@ -113,8 +113,9 @@ export default function TabProgramacionLio({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             modelo_nombre: mod,
-            dioptria: diop,
-            torico_valor: formData.es_torico ? formData.lente_torico_valor : null
+            dioptria: isNaN(diop) ? null : diop,
+            torico_valor: formData.es_torico ? formData.lente_torico_valor : null,
+            es_torico: Boolean(formData.es_torico),
           })
         })
         const data = await res.json()

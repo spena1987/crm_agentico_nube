@@ -378,7 +378,7 @@ export default function ModalCrearPresupuestoPaciente({
             .then((data) => {
               if (data.success && data.resultados && data.resultados.length > 0) {
                 const sugerido = data.resultados[0]
-                if (sugerido.requiere_lente || esCatarata) {
+                if (sugerido.requiere_lente) {
                   setPracticaRequiereLente(true)
                   cargarLiosParaPractica(sugerido.id || sugerido.codigo || pCodigo)
                 }
@@ -469,9 +469,12 @@ export default function ModalCrearPresupuestoPaciente({
     setMostrarDropdown(false)
 
     // Si la práctica requiere LIO, activar panel rápido de sugerencias de LIOs y cargar los habilitados para ella
-    if (p.requiere_lente || (p.nombre && (p.nombre.toLowerCase().includes('catarata') || p.nombre.toLowerCase().includes('faco') || p.codigo === '34031'))) {
+    if (p.requiere_lente) {
       setPracticaRequiereLente(true)
       cargarLiosParaPractica(p.id || p.codigo || p.nombre)
+    } else {
+      setPracticaRequiereLente(false)
+      setLiosDisponibles([])
     }
 
     // Si tiene ID, consultar prácticas vinculadas (Anestesia, Quirófano, Insumos)

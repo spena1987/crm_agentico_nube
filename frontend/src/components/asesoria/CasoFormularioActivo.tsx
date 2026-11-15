@@ -1231,28 +1231,28 @@ export default function CasoFormularioActivo({
         .then((r) => r.json())
         .then((data) => {
           if (data.success && data.resumen) {
-            setPracticaRequiereLente(!!data.resumen.requiere_lente || esCatarata)
+            setPracticaRequiereLente(!!data.resumen.requiere_lente)
           } else {
-            setPracticaRequiereLente(esCatarata)
+            setPracticaRequiereLente(false)
           }
         })
-        .catch(() => setPracticaRequiereLente(esCatarata))
+        .catch(() => setPracticaRequiereLente(false))
+
+      const liosUrl = `${BACKEND_URL}/api/nomenclador/lios-comerciales?practica_id=${encodeURIComponent(targetCod)}&solo_habilitados=true`
+      fetch(liosUrl)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.lios)) {
+            setCatalogoLios(data.lios)
+          } else {
+            setCatalogoLios([])
+          }
+        })
+        .catch((err) => console.error('Error cargando catálogo LIOs:', err))
     } else {
-      setPracticaRequiereLente(esCatarata)
+      setPracticaRequiereLente(false)
+      setCatalogoLios([])
     }
-
-    const liosUrl = targetCod
-      ? `${BACKEND_URL}/api/nomenclador/lios-comerciales?practica_id=${encodeURIComponent(targetCod)}`
-      : `${BACKEND_URL}/api/nomenclador/lios-comerciales`
-
-    fetch(liosUrl)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.success && data.lios) {
-          setCatalogoLios(data.lios)
-        }
-      })
-      .catch((err) => console.error('Error cargando catálogo LIOs:', err))
   }, [practicaCodigo, practicaNombre, caso.practica_codigo, caso.practica_nombre])
 
   // Atajo para adoptar el LIO cotizado en el presupuesto del paciente
@@ -1282,17 +1282,23 @@ export default function CasoFormularioActivo({
       }
 
       if (presData && presData.items) {
+        let codigosLioComercial = new Set(
+          catalogoLios.map((l: any) => String(l.codigo || '').trim().toUpperCase()).filter(Boolean)
+        )
+        if (codigosLioComercial.size === 0) {
+          try {
+            const resAll = await fetch(`${BACKEND_URL}/api/nomenclador/lios-comerciales`)
+            const dAll = await resAll.json()
+            if (dAll.success && Array.isArray(dAll.lios)) {
+              codigosLioComercial = new Set(
+                dAll.lios.map((l: any) => String(l.codigo || '').trim().toUpperCase()).filter(Boolean)
+              )
+            }
+          } catch {}
+        }
         const itemsLio = presData.items.filter((it: any) => {
-          const n = (it.nombre || '').toLowerCase()
-          const c = (it.codigo || '').toLowerCase()
-          return (
-            n.includes('lente') ||
-            n.includes('lio') ||
-            c.includes('lio') ||
-            c.includes('clareon') ||
-            c.includes('trifocal') ||
-            c.includes('vivity')
-          )
+          const c = String(it.codigo || '').trim().toUpperCase()
+          return !!it.es_lio_comercial || (c !== '' && codigosLioComercial.has(c))
         })
 
         if (itemsLio.length > 0) {

@@ -61,6 +61,17 @@ export interface ModeloLioItem {
   }
 }
 
+export interface ElementoGeclisaModelo {
+  id?: string
+  modelo_lio_id?: string
+  ambito: 'esferico' | 'torico' | 'ambos'
+  geclisa_ele_id: number
+  geclisa_ele_cod: string
+  geclisa_nombre: string
+  es_generico?: boolean
+  activo?: boolean
+}
+
 export interface ModeloLio {
   id?: string
   marca: string
@@ -73,6 +84,9 @@ export interface ModeloLio {
   paso_dioptrias?: number
   admite_toricos?: boolean
   apto_sulcus?: boolean
+  naturaleza_clinica?: 'pseudofaquico' | 'faquico_icl' | 'no_biometrico'
+  requiere_biometria?: boolean
+  elementos_geclisa?: ElementoGeclisaModelo[]
   descripcion?: string
   activo?: boolean
   items_count?: number
@@ -286,7 +300,7 @@ export default function LioSettingsCard() {
       const url = esEdit ? `${BACKEND_URL}/api/modelos-lio/${familiaEnEdicion.id}` : `${BACKEND_URL}/api/modelos-lio`
       const method = esEdit ? 'PUT' : 'POST'
 
-      const { items_count, created_at, ...cleanPayload } = familiaEnEdicion as any
+      const { items_count, created_at, elementos_geclisa, ...cleanPayload } = familiaEnEdicion as any
 
       const res = await fetch(url, {
         method,
@@ -317,6 +331,7 @@ export default function LioSettingsCard() {
 
     try {
       const res = await fetch(`${BACKEND_URL}/api/modelos-lio/${id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
       if (res.ok) {
         setFamilias((prev) => prev.filter((f) => f.id !== id))
         await fetchItemsGtin()
@@ -325,6 +340,8 @@ export default function LioSettingsCard() {
         }
         setMensajeExito('✔ Familia eliminada.')
         setTimeout(() => setMensajeExito(null), 3000)
+      } else {
+        setError(data.detail || 'No se pudo eliminar la familia.')
       }
     } catch (err) {
       setError('Error al eliminar familia.')
@@ -1445,6 +1462,39 @@ export default function LioSettingsCard() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="font-bold text-[var(--secondary)]">Naturaleza Clínica</label>
+                  <select
+                    value={familiaEnEdicion.naturaleza_clinica || 'pseudofaquico'}
+                    onChange={(e) => {
+                      const val = e.target.value as 'pseudofaquico' | 'faquico_icl' | 'no_biometrico'
+                      setFamiliaEnEdicion({
+                        ...familiaEnEdicion,
+                        naturaleza_clinica: val,
+                        requiere_biometria: val === 'pseudofaquico',
+                      })
+                    }}
+                    className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-900 border border-[var(--border)] rounded-xl font-bold text-[var(--foreground)]"
+                  >
+                    <option value="pseudofaquico">Pseudofáquico (Biométrico)</option>
+                    <option value="faquico_icl">Fáquico ICL (Elemento Genérico)</option>
+                    <option value="no_biometrico">No Biométrico (Elemento Genérico)</option>
+                  </select>
+                </div>
+                <div className="flex items-end pb-1">
+                  <label className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={familiaEnEdicion.requiere_biometria !== false}
+                      onChange={(e) => setFamiliaEnEdicion({ ...familiaEnEdicion, requiere_biometria: e.target.checked })}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span>Requiere Biometría / Dioptría exacta</span>
+                  </label>
+                </div>
+              </div>
+
               <div className="flex items-center gap-6 pt-1 flex-wrap">
                 <label className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
                   <input
@@ -1487,6 +1537,91 @@ export default function LioSettingsCard() {
                   placeholder="Material hidrofóbico, libre de glistenings..."
                 />
               </div>
+
+              {familiaEnEdicion.id && (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-[var(--border)] space-y-2">
+                  <div className="font-bold text-[11px] text-[var(--foreground)]">
+                    Elementos Genéricos Geclisa (`modelos_lio_elementos_geclisa`)
+                  </div>
+                  {(familiaEnEdicion.elementos_geclisa || []).map((el) => (
+                    <div key={el.ambito} className="flex items-center justify-between text-[11px] bg-white dark:bg-slate-950 px-2.5 py-1.5 rounded-lg border border-[var(--border)]">
+                      <span>
+                        <strong>{el.ambito.toUpperCase()}</strong> • eleId {el.geclisa_ele_id} ({el.geclisa_ele_cod}) — {el.geclisa_nombre}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await fetch(`${BACKEND_URL}/api/modelos-lio/${familiaEnEdicion.id}/elementos-geclisa/${el.ambito}`, {
+                            method: 'DELETE',
+                          })
+                          setFamiliaEnEdicion({
+                            ...familiaEnEdicion,
+                            elementos_geclisa: (familiaEnEdicion.elementos_geclisa || []).filter((x) => x.ambito !== el.ambito),
+                          })
+                          await fetchFamilias()
+                        }}
+                        className="text-rose-600 font-bold hover:underline"
+                      >
+                        Quitar
+                      </button>
+                    </div>
+                  ))}
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-1.5 pt-1">
+                    <select
+                      id="elem-ambito-new"
+                      defaultValue="esferico"
+                      className="px-2 py-1.5 rounded-lg border border-[var(--border)] bg-white dark:bg-slate-950 text-[11px]"
+                    >
+                      <option value="esferico">esferico</option>
+                      <option value="torico">torico</option>
+                      <option value="ambos">ambos</option>
+                    </select>
+                    <input
+                      id="elem-id-new"
+                      type="number"
+                      placeholder="eleId Geclisa"
+                      className="px-2 py-1.5 rounded-lg border border-[var(--border)] bg-white dark:bg-slate-950 text-[11px]"
+                    />
+                    <input
+                      id="elem-cod-new"
+                      type="text"
+                      placeholder="Código (ej. ICL_ESF)"
+                      className="px-2 py-1.5 rounded-lg border border-[var(--border)] bg-white dark:bg-slate-950 text-[11px]"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ambEl = document.getElementById('elem-ambito-new') as HTMLSelectElement | null
+                        const idEl = document.getElementById('elem-id-new') as HTMLInputElement | null
+                        const codEl = document.getElementById('elem-cod-new') as HTMLInputElement | null
+                        const eleId = Number(idEl?.value || 0)
+                        if (!eleId) return
+                        const res = await fetch(`${BACKEND_URL}/api/modelos-lio/${familiaEnEdicion.id}/elementos-geclisa`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            ambito: ambEl?.value || 'ambos',
+                            geclisa_ele_id: eleId,
+                            geclisa_ele_cod: codEl?.value || `GEN_${eleId}`,
+                            geclisa_nombre: `${familiaEnEdicion.modelo} (${ambEl?.value || 'ambos'})`,
+                          }),
+                        })
+                        const d = await res.json()
+                        if (res.ok && d.elemento) {
+                          const rest = (familiaEnEdicion.elementos_geclisa || []).filter((x) => x.ambito !== d.elemento.ambito)
+                          setFamiliaEnEdicion({ ...familiaEnEdicion, elementos_geclisa: [...rest, d.elemento] })
+                          if (idEl) idEl.value = ''
+                          if (codEl) codEl.value = ''
+                          await fetchFamilias()
+                        }
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white font-bold text-[11px]"
+                    >
+                      + Vincular
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[var(--border)]">
                 <button

@@ -291,7 +291,7 @@ export default function FichaTurnoModal({
     }
     const mod = (formData.lente_tipo || '').replace(/\s*\([^)]*\)/g, '').trim()
     const diop = parseFloat(String(formData.lente_dioptria || '').replace('+', '').trim())
-    if (!mod || isNaN(diop)) {
+    if (!mod) {
       setSkuResuelto(null)
       return
     }
@@ -303,7 +303,7 @@ export default function FichaTurnoModal({
           method: 'POST',
           body: JSON.stringify({
             modelo_nombre: mod,
-            dioptria: diop,
+            dioptria: isNaN(diop) ? null : diop,
             torico_valor: formData.es_torico && formData.lente_torico_valor ? `T${formData.lente_torico_valor}` : null,
             es_torico: Boolean(formData.es_torico)
           })

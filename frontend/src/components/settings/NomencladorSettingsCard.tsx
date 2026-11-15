@@ -86,11 +86,24 @@ interface GeclisaPracticaItem {
   arancel_activo?: boolean
 }
 
+interface CategoriaNomenclador {
+  id: string
+  slug: string
+  nombre: string
+  es_lio_comercial: boolean
+  permite_requiere_lente: boolean
+  es_insumo: boolean
+  orden: number
+  activo: boolean
+  practicas_activas_count?: number
+}
+
 interface CrmPracticaConfigurada {
   id: string
   codigo: string
   nombre: string
   categoria: string
+  categoria_id?: string | null
   descripcion: string
   origen: 'GECLISA' | 'MANUAL'
   requiere_lente?: boolean
@@ -253,12 +266,25 @@ export default function NomencladorSettingsCard() {
     familias_lio_ids: [] as string[]
   })
   const [creandoLio, setCreandoLio] = useState(false)
+  const [categoriasNomenclador, setCategoriasNomenclador] = useState<CategoriaNomenclador[]>([])
+  const [isCatModalOpen, setIsCatModalOpen] = useState(false)
+  const [savingCat, setSavingCat] = useState(false)
+  const [catFeedback, setCatFeedback] = useState<string | null>(null)
+  const [catForm, setCatForm] = useState({
+    id: '',
+    nombre: '',
+    es_lio_comercial: false,
+    permite_requiere_lente: true,
+    es_insumo: false,
+    orden: 50,
+  })
 
   const [formData, setFormData] = useState({
     id: '',
     codigo: '',
     nombre: '',
     categoria: 'General',
+    categoria_id: '',
     descripcion: '',
     origen: 'GECLISA' as 'GECLISA' | 'MANUAL',
     nom_id: null as number | null,
@@ -340,7 +366,21 @@ export default function NomencladorSettingsCard() {
         }
       })
       .catch((err) => console.error('Error cargando familias clínicas LIO:', err))
+
+    loadCategoriasNomenclador()
   }, [])
+
+  const loadCategoriasNomenclador = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/nomenclador/categorias`)
+      const data = await res.json()
+      if (data.success && Array.isArray(data.categorias)) {
+        setCategoriasNomenclador(data.categorias)
+      }
+    } catch (err) {
+      console.error('Error cargando categorías del nomenclador:', err)
+    }
+  }
 
   useEffect(() => {
     loadTiposGeclisa()
@@ -843,6 +883,10 @@ export default function NomencladorSettingsCard() {
       codigo: item.nomCod,
       nombre: crmMatch?.nombre || item.nombre || item.practica || `Práctica ${item.nomCod}`,
       categoria: crmMatch?.categoria || item.tipo || 'Oftalmología',
+      categoria_id:
+        crmMatch?.categoria_id ||
+        categoriasNomenclador.find((c) => c.nombre.toLowerCase() === (crmMatch?.categoria || item.tipo || '').trim().toLowerCase())?.id ||
+        '',
       descripcion: crmMatch?.descripcion || '',
       origen: 'GECLISA',
       nom_id: typeof selectedNomId === 'number' ? selectedNomId : 1,
@@ -895,6 +939,7 @@ export default function NomencladorSettingsCard() {
       codigo: '',
       nombre: '',
       categoria: 'General',
+      categoria_id: categoriasNomenclador.find((c) => c.slug === 'general')?.id || '',
       descripcion: '',
       origen: 'MANUAL',
       nom_id: null,
@@ -935,11 +980,15 @@ export default function NomencladorSettingsCard() {
     const today = new Date().toISOString().split('T')[0]
     setModalMode('edit')
     setModalSubTab('general')
+    const catMatch =
+      categoriasNomenclador.find((c) => c.id === item.categoria_id) ||
+      categoriasNomenclador.find((c) => c.nombre.toLowerCase() === (item.categoria || '').trim().toLowerCase())
     setFormData({
       id: item.id,
       codigo: item.codigo,
       nombre: item.nombre,
-      categoria: item.categoria || 'General',
+      categoria: catMatch?.nombre || item.categoria || 'General',
+      categoria_id: item.categoria_id || catMatch?.id || '',
       descripcion: item.descripcion || '',
       modalidad_lateralidad_defecto: (item.descripcion?.includes('[MODALIDAD:bilateral_escalonada]') ? 'bilateral_escalonada' : item.descripcion?.includes('[MODALIDAD:bilateral_simultanea]') ? 'bilateral_simultanea' : item.descripcion?.includes('[MODALIDAD:unilateral]') ? 'unilateral' : ((item.nombre || '').toLowerCase().includes('catarata') || (item.nombre || '').toLowerCase().includes('faco')) ? 'bilateral_escalonada' : 'unilateral') as any,
       ojo_defecto: (item.descripcion?.includes('[OJO_DEFECTO:AO]') ? 'AO' : item.descripcion?.includes('[OJO_DEFECTO:OI]') ? 'OI' : 'OD') as any,
@@ -976,10 +1025,20 @@ export default function NomencladorSettingsCard() {
     setIsModalOpen(true)
   }
 
-  const esCategoriaLioComercial =
-    (formData.categoria || '').toLowerCase().includes('lentes intraoculares') ||
-    (formData.categoria || '').trim().toLowerCase() === 'lio' ||
-    (!formData.requiere_lente && (formData.familias_lio_ids || []).length > 0)
+  const categoriaSeleccionada =
+    categoriasNomenclador.find((c) => c.id === formData.categoria_id) ||
+    categoriasNomenclador.find((c) => c.nombre.toLowerCase() === (formData.categoria || '').trim().toLowerCase()) ||
+    null
+
+  const esCategoriaLioComercial = categoriaSeleccionada
+    ? !!categoriaSeleccionada.es_lio_comercial
+    : ((formData.categoria || '').toLowerCase().includes('lentes intraoculares') ||
+      (formData.categoria || '').trim().toLowerCase() === 'lio' ||
+      (!formData.requiere_lente && (formData.familias_lio_ids || []).length > 0))
+
+  const permiteRequiereLente = categoriaSeleccionada
+    ? !!categoriaSeleccionada.permite_requiere_lente
+    : !esCategoriaLioComercial
 
   const handleSavePracticaIntegral = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -991,7 +1050,8 @@ export default function NomencladorSettingsCard() {
         id: formData.id || undefined,
         codigo: formData.codigo,
         nombre: formData.nombre,
-        categoria: formData.categoria,
+        categoria: categoriaSeleccionada?.nombre || formData.categoria,
+        categoria_id: formData.categoria_id || categoriaSeleccionada?.id || undefined,
         descripcion: formData.descripcion,
         origen: formData.origen,
         habilitar_arancel: formData.habilitar_arancel,
@@ -1001,8 +1061,8 @@ export default function NomencladorSettingsCard() {
         vigencia_hasta: formData.vigencia_hasta || null,
         arancel_id: formData.arancel_id || undefined,
         habilitar_preparacion: formData.habilitar_preparacion,
-        requiere_lente: esCategoriaLioComercial ? false : !!formData.requiere_lente,
-        lios_habilitados: formData.lios_habilitados,
+        requiere_lente: esCategoriaLioComercial || !permiteRequiereLente ? false : !!formData.requiere_lente,
+        lios_habilitados: esCategoriaLioComercial || !permiteRequiereLente ? [] : formData.lios_habilitados,
         familias_lio_ids: formData.familias_lio_ids || [],
         condicion_toricidad: formData.condicion_toricidad || 'ambos',
         preparacion_plantilla_id:
@@ -2277,14 +2337,46 @@ export default function NomencladorSettingsCard() {
                     </div>
 
                     <div>
-                      <label className="font-bold text-slate-500 block mb-1">Categoría / Especialidad</label>
-                      <input
-                        type="text"
-                        value={formData.categoria}
-                        onChange={(e) => setFormData({ ...formData, categoria: e.target.value })}
-                        placeholder="ej: Oftalmología, Cirugía..."
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="font-bold text-slate-500">Categoría / Especialidad</label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCatFeedback(null)
+                            setIsCatModalOpen(true)
+                          }}
+                          className="text-[10px] font-bold text-blue-600 hover:underline cursor-pointer"
+                        >
+                          Gestionar categorías
+                        </button>
+                      </div>
+                      <select
+                        value={formData.categoria_id || categoriaSeleccionada?.id || ''}
+                        onChange={(e) => {
+                          const sel = categoriasNomenclador.find((c) => c.id === e.target.value)
+                          if (sel) {
+                            const bloqueaLente = sel.es_lio_comercial || !sel.permite_requiere_lente
+                            setFormData((prev) => ({
+                              ...prev,
+                              categoria_id: sel.id,
+                              categoria: sel.nombre,
+                              requiere_lente: bloqueaLente ? false : prev.requiere_lente,
+                              lios_habilitados: bloqueaLente ? [] : prev.lios_habilitados,
+                            }))
+                          }
+                        }}
                         className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] outline-none focus:ring-2 focus:ring-blue-500"
-                      />
+                      >
+                        <option value="">-- Seleccionar categoría --</option>
+                        {categoriasNomenclador
+                          .filter((c) => c.activo || c.id === formData.categoria_id)
+                          .map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.nombre}
+                              {c.es_lio_comercial ? ' (LIO Comercial)' : c.es_insumo ? ' (Insumo)' : ''}
+                            </option>
+                          ))}
+                      </select>
                     </div>
                   </div>
 
@@ -2401,6 +2493,10 @@ export default function NomencladorSettingsCard() {
                         formData.condicion_toricidad || 'ambos',
                         (val) => setFormData((prev) => ({ ...prev, condicion_toricidad: val }))
                       )}
+                    </div>
+                  ) : !permiteRequiereLente ? (
+                    <div className="p-3.5 bg-slate-50 dark:bg-slate-900/50 border border-[var(--border)] rounded-xl text-[11px] text-slate-500">
+                      La categoría <strong>{categoriaSeleccionada?.nombre || formData.categoria}</strong> no habilita selección de Lente Intraocular (`requiere_lente = false`).
                     </div>
                   ) : (
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3.5 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl">
@@ -4153,6 +4249,189 @@ export default function NomencladorSettingsCard() {
                 >
                   <CheckCircle2 size={16} />
                   Guardar Consentimiento
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isCatModalOpen && (
+        <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#0b1329] border border-[var(--border)] rounded-2xl max-w-2xl w-full p-5 space-y-4 shadow-2xl max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+              <h3 className="text-sm font-black text-[var(--foreground)]">Categorías del Nomenclador</h3>
+              <button type="button" onClick={() => setIsCatModalOpen(false)} className="p-1 text-slate-400 hover:text-[var(--foreground)]">
+                <X size={18} />
+              </button>
+            </div>
+            {catFeedback && (
+              <div className="p-2.5 rounded-xl text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                {catFeedback}
+              </div>
+            )}
+            <div className="space-y-2 max-h-56 overflow-y-auto">
+              {categoriasNomenclador.map((c) => (
+                <div key={c.id} className="flex items-center justify-between gap-2 p-2.5 rounded-xl border border-[var(--border)] text-xs">
+                  <div>
+                    <div className="font-bold text-[var(--foreground)]">
+                      {c.nombre} <span className="text-[10px] font-mono text-slate-400">({c.slug})</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5">
+                      {c.es_lio_comercial && <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-bold">LIO Comercial</span>}
+                      {c.permite_requiere_lente && <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold">Permite LIO</span>}
+                      {c.es_insumo && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-bold">Insumo</span>}
+                      <span>{c.practicas_activas_count ?? 0} prácticas</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCatForm({
+                          id: c.id,
+                          nombre: c.nombre,
+                          es_lio_comercial: !!c.es_lio_comercial,
+                          permite_requiere_lente: !!c.permite_requiere_lente,
+                          es_insumo: !!c.es_insumo,
+                          orden: c.orden ?? 50,
+                        })
+                      }
+                      className="px-2 py-1 rounded-lg border border-[var(--border)] text-[11px] font-bold hover:bg-slate-50"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setCatFeedback(null)
+                        const res = await fetch(`${API_BASE_URL}/api/nomenclador/categorias/${c.id}/estado`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ activo: !c.activo }),
+                        })
+                        const d = await res.json()
+                        if (!res.ok) {
+                          setCatFeedback(d.detail || 'No se pudo cambiar el estado.')
+                          return
+                        }
+                        await loadCategoriasNomenclador()
+                      }}
+                      className="px-2 py-1 rounded-lg border border-[var(--border)] text-[11px] font-bold hover:bg-slate-50"
+                    >
+                      {c.activo ? 'Desactivar' : 'Activar'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <form
+              onSubmit={async (ev) => {
+                ev.preventDefault()
+                setSavingCat(true)
+                setCatFeedback(null)
+                try {
+                  const isEdit = !!catForm.id
+                  const url = isEdit
+                    ? `${API_BASE_URL}/api/nomenclador/categorias/${catForm.id}`
+                    : `${API_BASE_URL}/api/nomenclador/categorias`
+                  const res = await fetch(url, {
+                    method: isEdit ? 'PUT' : 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      nombre: catForm.nombre,
+                      es_lio_comercial: catForm.es_lio_comercial,
+                      permite_requiere_lente: catForm.permite_requiere_lente,
+                      es_insumo: catForm.es_insumo,
+                      orden: Number(catForm.orden) || 50,
+                    }),
+                  })
+                  const d = await res.json()
+                  if (!res.ok) {
+                    setCatFeedback(d.detail || 'Error guardando categoría.')
+                  } else {
+                    setCatForm({ id: '', nombre: '', es_lio_comercial: false, permite_requiere_lente: true, es_insumo: false, orden: 50 })
+                    await loadCategoriasNomenclador()
+                    await loadCatalogoCrm()
+                  }
+                } finally {
+                  setSavingCat(false)
+                }
+              }}
+              className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-[var(--border)] space-y-2.5 text-xs"
+            >
+              <div className="font-bold">{catForm.id ? 'Editar categoría' : 'Nueva categoría'}</div>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="Nombre (ej. Cirugía Refractiva)"
+                  value={catForm.nombre}
+                  onChange={(e) => setCatForm({ ...catForm, nombre: e.target.value })}
+                  className="sm:col-span-3 p-2 rounded-lg border border-[var(--border)] bg-[var(--background)]"
+                />
+                <input
+                  type="number"
+                  placeholder="Orden"
+                  value={catForm.orden}
+                  onChange={(e) => setCatForm({ ...catForm, orden: Number(e.target.value) || 50 })}
+                  className="p-2 rounded-lg border border-[var(--border)] bg-[var(--background)]"
+                />
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <label className="flex items-center gap-1.5 font-semibold cursor-pointer">
+                  <input
+                    type="radio"
+                    name="rol_cat"
+                    checked={catForm.permite_requiere_lente && !catForm.es_lio_comercial && !catForm.es_insumo}
+                    onChange={() => setCatForm({ ...catForm, permite_requiere_lente: true, es_lio_comercial: false, es_insumo: false })}
+                  />
+                  <span>Práctica quirúrgica (permite LIO)</span>
+                </label>
+                <label className="flex items-center gap-1.5 font-semibold cursor-pointer">
+                  <input
+                    type="radio"
+                    name="rol_cat"
+                    checked={catForm.es_lio_comercial}
+                    onChange={() => setCatForm({ ...catForm, es_lio_comercial: true, permite_requiere_lente: false, es_insumo: false })}
+                  />
+                  <span>LIO Comercial</span>
+                </label>
+                <label className="flex items-center gap-1.5 font-semibold cursor-pointer">
+                  <input
+                    type="radio"
+                    name="rol_cat"
+                    checked={catForm.es_insumo}
+                    onChange={() => setCatForm({ ...catForm, es_insumo: true, es_lio_comercial: false, permite_requiere_lente: false })}
+                  />
+                  <span>Insumo</span>
+                </label>
+                <label className="flex items-center gap-1.5 font-semibold cursor-pointer">
+                  <input
+                    type="radio"
+                    name="rol_cat"
+                    checked={!catForm.permite_requiere_lente && !catForm.es_lio_comercial && !catForm.es_insumo}
+                    onChange={() => setCatForm({ ...catForm, es_insumo: false, es_lio_comercial: false, permite_requiere_lente: false })}
+                  />
+                  <span>Estándar / Estudio (sin LIO)</span>
+                </label>
+              </div>
+              <div className="flex justify-end gap-2">
+                {catForm.id && (
+                  <button
+                    type="button"
+                    onClick={() => setCatForm({ id: '', nombre: '', es_lio_comercial: false, permite_requiere_lente: true, es_insumo: false, orden: 50 })}
+                    className="px-3 py-1.5 rounded-lg border border-[var(--border)]"
+                  >
+                    Cancelar edición
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={savingCat}
+                  className="px-4 py-1.5 rounded-lg bg-blue-600 text-white font-bold"
+                >
+                  {savingCat ? 'Guardando...' : catForm.id ? 'Actualizar' : 'Crear categoría'}
                 </button>
               </div>
             </form>

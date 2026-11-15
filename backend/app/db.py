@@ -4,7 +4,7 @@ import uuid
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
@@ -1328,8 +1328,10 @@ def list_practicas_con_arancel(
                 arancel_vigente_map[pid] = ar
                 
         # Construir resultado combinado
+        cats_map = _cargar_mapa_categorias_nomenclador()
         resultados = []
         for p in practicas:
+            cat_info = cats_map.get(str(p.get("categoria_id") or "")) or {}
             nom_info = p.get("nomencladores") or {}
             moneda_default = nom_info.get("moneda_default", "ARS")
             ar = arancel_vigente_map.get(p["id"])
@@ -1372,6 +1374,384 @@ def list_practicas_con_arancel(
         logger.error(f"Error al listar practicas con arancel: {e}")
         return {"total": 0, "practicas": []}
 
+class CrmConflictError(Exception):
+    """Excepción de conflicto de integridad funcional traducible a HTTP 409."""
+    def __init__(self, detail: str, codigo: str = "CATEGORIA_EN_USO", practicas_afectadas: Optional[List[Dict[str, Any]]] = None):
+        super().__init__(detail)
+        self.detail = detail
+        self.codigo = codigo
+        self.practicas_afectadas = practicas_afectadas or []
+
+
+_ALIAS_CATEGORIAS_NOMENCLADOR = {
+    "prestaciones oftalmológicas": "prestaciones_oftalmologicas",
+    "prestaciones oftalmologicas": "prestaciones_oftalmologicas",
+    "cirugia": "cirugias",
+    "cirugía": "cirugias",
+    "cirugias": "cirugias",
+    "cirugías": "cirugias",
+    "lasik": "lasik",
+    "lentes intraoculares": "lentes_intraoculares",
+    "lente": "lentes_intraoculares",
+    "lentes": "lentes_intraoculares",
+    "antigeogenico": "antiangiogenicos",
+    "antiangiogenico": "antiangiogenicos",
+    "antiangiogénico": "antiangiogenicos",
+    "antiangiogenicos": "antiangiogenicos",
+    "antiangiogénicos": "antiangiogenicos",
+    "anestesia": "anestesia",
+    "material": "materiales_y_elementos",
+    "elemento": "materiales_y_elementos",
+    "elementos": "materiales_y_elementos",
+    "materiales y elementos": "materiales_y_elementos",
+    "anillos": "anillos_intracorneales",
+    "anillos intracorneales": "anillos_intracorneales",
+    "general": "general",
+}
+
+
+def _normalizar_slug_categoria(texto: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(texto or "").strip().lower())
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+    return s or "categoria"
+
+
+def _validar_exclusividad_flags_categoria(
+    es_lio_comercial: bool,
+    permite_requiere_lente: bool,
+    es_insumo: bool,
+) -> None:
+    if (int(bool(es_lio_comercial)) + int(bool(permite_requiere_lente)) + int(bool(es_insumo))) > 1:
+        raise ValueError(
+            "Una categoría solo puede tener un rol exclusivo activo: es_lio_comercial, permite_requiere_lente o es_insumo."
+        )
+
+
+def _cargar_mapa_categorias_nomenclador() -> Dict[str, Dict[str, Any]]:
+    """Retorna {id_str: categoria_dict} con todas las filas de nomenclador_categorias."""
+    if not supabase:
+        return {}
+    try:
+        resp = supabase.table("nomenclador_categorias").select("*").order("orden").order("created_at").execute()
+        return {str(c["id"]): c for c in (resp.data or []) if c.get("id")}
+    except Exception as e:
+        logger.warning(f"Aviso cargando nomenclador_categorias: {e}")
+        return {}
+
+
+def _resolver_categoria_practica(
+    categoria_id: Optional[str] = None,
+    categoria_texto: Optional[str] = None,
+    permitir_fallback_general: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Resuelve la categoría en nomenclador_categorias por UUID o nombre/alias."""
+    cats_map = _cargar_mapa_categorias_nomenclador()
+    if not cats_map:
+        return None
+
+    if categoria_id:
+        cid = str(categoria_id).strip()
+        if cid in cats_map:
+            cat = cats_map[cid]
+            if not cat.get("activo", True):
+                raise ValueError(f"La categoría '{cat.get('nombre')}' está inactiva.")
+            return cat
+        raise ValueError(f"Categoría con id '{cid}' no existe.")
+
+    raw_txt = str(categoria_texto or "").strip()
+    norm_txt = raw_txt.lower()
+    if norm_txt:
+        for c in cats_map.values():
+            if str(c.get("nombre") or "").strip().lower() == norm_txt:
+                if not c.get("activo", True):
+                    raise ValueError(f"La categoría '{c.get('nombre')}' está inactiva.")
+                return c
+        slug_alias = _ALIAS_CATEGORIAS_NOMENCLADOR.get(norm_txt)
+        if slug_alias:
+            for c in cats_map.values():
+                if c.get("slug") == slug_alias:
+                    return c
+
+    if permitir_fallback_general or not raw_txt:
+        for c in cats_map.values():
+            if c.get("slug") == "general":
+                return c
+        return next(iter(cats_map.values()), None)
+
+    raise ValueError(f"Categoría '{raw_txt}' no reconocida en el catálogo de categorías.")
+
+
+def _validar_codigos_lios_habilitados(codigos: List[str]) -> List[str]:
+    """Valida que cada código en lios_habilitados sea un LIO comercial activo con >=1 familia clínica."""
+    limpios: List[str] = []
+    vistos = set()
+    for c in (codigos or []):
+        cu = str(c or "").strip().upper()
+        if cu and cu not in vistos:
+            vistos.add(cu)
+            limpios.append(cu)
+    if not limpios:
+        raise ValueError("Cuando requiere_lente = true debe habilitar al menos un LIO comercial válido en 6. LIOs & Precios.")
+
+    if not supabase:
+        return limpios
+
+    cats_map = _cargar_mapa_categorias_nomenclador()
+    fam_map = _cargar_mapa_modelos_lio_activos()
+    p_resp = supabase.table("nomenclador_practicas").select(
+        "id, codigo, nombre, activo, categoria_id, familias_lio_ids"
+    ).in_("codigo", limpios).execute()
+    por_codigo = {str(p.get("codigo") or "").strip().upper(): p for p in (p_resp.data or [])}
+
+    for cod in limpios:
+        p = por_codigo.get(cod)
+        if not p or not p.get("activo", True):
+            raise ValueError(f"El código '{cod}' en lios_habilitados no existe o está inactivo.")
+        cat = cats_map.get(str(p.get("categoria_id") or ""))
+        if cats_map and (not cat or not cat.get("es_lio_comercial")):
+            raise ValueError(f"El código '{cod}' no pertenece a una categoría con es_lio_comercial = true.")
+        fams = [str(f).strip() for f in (p.get("familias_lio_ids") or []) if str(f or "").strip()]
+        fams_activas = [fid for fid in fams if fam_map.get(fid, {}).get("activo", True)] if fam_map else fams
+        if not fams_activas:
+            raise ValueError(f"El LIO comercial '{cod}' debe tener al menos una familia clínica activa vinculada en modelos_lio.")
+    return limpios
+
+
+def _validar_familias_lio_ids_activas(familias_lio_ids: List[str]) -> List[str]:
+    limpias: List[str] = []
+    vistos = set()
+    for fid in (familias_lio_ids or []):
+        s = str(fid or "").strip()
+        if s and s not in vistos:
+            vistos.add(s)
+            limpias.append(s)
+    if not limpias:
+        raise ValueError("Un LIO comercial debe vincularse al menos a una familia clínica activa en modelos_lio.")
+    fam_map = _cargar_mapa_modelos_lio_activos()
+    if fam_map:
+        activas = [fid for fid in limpias if fid in fam_map and fam_map[fid].get("activo", True)]
+        if len(activas) != len(limpias):
+            raise ValueError("Una o más familias de modelos_lio seleccionadas no existen o están inactivas.")
+    return limpias
+
+
+def _verificar_lio_comercial_en_uso_409(codigo: str) -> None:
+    if not supabase or not codigo:
+        return
+    cod_up = str(codigo).strip().upper()
+    resp = supabase.table("nomenclador_practicas").select(
+        "id, codigo, nombre, lios_habilitados"
+    ).eq("activo", True).contains("lios_habilitados", [cod_up]).execute()
+    afectadas = [
+        {"id": r["id"], "codigo": r["codigo"], "nombre": r["nombre"], "motivo": f"Referencia al LIO '{cod_up}' en lios_habilitados"}
+        for r in (resp.data or [])
+        if str(r.get("codigo") or "").upper() != cod_up
+    ]
+    if afectadas:
+        raise CrmConflictError(
+            detail=f"No se puede desactivar ni reclasificar el LIO '{cod_up}' porque está habilitado en {len(afectadas)} práctica(s) activa(s).",
+            codigo="LIO_EN_USO",
+            practicas_afectadas=afectadas,
+        )
+
+
+def _verificar_familia_lio_en_uso_409(modelo_id: str) -> None:
+    if not supabase or not modelo_id:
+        return
+    mid = str(modelo_id).strip()
+    resp = supabase.table("nomenclador_practicas").select(
+        "id, codigo, nombre, familias_lio_ids"
+    ).eq("activo", True).execute()
+    afectadas = []
+    for r in (resp.data or []):
+        fams = [str(f).strip() for f in (r.get("familias_lio_ids") or []) if str(f or "").strip()]
+        if mid in fams:
+            afectadas.append({
+                "id": r["id"],
+                "codigo": r["codigo"],
+                "nombre": r["nombre"],
+                "motivo": "Vinculado a esta familia clínica de LIO",
+            })
+    if afectadas:
+        raise CrmConflictError(
+            detail=f"No se puede desactivar o eliminar la familia LIO porque está vinculada a {len(afectadas)} práctica(s) comercial(es) activa(s).",
+            codigo="FAMILIA_LIO_EN_USO",
+            practicas_afectadas=afectadas,
+        )
+
+
+def listar_categorias_nomenclador(solo_activas: bool = False) -> List[Dict[str, Any]]:
+    if not supabase:
+        return []
+    try:
+        q = supabase.table("nomenclador_categorias").select("*")
+        if solo_activas:
+            q = q.eq("activo", True)
+        cats_resp = q.order("orden").order("created_at").execute()
+        cats = cats_resp.data or []
+        p_resp = supabase.table("nomenclador_practicas").select("id, categoria_id").eq("activo", True).execute()
+        conteos: Dict[str, int] = {}
+        for p in (p_resp.data or []):
+            cid = str(p.get("categoria_id") or "")
+            if cid:
+                conteos[cid] = conteos.get(cid, 0) + 1
+        for c in cats:
+            c["practicas_activas_count"] = conteos.get(str(c["id"]), 0)
+        return cats
+    except Exception as e:
+        logger.error(f"Error al listar categorías del nomenclador: {e}")
+        return []
+
+
+def crear_categoria_nomenclador(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    nombre = str(payload.get("nombre") or "").strip()
+    if not nombre:
+        raise ValueError("El nombre de la categoría es obligatorio.")
+    es_lio = bool(payload.get("es_lio_comercial", False))
+    perm_lente = bool(payload.get("permite_requiere_lente", False))
+    es_insumo = bool(payload.get("es_insumo", False))
+    _validar_exclusividad_flags_categoria(es_lio, perm_lente, es_insumo)
+
+    slug = _normalizar_slug_categoria(payload.get("slug") or nombre)
+    orden = int(payload.get("orden") or 100)
+    cats_map = _cargar_mapa_categorias_nomenclador()
+    for c in cats_map.values():
+        if str(c.get("nombre") or "").strip().lower() == nombre.lower() or c.get("slug") == slug:
+            raise CrmConflictError(
+                detail=f"Ya existe una categoría con el nombre o slug '{nombre}'.",
+                codigo="CATEGORIA_DUPLICADA",
+                practicas_afectadas=[],
+            )
+    resp = supabase.table("nomenclador_categorias").insert({
+        "nombre": nombre,
+        "slug": slug,
+        "es_lio_comercial": es_lio,
+        "permite_requiere_lente": perm_lente,
+        "es_insumo": es_insumo,
+        "orden": orden,
+        "activo": True,
+    }).execute()
+    if not resp.data:
+        raise RuntimeError("No se pudo crear la categoría.")
+    cat = resp.data[0]
+    cat["practicas_activas_count"] = 0
+    return cat
+
+
+def actualizar_categoria_nomenclador(categoria_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    cats_map = _cargar_mapa_categorias_nomenclador()
+    actual = cats_map.get(str(categoria_id))
+    if not actual:
+        raise ValueError("Categoría no encontrada.")
+
+    nombre = str(payload.get("nombre") if payload.get("nombre") is not None else actual["nombre"]).strip()
+    if not nombre:
+        raise ValueError("El nombre de la categoría es obligatorio.")
+    es_lio = bool(payload.get("es_lio_comercial") if "es_lio_comercial" in payload else actual.get("es_lio_comercial", False))
+    perm_lente = bool(payload.get("permite_requiere_lente") if "permite_requiere_lente" in payload else actual.get("permite_requiere_lente", False))
+    es_insumo = bool(payload.get("es_insumo") if "es_insumo" in payload else actual.get("es_insumo", False))
+    _validar_exclusividad_flags_categoria(es_lio, perm_lente, es_insumo)
+
+    for cid, c in cats_map.items():
+        if cid != str(categoria_id) and str(c.get("nombre") or "").strip().lower() == nombre.lower():
+            raise CrmConflictError(
+                detail=f"Ya existe otra categoría con el nombre '{nombre}'.",
+                codigo="CATEGORIA_DUPLICADA",
+                practicas_afectadas=[],
+            )
+
+    p_resp = supabase.table("nomenclador_practicas").select(
+        "id, codigo, nombre, requiere_lente, familias_lio_ids"
+    ).eq("categoria_id", categoria_id).eq("activo", True).execute()
+    practicas_cat = p_resp.data or []
+    afectadas: List[Dict[str, Any]] = []
+
+    if es_lio and not actual.get("es_lio_comercial"):
+        for p in practicas_cat:
+            if p.get("requiere_lente"):
+                afectadas.append({"id": p["id"], "codigo": p["codigo"], "nombre": p["nombre"], "motivo": "Tiene requiere_lente = true"})
+            elif not (p.get("familias_lio_ids") or []):
+                afectadas.append({"id": p["id"], "codigo": p["codigo"], "nombre": p["nombre"], "motivo": "No posee familias_lio_ids configuradas"})
+    if not perm_lente and actual.get("permite_requiere_lente"):
+        for p in practicas_cat:
+            if p.get("requiere_lente"):
+                afectadas.append({"id": p["id"], "codigo": p["codigo"], "nombre": p["nombre"], "motivo": "Tiene requiere_lente = true"})
+    if not es_lio and actual.get("es_lio_comercial"):
+        for p in practicas_cat:
+            cod_up = str(p.get("codigo") or "").strip().upper()
+            if p.get("familias_lio_ids"):
+                afectadas.append({"id": p["id"], "codigo": p["codigo"], "nombre": p["nombre"], "motivo": "Posee familias_lio_ids vinculadas"})
+            else:
+                try:
+                    _verificar_lio_comercial_en_uso_409(cod_up)
+                except CrmConflictError as ce:
+                    afectadas.extend(ce.practicas_afectadas)
+
+    if afectadas:
+        raise CrmConflictError(
+            detail=f"No se puede cambiar el rol de la categoría '{actual['nombre']}' porque hay {len(afectadas)} práctica(s) incompatible(s).",
+            codigo="CATEGORIA_EN_USO",
+            practicas_afectadas=afectadas,
+        )
+
+    upd: Dict[str, Any] = {
+        "nombre": nombre,
+        "es_lio_comercial": es_lio,
+        "permite_requiere_lente": perm_lente,
+        "es_insumo": es_insumo,
+        "orden": int(payload.get("orden") if payload.get("orden") is not None else actual.get("orden", 100)),
+        "updated_at": "now()",
+    }
+    if payload.get("slug"):
+        upd["slug"] = _normalizar_slug_categoria(payload["slug"])
+
+    resp = supabase.table("nomenclador_categorias").update(upd).eq("id", categoria_id).execute()
+    if not resp.data:
+        raise ValueError("No se pudo actualizar la categoría.")
+    cat = resp.data[0]
+    cat["practicas_activas_count"] = len(practicas_cat)
+    return cat
+
+
+def cambiar_estado_categoria_nomenclador(categoria_id: str, activo: bool) -> Dict[str, Any]:
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    cats_map = _cargar_mapa_categorias_nomenclador()
+    actual = cats_map.get(str(categoria_id))
+    if not actual:
+        raise ValueError("Categoría no encontrada.")
+
+    if not activo:
+        if actual.get("slug") == "general":
+            raise CrmConflictError(
+                detail="La categoría del sistema 'General' no puede desactivarse porque actúa como respaldo obligatorio.",
+                codigo="CATEGORIA_EN_USO",
+                practicas_afectadas=[],
+            )
+        p_resp = supabase.table("nomenclador_practicas").select("id, codigo, nombre").eq("categoria_id", categoria_id).eq("activo", True).execute()
+        practicas_activas = p_resp.data or []
+        if practicas_activas:
+            raise CrmConflictError(
+                detail=f"No se puede desactivar la categoría '{actual['nombre']}' porque tiene {len(practicas_activas)} práctica(s) activa(s).",
+                codigo="CATEGORIA_EN_USO",
+                practicas_afectadas=[
+                    {"id": p["id"], "codigo": p["codigo"], "nombre": p["nombre"], "motivo": "Pertenece a esta categoría"}
+                    for p in practicas_activas
+                ],
+            )
+
+    resp = supabase.table("nomenclador_categorias").update({"activo": bool(activo), "updated_at": "now()"}).eq("id", categoria_id).execute()
+    if not resp.data:
+        raise ValueError("No se pudo cambiar el estado de la categoría.")
+    return resp.data[0]
+
+
 def create_or_update_practica(payload: dict):
     """
     Crea o actualiza una práctica y su arancel inicial.
@@ -1383,7 +1763,8 @@ def create_or_update_practica(payload: dict):
         nomenclador_id = payload["nomenclador_id"]
         codigo = str(payload["codigo"]).strip().upper()
         nombre = str(payload["nombre"]).strip()
-        categoria = payload.get("categoria", "General")
+        cat_obj = _resolver_categoria_practica(payload.get("categoria_id"), payload.get("categoria"))
+        categoria = cat_obj["nombre"] if cat_obj else str(payload.get("categoria") or "General").strip()
         descripcion = payload.get("descripcion", "")
         activo = payload.get("activo", True)
         
@@ -1396,6 +1777,19 @@ def create_or_update_practica(payload: dict):
             "descripcion": descripcion,
             "activo": activo
         }
+        if cat_obj:
+            p_data["categoria_id"] = cat_obj["id"]
+        if cat_obj and cat_obj.get("es_lio_comercial"):
+            p_data["requiere_lente"] = False
+            p_data["lios_habilitados"] = []
+            if "familias_lio_ids" in payload:
+                p_data["familias_lio_ids"] = _validar_familias_lio_ids_activas(payload.get("familias_lio_ids") or [])
+        elif payload.get("requiere_lente"):
+            if cat_obj and not cat_obj.get("permite_requiere_lente"):
+                raise ValueError(f"La categoría '{categoria}' no permite activar requiere_lente.")
+            p_data["requiere_lente"] = True
+            p_data["lios_habilitados"] = _validar_codigos_lios_habilitados(payload.get("lios_habilitados") or [])
+
         p_resp = supabase.table("nomenclador_practicas").upsert(
             p_data,
             on_conflict="nomenclador_id,codigo"
@@ -1568,7 +1962,8 @@ def guardar_practica_crm_con_arancel(payload: dict):
     try:
         codigo = str(payload.get("codigo") or payload.get("nomCod") or "").strip().upper()
         nombre = str(payload.get("nombre") or payload.get("practica") or "").strip()
-        categoria = str(payload.get("categoria") or "General").strip()
+        cat_obj = _resolver_categoria_practica(payload.get("categoria_id"), payload.get("categoria"))
+        categoria = cat_obj["nombre"] if cat_obj else str(payload.get("categoria") or "General").strip()
         descripcion = str(payload.get("descripcion") or "").strip()
         origen = str(payload.get("origen") or "GECLISA").upper() # 'GECLISA' o 'MANUAL'
         
@@ -1596,6 +1991,18 @@ def guardar_practica_crm_con_arancel(payload: dict):
             "descripcion": f"[ORIGEN:{origen}] {descripcion}".strip(),
             "activo": True
         }
+        if cat_obj:
+            p_data["categoria_id"] = cat_obj["id"]
+        if cat_obj and cat_obj.get("es_lio_comercial"):
+            p_data["requiere_lente"] = False
+            p_data["lios_habilitados"] = []
+            if "familias_lio_ids" in payload:
+                p_data["familias_lio_ids"] = _validar_familias_lio_ids_activas(payload.get("familias_lio_ids") or [])
+        elif payload.get("requiere_lente"):
+            if cat_obj and not cat_obj.get("permite_requiere_lente"):
+                raise ValueError(f"La categoría '{categoria}' no permite activar requiere_lente.")
+            p_data["requiere_lente"] = True
+            p_data["lios_habilitados"] = _validar_codigos_lios_habilitados(payload.get("lios_habilitados") or [])
         
         p_resp = supabase.table("nomenclador_practicas").upsert(
             p_data,
@@ -1702,7 +2109,7 @@ def _cargar_mapa_modelos_lio_activos() -> Dict[str, Dict[str, Any]]:
         return {}
     try:
         resp = supabase.table("modelos_lio").select(
-            "id, marca, modelo, tipo_optica, constante_a, admite_toricos, activo"
+            "id, marca, modelo, tipo_optica, constante_a, admite_toricos, apto_sulcus, naturaleza_clinica, requiere_biometria, activo"
         ).execute()
         return {str(f["id"]): f for f in (resp.data or []) if f.get("id")}
     except Exception as e:
@@ -1722,7 +2129,7 @@ def listar_catalogo_completo_crm(
         return []
         
     try:
-        cols_base = "id, codigo, nombre, categoria, descripcion, activo, created_at, requiere_lente, lios_habilitados, habilitar_arancel, habilitar_preparacion, preparacion_plantilla_id, preparacion_custom_texto, habilitar_consentimiento, consentimiento_plantilla_id, consentimiento_custom_texto, habilitar_indicaciones, plantilla_indicacion_id, geclisa_pim_id_default, indicaciones_reglas_cirujano"
+        cols_base = "id, codigo, nombre, categoria_id, categoria, descripcion, activo, created_at, requiere_lente, lios_habilitados, habilitar_arancel, habilitar_preparacion, preparacion_plantilla_id, preparacion_custom_texto, habilitar_consentimiento, consentimiento_plantilla_id, consentimiento_custom_texto, habilitar_indicaciones, plantilla_indicacion_id, geclisa_pim_id_default, indicaciones_reglas_cirujano"
         joins_sel = "nomencladores(id, nombre, codigo, moneda_default), plantillas_preparaciones(id, titulo), plantillas_consentimientos(id, titulo)"
         try:
             query = supabase.table("nomenclador_practicas")\
@@ -1764,9 +2171,12 @@ def listar_catalogo_completo_crm(
                 ar_map[pid] = ar
 
         fam_map = _cargar_mapa_modelos_lio_activos()
+        cats_map = _cargar_mapa_categorias_nomenclador()
                 
+        cats_map = _cargar_mapa_categorias_nomenclador()
         resultados = []
         for p in practicas:
+            cat_info = cats_map.get(str(p.get("categoria_id") or "")) or {}
             desc = p.get("descripcion") or ""
             origen = "MANUAL" if "[ORIGEN:MANUAL]" in desc else "GECLISA"
             
@@ -1792,12 +2202,17 @@ def listar_catalogo_completo_crm(
                 for fid in familias_ids
                 if fam_map.get(fid)
             ]
+            cat_info = cats_map.get(str(p.get("categoria_id") or "")) or {}
                 
             resultados.append({
                 "id": p["id"],
                 "codigo": p["codigo"],
                 "nombre": p["nombre"],
-                "categoria": p.get("categoria", "General"),
+                "categoria_id": p.get("categoria_id"),
+                "categoria": cat_info.get("nombre") or p.get("categoria", "General"),
+                "es_lio_comercial": bool(cat_info.get("es_lio_comercial", False)),
+                "permite_requiere_lente": bool(cat_info.get("permite_requiere_lente", False)),
+                "es_insumo": bool(cat_info.get("es_insumo", False)),
                 "descripcion": desc.replace("[ORIGEN:MANUAL]", "").replace("[ORIGEN:GECLISA]", "").strip(),
                 "origen": origen,
                 "requiere_lente": bool(p.get("requiere_lente", False)),
@@ -1858,7 +2273,7 @@ def buscar_practicas_presupuesto(
     
     try:
         query_builder = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, descripcion, requiere_lente, lios_habilitados, habilitar_arancel, habilitar_preparacion, habilitar_consentimiento, nomenclador_id, nomencladores(id, nombre, codigo, moneda_default)")\
+            .select("id, codigo, nombre, categoria_id, categoria, descripcion, requiere_lente, lios_habilitados, habilitar_arancel, habilitar_preparacion, habilitar_consentimiento, nomenclador_id, nomencladores(id, nombre, codigo, moneda_default)")\
             .eq("activo", True)
             
         if term:
@@ -1912,8 +2327,10 @@ def buscar_practicas_presupuesto(
             except Exception:
                 pass
                 
+        cats_map = _cargar_mapa_categorias_nomenclador()
         resultados = []
         for p in practicas:
+            cat_info = cats_map.get(str(p.get("categoria_id") or "")) or {}
             nom_info = p.get("nomencladores") or {}
             moneda_default = nom_info.get("moneda_default") or "ARS"
             ar = arancel_map.get(p["id"])
@@ -1939,7 +2356,11 @@ def buscar_practicas_presupuesto(
                 "id": p["id"],
                 "codigo": p["codigo"],
                 "nombre": p["nombre"],
-                "categoria": p.get("categoria") or "General",
+                "categoria_id": p.get("categoria_id"),
+                "categoria": cat_info.get("nombre") or p.get("categoria") or "General",
+                "es_lio_comercial": bool(cat_info.get("es_lio_comercial", False)),
+                "permite_requiere_lente": bool(cat_info.get("permite_requiere_lente", False)),
+                "es_insumo": bool(cat_info.get("es_insumo", False)),
                 "nomenclador_id": p.get("nomenclador_id") or nom_info.get("id") or "crm",
                 "nomenclador_nombre": nom_info.get("nombre") or "Nomenclador CRM",
                 "nomenclador_codigo": nom_info.get("codigo") or "CRM",
@@ -1967,6 +2388,13 @@ def eliminar_practica_crm(practica_id: str) -> bool:
     if not supabase:
         return False
     try:
+        p_resp = supabase.table("nomenclador_practicas").select("id, codigo, categoria_id").eq("id", practica_id).limit(1).execute()
+        if p_resp.data:
+            p_row = p_resp.data[0]
+            cats_map = _cargar_mapa_categorias_nomenclador()
+            cat = cats_map.get(str(p_row.get("categoria_id") or "")) or {}
+            if cat.get("es_lio_comercial"):
+                _verificar_lio_comercial_en_uso_409(p_row.get("codigo") or "")
         supabase.table("nomenclador_aranceles").delete().eq("practica_id", practica_id).execute()
         supabase.table("nomenclador_practicas").delete().eq("id", practica_id).execute()
         return True
@@ -2437,7 +2865,8 @@ def guardar_practica_crm_integral(payload: Dict[str, Any]) -> Dict[str, Any]:
         practica_id = payload.get("id") or payload.get("crm_practica_id")
         codigo = str(payload.get("codigo") or payload.get("nomCod") or "").strip().upper()
         nombre = str(payload.get("nombre") or payload.get("practica") or "").strip()
-        categoria = str(payload.get("categoria") or "General").strip()
+        cat_obj = _resolver_categoria_practica(payload.get("categoria_id"), payload.get("categoria"))
+        categoria = cat_obj["nombre"] if cat_obj else str(payload.get("categoria") or "General").strip()
         descripcion = str(payload.get("descripcion") or "").strip()
         origen = str(payload.get("origen") or "GECLISA").upper()
         
@@ -2497,10 +2926,12 @@ def guardar_practica_crm_integral(payload: Dict[str, Any]) -> Dict[str, Any]:
             "consentimiento_custom_texto": consentimiento_custom_texto,
             "activo": True
         }
-        
+        if cat_obj:
+            p_data["categoria_id"] = cat_obj["id"]
+
         if "lios_habilitados" in payload:
             p_data["lios_habilitados"] = payload.get("lios_habilitados")
-            
+
         if "habilitar_indicaciones" in payload:
             p_data["habilitar_indicaciones"] = bool(payload.get("habilitar_indicaciones", False))
         if "plantilla_indicacion_id" in payload:
@@ -2534,6 +2965,36 @@ def guardar_practica_crm_integral(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "familias_lio_ids": fams_clean,
                 "condicion_toricidad": cond_clean,
             }
+
+        # Validaciones simétricas por rol de categoría
+        if practica_id:
+            prev_p = supabase.table("nomenclador_practicas").select("codigo, categoria_id, lios_habilitados, familias_lio_ids").eq("id", practica_id).limit(1).execute()
+            if prev_p.data:
+                prev_row = prev_p.data[0]
+                cats_map_prev = _cargar_mapa_categorias_nomenclador()
+                prev_cat = cats_map_prev.get(str(prev_row.get("categoria_id") or "")) or {}
+                if prev_cat.get("es_lio_comercial") and cat_obj and not cat_obj.get("es_lio_comercial"):
+                    _verificar_lio_comercial_en_uso_409(prev_row.get("codigo") or codigo)
+                if "lios_habilitados" not in p_data and prev_row.get("lios_habilitados") is not None:
+                    p_data["lios_habilitados"] = prev_row.get("lios_habilitados")
+                if not tiene_vinculo_lio and prev_row.get("familias_lio_ids") is not None:
+                    fams_clean = [str(x).strip() for x in (prev_row.get("familias_lio_ids") or []) if str(x or "").strip()]
+
+        if cat_obj and cat_obj.get("es_lio_comercial"):
+            p_data["requiere_lente"] = False
+            p_data["lios_habilitados"] = []
+            fams_validadas = _validar_familias_lio_ids_activas(fams_clean)
+            p_data["familias_lio_ids"] = fams_validadas
+            if cond_clean is None:
+                cond_clean = _normalizar_condicion_toricidad(payload.get("condicion_toricidad"), codigo=codigo, nombre=nombre)
+                p_data["condicion_toricidad"] = cond_clean
+            if cond_clean not in ("esferico", "torico", "ambos"):
+                raise ValueError("condicion_toricidad debe ser 'esferico', 'torico' o 'ambos'.")
+        elif p_data["requiere_lente"]:
+            if cat_obj and not cat_obj.get("permite_requiere_lente"):
+                raise ValueError(f"La categoría '{categoria}' no permite activar requiere_lente.")
+            lios_validados = _validar_codigos_lios_habilitados(p_data.get("lios_habilitados") or [])
+            p_data["lios_habilitados"] = lios_validados
 
         if "indicaciones_reglas_cirujano" in payload or tiene_vinculo_lio:
             p_data["indicaciones_reglas_cirujano"] = reglas_cir_dict
@@ -2659,7 +3120,8 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
     
     try:
         q = supabase.table("nomenclador_practicas")\
-            .select("*, plantillas_preparaciones(*), plantillas_consentimientos(*)")
+            .select("*, plantillas_preparaciones(*), plantillas_consentimientos(*)")\
+            .eq("activo", True)
             
         if is_valid_uuid(val_clean):
             p_resp = q.eq("id", val_clean).limit(1).execute()
@@ -2671,6 +3133,7 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
             if not p_resp.data:
                 p_resp = supabase.table("nomenclador_practicas")\
                     .select("*, plantillas_preparaciones(*), plantillas_consentimientos(*)")\
+                    .eq("activo", True)\
                     .or_(f"codigo.eq.{val_clean},nombre.eq.{val_clean},nombre.ilike.%{val_clean}%")\
                     .limit(1)\
                     .execute()
@@ -2681,6 +3144,7 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
                 if len(first_keyword) >= 4:
                     p_resp = supabase.table("nomenclador_practicas")\
                         .select("*, plantillas_preparaciones(*), plantillas_consentimientos(*)")\
+                        .eq("activo", True)\
                         .ilike("nombre", f"%{first_keyword}%")\
                         .limit(1)\
                         .execute()
@@ -2770,18 +3234,33 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
                 pass
 
         familias_ids, cond_tor = _extraer_vinculo_lio_practica(practica)
+        cats_map = _cargar_mapa_categorias_nomenclador()
+        cat_info = cats_map.get(str(practica.get("categoria_id") or "")) or {}
+        req_lente = bool(practica.get("requiere_lente", False))
+        lios_hab_raw = practica.get("lios_habilitados") or []
+        lios_hab_validos: List[str] = []
+        if req_lente and lios_hab_raw:
+            try:
+                lios_hab_validos = _validar_codigos_lios_habilitados(lios_hab_raw)
+            except Exception:
+                lios_hab_validos = []
 
         return {
             "id": practica["id"],
             "codigo": practica["codigo"],
             "nombre": practica["nombre"],
-            "categoria": practica.get("categoria"),
+            "categoria_id": practica.get("categoria_id"),
+            "categoria": cat_info.get("nombre") or practica.get("categoria"),
+            "es_lio_comercial": bool(cat_info.get("es_lio_comercial", False)),
+            "permite_requiere_lente": bool(cat_info.get("permite_requiere_lente", False)),
+            "es_insumo": bool(cat_info.get("es_insumo", False)),
             "descripcion": practica.get("descripcion"),
             "modalidad_lateralidad_defecto": modalidad_def,
             "ojo_defecto": ojo_def,
             "duracion_estimada_minutos": duracion_def,
-            "requiere_lente": bool(practica.get("requiere_lente", False)),
+            "requiere_lente": req_lente,
             "lios_habilitados": practica.get("lios_habilitados"),
+            "configuracion_lio_incompleta": bool(req_lente and len(lios_hab_validos) == 0),
             "familias_lio_ids": familias_ids,
             "condicion_toricidad": cond_tor,
             "habilitar_arancel": practica.get("habilitar_arancel", True),
@@ -2818,46 +3297,48 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
     fecha_ref = fecha_consulta or date.today().isoformat()
     
     try:
-        # Si se consulta para una práctica específica, leer qué LIOs tiene habilitados
-        lios_hab_set = None
-        if practica_id:
-            try:
-                pid_clean = str(practica_id).strip()
-                p_query = supabase.table("nomenclador_practicas").select("lios_habilitados")
-                if is_valid_uuid(pid_clean):
-                    p_res = p_query.eq("id", pid_clean).execute()
-                else:
-                    p_res = p_query.eq("codigo", pid_clean.upper()).execute()
-                    if not p_res.data:
-                        p_res = p_query.ilike("nombre", f"%{pid_clean}%").execute()
+        pid_clean = str(practica_id or "").strip()
+        if solo_habilitados and not pid_clean:
+            return []
 
-                if p_res.data and p_res.data[0].get("lios_habilitados") is not None:
-                    hab_list = p_res.data[0]["lios_habilitados"]
+        # Si se consulta para una práctica específica, leer qué LIOs tiene habilitados
+        lios_hab_set: Optional[set] = None
+        practica_encontrada = False
+        if pid_clean:
+            try:
+                p_query = supabase.table("nomenclador_practicas").select("id, lios_habilitados").eq("activo", True)
+                if is_valid_uuid(pid_clean):
+                    p_res = p_query.eq("id", pid_clean).limit(1).execute()
+                else:
+                    p_res = p_query.eq("codigo", pid_clean.upper()).limit(1).execute()
+
+                if p_res.data:
+                    practica_encontrada = True
+                    hab_list = p_res.data[0].get("lios_habilitados")
                     if isinstance(hab_list, list):
-                        lios_hab_set = set(str(c).upper().strip() for c in hab_list)
+                        lios_hab_set = set(str(c).upper().strip() for c in hab_list if str(c or "").strip())
+                    else:
+                        lios_hab_set = set()
             except Exception as p_err:
                 logger.warning(f"Error leyendo lios_habilitados de práctica {practica_id}: {p_err}")
 
-        sel_cols = "id, codigo, nombre, categoria, descripcion, activo, requiere_lente, indicaciones_reglas_cirujano"
-        try:
-            res = supabase.table("nomenclador_practicas")\
-                .select(f"{sel_cols}, familias_lio_ids, condicion_toricidad")\
-                .eq("activo", True)\
-                .or_("categoria.ilike.%lente%,categoria.ilike.%lio%,codigo.in.(CLAREON,CLAREONT,TRIFOCAL,TRIFOCALT,VIVTY,VIVTYT,MULTIFOCAL,EXPAND,MONOFOCAL),codigo.ilike.LIO-%,nombre.ilike.%lente %")\
-                .order("nombre")\
-                .execute()
-        except Exception:
-            res = supabase.table("nomenclador_practicas")\
-                .select(sel_cols)\
-                .eq("activo", True)\
-                .or_("categoria.ilike.%lente%,categoria.ilike.%lio%,codigo.in.(CLAREON,CLAREONT,TRIFOCAL,TRIFOCALT,VIVTY,VIVTYT,MULTIFOCAL,EXPAND,MONOFOCAL),codigo.ilike.LIO-%,nombre.ilike.%lente %")\
-                .order("nombre")\
-                .execute()
-            
+        if solo_habilitados and not practica_encontrada:
+            return []
+
+        cats_map = _cargar_mapa_categorias_nomenclador()
+        cats_lio_ids = [cid for cid, c in cats_map.items() if c.get("es_lio_comercial")]
+        if cats_map and not cats_lio_ids:
+            return []
+
+        sel_cols = "id, codigo, nombre, categoria_id, categoria, descripcion, activo, requiere_lente, indicaciones_reglas_cirujano"
+        q_lios = supabase.table("nomenclador_practicas").select(f"{sel_cols}, familias_lio_ids, condicion_toricidad").eq("activo", True)
+        if cats_lio_ids:
+            q_lios = q_lios.in_("categoria_id", cats_lio_ids)
+        else:
+            q_lios = q_lios.or_("categoria.ilike.%lente%,categoria.ilike.%lio%")
+        res = q_lios.order("nombre").execute()
+
         practicas = res.data or []
-        # Excluir cirugías principales (como 34031 Catarata) que no son el lente en sí
-        practicas = [p for p in practicas if str(p.get("codigo") or "").strip() != "34031" and "catarata con faco" not in (p.get("nombre") or "").lower()]
-        
         if not practicas:
             return []
             
@@ -2906,13 +3387,12 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
                     if any(k in (f.get("modelo") or "").lower() or k in (f.get("tipo_optica") or "").lower() for k in ("trifocal", "panoptix", "vivity", "edof", "multifocal"))
                 ]
                 return ids_m
-            if cod_up == "MONOFOCAL":
-                m = next((f for f in activas if "sa60at" in (f.get("modelo") or "").lower()), None)
-                return [str(m["id"])] if m else []
             return []
                 
+        cats_map = _cargar_mapa_categorias_nomenclador()
         resultados = []
         for p in practicas:
+            cat_info = cats_map.get(str(p.get("categoria_id") or "")) or {}
             ar = ar_map.get(p["id"])
             precio = float(ar.get("precio", 0.0)) if ar else 0.0
             moneda = (ar.get("moneda") or "USD") if ar else "USD"
@@ -2941,6 +3421,8 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
                         "tipo_optica": f_obj.get("tipo_optica"),
                         "constante_a": f_obj.get("constante_a"),
                         "admite_toricos": bool(f_obj.get("admite_toricos", False)),
+                        "naturaleza_clinica": f_obj.get("naturaleza_clinica") or "pseudofaquico_biometrico",
+                        "requiere_biometria": bool(f_obj.get("requiere_biometria", True)),
                         "nombre_completo": _nombre_canonico_familia_lio(f_obj),
                     })
 
@@ -3052,6 +3534,7 @@ def crear_lio_comercial_rapido(
     moneda: str = "USD",
     familias_lio_ids: Optional[List[str]] = None,
     condicion_toricidad: Optional[str] = None,
+    categoria_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Da de alta un nuevo modelo de LIO en nomenclador_practicas y le asigna su arancel inicial.
@@ -3074,17 +3557,35 @@ def crear_lio_comercial_rapido(
             return {"success": False, "error": f"Ya existe una práctica o LIO con el código {cod}"}
 
         fams_clean = [str(fid).strip() for fid in (familias_lio_ids or []) if str(fid or "").strip()]
+        if fams_clean:
+            fams_clean = _validar_familias_lio_ids_activas(fams_clean)
         cond_clean = _normalizar_condicion_toricidad(condicion_toricidad, codigo=cod, nombre=nom_clean)
+        if cond_clean not in ("esferico", "torico", "ambos"):
+            raise ValueError(f"condicion_toricidad inválida: '{cond_clean}'. Debe ser 'esferico', 'torico' o 'ambos'.")
+
+        # Resolver categoría comercial de LIO de forma determinista
+        cat_obj = None
+        if categoria_id:
+            cat_obj = _resolver_categoria_practica(categoria_id, None, permitir_fallback_general=False)
+            if not cat_obj or not cat_obj.get("es_lio_comercial"):
+                raise ValueError("La categoría indicada para el LIO rápido no tiene es_lio_comercial=true.")
+        else:
+            cats_map = _cargar_mapa_categorias_nomenclador()
+            cats_lio = [c for c in cats_map.values() if c.get("es_lio_comercial") and c.get("activo", True)]
+            cats_lio.sort(key=lambda c: (int(c.get("orden") or 0), str(c.get("created_at") or "")))
+            if cats_lio:
+                cat_obj = cats_lio[0]
 
         p_payload = {
             "nomenclador_id": nom_id,
             "codigo": cod,
             "nombre": nom_clean,
-            "categoria": "Lentes Intraoculares",
+            "categoria": cat_obj["nombre"] if cat_obj else "Lentes Intraoculares",
             "descripcion": "[ORIGEN:MANUAL] Lente Intraocular comercial/genérico",
             "activo": True,
             "habilitar_arancel": True,
             "requiere_lente": False,
+            "lios_habilitados": [],
             "familias_lio_ids": fams_clean,
             "condicion_toricidad": cond_clean,
             "indicaciones_reglas_cirujano": {
@@ -3094,6 +3595,8 @@ def crear_lio_comercial_rapido(
                 }
             },
         }
+        if cat_obj:
+            p_payload["categoria_id"] = cat_obj["id"]
         try:
             p_ins = supabase.table("nomenclador_practicas").insert(p_payload).execute()
         except Exception as e_ins_col:
@@ -3411,15 +3914,32 @@ def _evaluar_discrepancia_comercial_clinica(
 
 def guardar_lios_habilitados_practica(practica_id: str, lios_habilitados: List[str]) -> Dict[str, Any]:
     """
-    Actualiza la lista de LIOs habilitados para una práctica específica.
+    Actualiza la lista de LIOs habilitados para una práctica específica validando las reglas de categoría.
     """
     if not supabase:
         return {"success": False, "error": "No database client"}
     try:
+        p_resp = supabase.table("nomenclador_practicas").select("id, categoria_id, requiere_lente").eq("id", practica_id).limit(1).execute()
+        if not p_resp.data:
+            raise ValueError(f"Práctica no encontrada: {practica_id}")
+        p_row = p_resp.data[0]
+        cats_map = _cargar_mapa_categorias_nomenclador()
+        cat_obj = cats_map.get(str(p_row.get("categoria_id") or "")) or {}
+
+        codigos_limpios = _validar_codigos_lios_habilitados(lios_habilitados or [])
+        if cat_obj.get("es_lio_comercial") and codigos_limpios:
+            raise ValueError("Un LIO comercial no puede tener lios_habilitados asignados.")
+        if codigos_limpios and not cat_obj.get("permite_requiere_lente", True):
+            raise ValueError(f"La categoría '{cat_obj.get('nombre') or 'actual'}' no permite habilitar lentes intraoculares.")
+        if p_row.get("requiere_lente") and not cat_obj.get("permite_requiere_lente", True):
+            raise ValueError(f"La categoría '{cat_obj.get('nombre') or 'actual'}' no permite requiere_lente=true.")
+
         supabase.table("nomenclador_practicas").update({
-            "lios_habilitados": lios_habilitados
+            "lios_habilitados": codigos_limpios
         }).eq("id", practica_id).execute()
-        return {"success": True, "practica_id": practica_id, "lios_habilitados": lios_habilitados}
+        return {"success": True, "practica_id": practica_id, "lios_habilitados": codigos_limpios}
+    except ValueError:
+        raise
     except Exception as e:
         logger.error(f"Error en guardar_lios_habilitados_practica: {e}")
         return {"success": False, "error": str(e)}
@@ -3465,7 +3985,9 @@ def bulk_import_practicas_aranceles(
             if not codigo or not nombre:
                 continue
                 
-            categoria = str(row.get("categoria", "General")).strip() or "General"
+            categoria_raw = str(row.get("categoria", "General")).strip() or "General"
+            cat_obj = _resolver_categoria_practica(row.get("categoria_id"), categoria_raw, permitir_fallback_general=True)
+            categoria = cat_obj["nombre"] if cat_obj else categoria_raw
             descripcion = str(row.get("descripcion", "")).strip()
             
             # Limpieza y conversión de precio
@@ -3482,7 +4004,13 @@ def bulk_import_practicas_aranceles(
             vig_hasta = row.get("vigencia_hasta") or vig_hasta_global
             if vig_hasta:
                 vig_hasta = str(vig_hasta).strip()
-                
+
+            # Preservar campos LIO existentes en actualización parcial
+            prev_row = None
+            if modo != "replace":
+                prev_q = supabase.table("nomenclador_practicas").select("id, requiere_lente, lios_habilitados, familias_lio_ids").eq("nomenclador_id", nomenclador_id).eq("codigo", codigo).limit(1).execute()
+                prev_row = prev_q.data[0] if prev_q.data else None
+
             # Upsert de práctica
             p_data = {
                 "nomenclador_id": nomenclador_id,
@@ -3492,6 +4020,39 @@ def bulk_import_practicas_aranceles(
                 "descripcion": descripcion,
                 "activo": True
             }
+            if cat_obj:
+                p_data["categoria_id"] = cat_obj["id"]
+
+            if prev_row:
+                p_data["requiere_lente"] = bool(row["requiere_lente"]) if "requiere_lente" in row else bool(prev_row.get("requiere_lente", False))
+                if "lios_habilitados" in row:
+                    p_data["lios_habilitados"] = row.get("lios_habilitados") or []
+                elif prev_row.get("lios_habilitados") is not None:
+                    p_data["lios_habilitados"] = prev_row.get("lios_habilitados")
+                if "familias_lio_ids" in row:
+                    p_data["familias_lio_ids"] = row.get("familias_lio_ids") or []
+                elif prev_row.get("familias_lio_ids") is not None:
+                    p_data["familias_lio_ids"] = prev_row.get("familias_lio_ids")
+            else:
+                if "requiere_lente" in row:
+                    p_data["requiere_lente"] = bool(row.get("requiere_lente", False))
+                if "lios_habilitados" in row:
+                    p_data["lios_habilitados"] = row.get("lios_habilitados") or []
+                if "familias_lio_ids" in row:
+                    p_data["familias_lio_ids"] = row.get("familias_lio_ids") or []
+
+            if cat_obj:
+                if cat_obj.get("es_lio_comercial"):
+                    p_data["requiere_lente"] = False
+                    p_data["lios_habilitados"] = []
+                    if "familias_lio_ids" in p_data and p_data["familias_lio_ids"]:
+                        p_data["familias_lio_ids"] = _validar_familias_lio_ids_activas(p_data["familias_lio_ids"])
+                elif not cat_obj.get("permite_requiere_lente", True):
+                    p_data["requiere_lente"] = False
+                    p_data["lios_habilitados"] = []
+                elif p_data.get("lios_habilitados"):
+                    p_data["lios_habilitados"] = _validar_codigos_lios_habilitados(p_data["lios_habilitados"])
+
             p_resp = supabase.table("nomenclador_practicas").upsert(
                 p_data,
                 on_conflict="nomenclador_id,codigo"
@@ -3774,6 +4335,61 @@ def _proteger_y_reevaluar_checklist_lio(
     return resultado
 
 
+def _validar_lios_asignados_en_asesoria(
+    practica_codigo: Optional[str],
+    chk_nuevo: Optional[Dict[str, Any]],
+    chk_prev: Optional[Dict[str, Any]] = None,
+    practica_prev_codigo: Optional[str] = None,
+    presupuesto_id: Optional[str] = None,
+) -> None:
+    """
+    Valida que los códigos de LIO comercial asignados en checklist_prequirurgico._lio_seleccion
+    pertenezcan a un LIO comercial activo y, si la práctica define lios_habilitados, estén habilitados.
+    Exime casos provenientes de presupuesto o preservaciones históricas sin cambio.
+    """
+    if presupuesto_id:
+        return
+    if not supabase or not isinstance(chk_nuevo, dict):
+        return
+    sel_new = chk_nuevo.get("_lio_seleccion")
+    if not isinstance(sel_new, dict):
+        return
+
+    sel_prev = (chk_prev.get("_lio_seleccion") if isinstance(chk_prev, dict) else {}) or {}
+    if not isinstance(sel_prev, dict):
+        sel_prev = {}
+    practica_sin_cambio = bool(practica_prev_codigo and practica_codigo and str(practica_prev_codigo).strip().upper() == str(practica_codigo).strip().upper())
+
+    campos = ("lente_comercial_codigo", "lente_comercial_od_codigo", "lente_comercial_oi_codigo")
+    codigos_a_validar: List[str] = []
+    for c_key in campos:
+        val_new = str(sel_new.get(c_key) or "").strip().upper()
+        if not val_new:
+            continue
+        val_prev = str(sel_prev.get(c_key) or "").strip().upper()
+        if practica_sin_cambio and val_new == val_prev:
+            continue
+        codigos_a_validar.append(val_new)
+
+    if not codigos_a_validar:
+        return
+
+    # Verificar que sean LIOs comerciales válidos y activos
+    _validar_codigos_lios_habilitados(codigos_a_validar)
+
+    # Verificar contra lios_habilitados de la práctica si la práctica tiene lista configurada
+    p_cod = str(practica_codigo or "").strip().upper()
+    if not p_cod:
+        return
+    p_resp = supabase.table("nomenclador_practicas").select("id, codigo, lios_habilitados").eq("codigo", p_cod).eq("activo", True).limit(1).execute()
+    if p_resp.data:
+        habilitados = [str(x).strip().upper() for x in (p_resp.data[0].get("lios_habilitados") or []) if str(x or "").strip()]
+        if habilitados:
+            invalidos = [c for c in codigos_a_validar if c not in habilitados]
+            if invalidos:
+                raise ValueError(f"Los LIOs {', '.join(invalidos)} no están habilitados para la práctica '{p_cod}'.")
+
+
 def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
     """
     Crea un nuevo caso de asesoramiento quirúrgico para un paciente con su código institucional.
@@ -3789,6 +4405,11 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
         if not isinstance(chk_init, dict):
             chk_init = {}
         chk_init["_codigo_caso"] = nuevo_codigo
+        _validar_lios_asignados_en_asesoria(
+            payload.get("practica_codigo"),
+            chk_init,
+            presupuesto_id=payload.get("presupuesto_id"),
+        )
         
         fecha_def_init = payload.get("fecha_definitiva_cirugia") or None
         estado_init = payload.get("estado") or "en_asesoramiento"
@@ -3944,6 +4565,13 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
         if not isinstance(prev_chk, dict):
             prev_chk = {}
         if "checklist_prequirurgico" in datos:
+            _validar_lios_asignados_en_asesoria(
+                datos.get("practica_codigo") or prev_row_estado.get("practica_codigo"),
+                datos["checklist_prequirurgico"],
+                chk_prev=prev_chk,
+                practica_prev_codigo=prev_row_estado.get("practica_codigo"),
+                presupuesto_id=datos.get("presupuesto_id"),
+            )
             datos["checklist_prequirurgico"] = _proteger_y_reevaluar_checklist_lio(
                 prev_chk,
                 datos["checklist_prequirurgico"],
@@ -10620,6 +11248,25 @@ def normalizar_familias_modelos_lio() -> Dict[str, Any]:
         return resumen
 
 
+def _cargar_elementos_geclisa_por_modelo(modelo_ids: Optional[List[str]] = None) -> Dict[str, List[Dict[str, Any]]]:
+    if not supabase:
+        return {}
+    try:
+        q = supabase.table("modelos_lio_elementos_geclisa").select("*").eq("activo", True)
+        if modelo_ids:
+            q = q.in_("modelo_lio_id", modelo_ids)
+        resp = q.order("ambito").execute()
+        res: Dict[str, List[Dict[str, Any]]] = {}
+        for row in (resp.data or []):
+            mid = str(row.get("modelo_lio_id") or "")
+            if mid:
+                res.setdefault(mid, []).append(row)
+        return res
+    except Exception as e:
+        logger.debug(f"modelos_lio_elementos_geclisa no disponible aún: {e}")
+        return {}
+
+
 def get_modelos_lio(solo_activos: bool = False) -> List[Dict[str, Any]]:
     if not supabase:
         return []
@@ -10629,6 +11276,7 @@ def get_modelos_lio(solo_activos: bool = False) -> List[Dict[str, Any]]:
             q = q.eq("activo", True)
         resp = q.order("marca").order("modelo").execute()
         modelos = resp.data or []
+        elem_map = _cargar_elementos_geclisa_por_modelo([str(m["id"]) for m in modelos if m.get("id")])
         for m in modelos:
             # Parse count of items
             items_info = m.get("modelos_lio_items")
@@ -10638,6 +11286,7 @@ def get_modelos_lio(solo_activos: bool = False) -> List[Dict[str, Any]]:
                 m["items_count"] = 0
             if "modelos_lio_items" in m:
                 del m["modelos_lio_items"]
+            m["elementos_geclisa"] = elem_map.get(str(m.get("id") or ""), [])
         return modelos
     except Exception as e:
         logger.error(f"Error al listar modelos de LIO con conteo: {e}")
@@ -10656,7 +11305,11 @@ def get_modelo_lio_por_id(modelo_id: str) -> Optional[Dict[str, Any]]:
         return None
     try:
         resp = supabase.table("modelos_lio").select("*").eq("id", modelo_id).execute()
-        return resp.data[0] if resp.data else None
+        if not resp.data:
+            return None
+        row = resp.data[0]
+        row["elementos_geclisa"] = _cargar_elementos_geclisa_por_modelo([str(modelo_id)]).get(str(modelo_id), [])
+        return row
     except Exception as e:
         logger.error(f"Error al obtener modelo de LIO {modelo_id}: {e}")
         return None
@@ -10665,7 +11318,7 @@ COLUMNAS_VALIDAS_MODELO_LIO = {
     "marca", "modelo", "tipo_optica", "descripcion", "constante_a",
     "acd_estimado", "rango_dioptrias_min", "rango_dioptrias_max",
     "paso_dioptrias", "admite_toricos", "apto_sulcus", "activo",
-    "deposito_defecto_id"
+    "deposito_defecto_id", "naturaleza_clinica", "requiere_biometria"
 }
 
 def crear_modelo_lio(datos: Dict[str, Any]) -> Dict[str, Any]:
@@ -10686,6 +11339,8 @@ def actualizar_modelo_lio(modelo_id: str, datos: Dict[str, Any]) -> Dict[str, An
         return {}
     try:
         payload = {k: v for k, v in datos.items() if k in COLUMNAS_VALIDAS_MODELO_LIO}
+        if payload.get("activo") is False:
+            _verificar_familia_lio_en_uso_409(modelo_id)
         payload["updated_at"] = "now()"
         
         if "constante_a" in payload and payload["constante_a"] is not None:
@@ -10697,6 +11352,8 @@ def actualizar_modelo_lio(modelo_id: str, datos: Dict[str, Any]) -> Dict[str, An
         if not resp.data:
             raise ValueError(f"No se pudo actualizar la familia con ID {modelo_id}")
         return resp.data[0]
+    except CrmConflictError:
+        raise
     except Exception as e:
         logger.error(f"Error al actualizar modelo de LIO {modelo_id}: {e}")
         raise e
@@ -10705,11 +11362,67 @@ def eliminar_modelo_lio(modelo_id: str) -> bool:
     if not supabase or not modelo_id:
         return False
     try:
+        _verificar_familia_lio_en_uso_409(modelo_id)
         supabase.table("modelos_lio").delete().eq("id", modelo_id).execute()
         return True
+    except CrmConflictError:
+        raise
     except Exception as e:
         logger.error(f"Error al eliminar modelo de LIO {modelo_id}: {e}")
         return False
+
+
+def get_elementos_geclisa_modelo(modelo_id: str) -> List[Dict[str, Any]]:
+    if not supabase or not modelo_id:
+        return []
+    try:
+        resp = (
+            supabase.table("modelos_lio_elementos_geclisa")
+            .select("*")
+            .eq("modelo_lio_id", modelo_id)
+            .order("ambito")
+            .execute()
+        )
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al listar elementos Geclisa para modelo {modelo_id}: {e}")
+        return []
+
+
+def upsert_elemento_geclisa_modelo(modelo_id: str, datos: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        raise RuntimeError("Supabase no inicializado")
+    ambito = str(datos.get("ambito") or "ambos").strip().lower()
+    if ambito not in ("esferico", "torico", "ambos"):
+        raise ValueError(f"Ámbito inválido: '{ambito}'. Debe ser 'esferico', 'torico' o 'ambos'.")
+    if not datos.get("geclisa_ele_id"):
+        raise ValueError("geclisa_ele_id es obligatorio.")
+    payload = {
+        "modelo_lio_id": modelo_id,
+        "ambito": ambito,
+        "geclisa_ele_id": int(datos["geclisa_ele_id"]),
+        "geclisa_ele_cod": str(datos.get("geclisa_ele_cod") or "").strip(),
+        "geclisa_nombre": str(datos.get("geclisa_nombre") or "").strip(),
+        "es_generico": bool(datos.get("es_generico", True)),
+        "activo": bool(datos.get("activo", True)),
+        "updated_at": "now()",
+    }
+    resp = (
+        supabase.table("modelos_lio_elementos_geclisa")
+        .upsert(payload, on_conflict="modelo_lio_id,ambito")
+        .execute()
+    )
+    return resp.data[0] if resp.data else payload
+
+
+def eliminar_elemento_geclisa_modelo(modelo_id: str, ambito: str) -> bool:
+    if not supabase or not modelo_id:
+        return False
+    amb = str(ambito or "").strip().lower()
+    if amb not in ("esferico", "torico", "ambos"):
+        raise ValueError(f"Ámbito inválido: '{amb}'.")
+    supabase.table("modelos_lio_elementos_geclisa").delete().eq("modelo_lio_id", modelo_id).eq("ambito", amb).execute()
+    return True
 
 # --- ÍTEMS / SKUS DE LIO (MAPEADOS POR GTIN / DIOPTRÍA) ---
 
@@ -10970,41 +11683,72 @@ def sincronizar_lentes_masivos(items_coincidentes: List[Dict[str, Any]]) -> Dict
         logger.error(f"Error al sincronizar lentes masivos: {e}")
         raise e
 
+def _buscar_elemento_geclisa_para_modelo(
+    modelo_id: Optional[str],
+    es_torico: bool = False,
+    condicion_toricidad: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if not supabase or not modelo_id:
+        return None
+    try:
+        resp = (
+            supabase.table("modelos_lio_elementos_geclisa")
+            .select("*")
+            .eq("modelo_lio_id", modelo_id)
+            .eq("activo", True)
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            return None
+        amb_preferido = "torico" if (es_torico or condicion_toricidad == "torico") else "esferico"
+        for target_amb in (amb_preferido, "ambos"):
+            hit = next((r for r in rows if str(r.get("ambito") or "").lower() == target_amb), None)
+            if hit:
+                return hit
+        return rows[0] if condicion_toricidad == "ambos" else None
+    except Exception as e:
+        logger.debug(f"Error buscando elemento Geclisa en modelos_lio_elementos_geclisa: {e}")
+        return None
+
+
 def resolver_sku_lio(
     modelo_lio_id: Optional[str] = None,
     modelo_nombre: Optional[str] = None,
-    dioptria: float = 0.0,
+    dioptria: Optional[Union[str, float]] = None,
     torico_valor: Optional[str] = None,
-    es_torico: bool = False
+    es_torico: bool = False,
+    condicion_toricidad: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Busca el SKU / GTIN de Geclisa exacto para un modelo (por ID o nombre), dioptría y toricidad (T2-T9).
-    Consulta primero en modelos_lio_items y complementa con catalogo_maestro_gtin para cobertura 100%.
+    Resuelve el elemento/SKU de Geclisa en dos niveles:
+    - Nivel 1: SKU biométrico exacto por modelo + dioptría (+ toricidad) en modelos_lio_items / catalogo_maestro_gtin.
+    - Nivel 2A: Familias sin biometría (ej. ICL / no_biometrico) contra modelos_lio_elementos_geclisa.
+    - Nivel 2B: Familias biométricas sin dioptría cargada (biometria_pendiente) o sin SKU exacto.
     """
     if not supabase:
         return None
     try:
         m_id = modelo_lio_id
+        clean = ""
+        familias: List[Dict[str, Any]] = []
+        m_res = supabase.table("modelos_lio").select("id, modelo, marca, constante_a, naturaleza_clinica, requiere_biometria").execute()
+        familias = m_res.data or []
+
         if not m_id and modelo_nombre:
             clean = str(modelo_nombre).strip()
-            # Eliminar prefijos tipo 'Alcon — ' o sufijos tipo '(Trifocal)'
             clean = re.sub(r'^[^\—\-]+[\—\-]\s*', '', clean).strip()
             clean = re.sub(r'\s*\([^)]*\)', '', clean).strip()
             if not clean:
                 clean = str(modelo_nombre).strip()
 
-            m_res = supabase.table("modelos_lio").select("id, modelo, marca, constante_a").execute()
-            familias = m_res.data or []
             clean_low = clean.lower()
-            
-            # 1. Coincidencia directa o contenida
             for fam in familias:
                 f_low = fam["modelo"].lower()
                 if f_low == clean_low or f_low in clean_low or clean_low in f_low:
                     m_id = fam["id"]
                     break
-            
-            # 2. Si no encontró, buscar por tokens clave significativos
+
             if not m_id:
                 tokens = [t for t in re.split(r'[\s\-_]+', clean_low) if len(t) >= 4]
                 for fam in familias:
@@ -11013,9 +11757,55 @@ def resolver_sku_lio(
                         m_id = fam["id"]
                         break
 
+        fam_act = next((f for f in familias if f["id"] == m_id), None) if m_id else None
+        requiere_bio = True
+        if fam_act is not None:
+            nat = str(fam_act.get("naturaleza_clinica") or "").lower()
+            if fam_act.get("requiere_biometria") is False or nat in ("faquico_icl", "no_biometrico"):
+                requiere_bio = False
+
+        es_tor = bool(es_torico or (torico_valor and str(torico_valor).strip() not in ["", "null", "None", "0"]) or condicion_toricidad == "torico")
+
+        # Nivel 2A: Familias no biométricas (ICL, expansores, etc.) -> elemento genérico Geclisa
+        if not requiere_bio and m_id:
+            elem = _buscar_elemento_geclisa_para_modelo(m_id, es_torico=es_tor, condicion_toricidad=condicion_toricidad)
+            if elem:
+                return {
+                    "id": elem.get("id"),
+                    "modelo_lio_id": m_id,
+                    "geclisa_ele_id": elem.get("geclisa_ele_id"),
+                    "geclisa_ele_cod": elem.get("geclisa_ele_cod"),
+                    "geclisa_nombre": elem.get("geclisa_nombre"),
+                    "dioptria": None,
+                    "es_torico": es_tor,
+                    "torico_valor": torico_valor,
+                    "modelos_lio": fam_act,
+                    "mapeado": True,
+                    "resolucion_tipo": "elemento_generico",
+                }
+            return {
+                "modelo_lio_id": m_id,
+                "modelos_lio": fam_act,
+                "mapeado": False,
+                "resolucion_tipo": "elemento_generico_pendiente",
+            }
+
+        # Nivel 2B-1: Familia biométrica sin dioptría cargada aún
+        if dioptria is None or str(dioptria).strip() == "":
+            elem = _buscar_elemento_geclisa_para_modelo(m_id, es_torico=es_tor, condicion_toricidad=condicion_toricidad) if m_id else None
+            return {
+                "modelo_lio_id": m_id,
+                "geclisa_ele_id": elem.get("geclisa_ele_id") if elem else None,
+                "geclisa_ele_cod": elem.get("geclisa_ele_cod") if elem else None,
+                "geclisa_nombre": elem.get("geclisa_nombre") if elem else None,
+                "modelos_lio": fam_act,
+                "mapeado": bool(elem),
+                "resolucion_tipo": "biometria_pendiente",
+            }
+
         diop_val = round(float(dioptria), 2)
 
-        # A) Buscar en modelos_lio_items
+        # Nivel 1A: Buscar SKU biométrico exacto en modelos_lio_items
         if m_id:
             q = supabase.table("modelos_lio_items").select("*, modelos_lio(id, marca, modelo, tipo_optica, constante_a)").eq("modelo_lio_id", m_id).eq("dioptria", diop_val)
             
@@ -11031,12 +11821,14 @@ def resolver_sku_lio(
 
             resp = q.limit(1).execute()
             if resp.data and len(resp.data) > 0:
-                return resp.data[0]
+                hit = dict(resp.data[0])
+                hit["mapeado"] = True
+                hit["resolucion_tipo"] = "sku_exacto"
+                return hit
 
-        # B) Fallback: Buscar en catalogo_maestro_gtin (unificado)
+        # Nivel 1B: Fallback: Buscar en catalogo_maestro_gtin (unificado)
         q_cat = supabase.table("catalogo_maestro_gtin").select("*, modelos_lio(id, marca, modelo, tipo_optica, constante_a)").eq("dioptria", diop_val).eq("activo", True)
         
-        fam_act = next((f for f in familias if f["id"] == m_id), None) if m_id else None
         fam_nom = fam_act["modelo"] if fam_act else clean
 
         if m_id and fam_nom:
@@ -11068,8 +11860,28 @@ def resolver_sku_lio(
                 "dioptria": row.get("dioptria"),
                 "es_torico": row.get("es_torico", False),
                 "torico_valor": row.get("torico_valor"),
-                "modelos_lio": row.get("modelos_lio")
+                "modelos_lio": row.get("modelos_lio"),
+                "mapeado": True,
+                "resolucion_tipo": "sku_exacto",
             }
+
+        # Nivel 2B-2: Familia biométrica con dioptría cargada pero sin SKU exacto -> elemento genérico si existe
+        if m_id:
+            elem = _buscar_elemento_geclisa_para_modelo(m_id, es_torico=es_tor, condicion_toricidad=condicion_toricidad)
+            if elem:
+                return {
+                    "id": elem.get("id"),
+                    "modelo_lio_id": m_id,
+                    "geclisa_ele_id": elem.get("geclisa_ele_id"),
+                    "geclisa_ele_cod": elem.get("geclisa_ele_cod"),
+                    "geclisa_nombre": elem.get("geclisa_nombre"),
+                    "dioptria": diop_val,
+                    "es_torico": es_tor,
+                    "torico_valor": torico_valor,
+                    "modelos_lio": fam_act,
+                    "mapeado": True,
+                    "resolucion_tipo": "dioptria_sin_sku_exacto",
+                }
 
         return None
     except Exception as e:
