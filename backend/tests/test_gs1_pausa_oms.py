@@ -49,26 +49,27 @@ def test_validar_lente_gs1_coincidencia():
 
     with patch("app.main.supabase") as mock_sb, \
          patch("app.services.gs1_lio_validator.buscar_info_lio_por_gtin", return_value=mock_info_cat):
-        mock_query = MagicMock()
-        mock_query.select.return_value = mock_query
-        mock_query.eq.return_value = mock_query
-        mock_query.limit.return_value = mock_query
-        mock_query.execute.return_value = MagicMock(data=[mock_turno])
-        mock_sb.table.return_value = mock_query
+        with patch("app.db.supabase", mock_sb):
+            mock_query = MagicMock()
+            mock_query.select.return_value = mock_query
+            mock_query.eq.return_value = mock_query
+            mock_query.limit.return_value = mock_query
+            mock_query.execute.return_value = MagicMock(data=[mock_turno])
+            mock_sb.table.return_value = mock_query
 
-        res = client.post(
-            "/api/turnos-quirofano/mock-turno-1/validar-lente-gs1",
-            json={"raw_code": "(01)00380658428867(17)281130(10)LOT12345(21)SN987654"},
-            headers=AUTH_HEADERS
-        )
+            res = client.post(
+                "/api/turnos-quirofano/mock-turno-1/validar-lente-gs1",
+                json={"raw_code": "(01)00380658428867(17)281130(10)LOT12345(21)SN987654"},
+                headers=AUTH_HEADERS
+            )
 
-        assert res.status_code == 200
-        data = res.json()
-        assert data["success"] is True
-        assert data["coincide"] is True
-        assert data["estado_validacion"] == "COINCIDENCIA_TOTAL"
-        assert data["escaneado"]["lote"] == "LOT12345"
-        assert data["escaneado"]["vencimiento"] == "2028-11-30"
+            assert res.status_code == 200
+            data = res.json()
+            assert data["success"] is True
+            assert data["coincide"] is True
+            assert data["estado_validacion"] == "COINCIDENCIA_TOTAL"
+            assert data["escaneado"]["lote"] == "LOT12345"
+            assert data["escaneado"]["vencimiento"] == "2028-11-30"
 
 
 def test_validar_lente_gs1_discrepancia_dioptria():
@@ -96,25 +97,26 @@ def test_validar_lente_gs1_discrepancia_dioptria():
 
     with patch("app.main.supabase") as mock_sb, \
          patch("app.services.gs1_lio_validator.buscar_info_lio_por_gtin", return_value=mock_info_cat):
-        mock_query = MagicMock()
-        mock_query.select.return_value = mock_query
-        mock_query.eq.return_value = mock_query
-        mock_query.limit.return_value = mock_query
-        mock_query.execute.return_value = MagicMock(data=[mock_turno])
-        mock_sb.table.return_value = mock_query
+        with patch("app.db.supabase", mock_sb):
+            mock_query = MagicMock()
+            mock_query.select.return_value = mock_query
+            mock_query.eq.return_value = mock_query
+            mock_query.limit.return_value = mock_query
+            mock_query.execute.return_value = MagicMock(data=[mock_turno])
+            mock_sb.table.return_value = mock_query
 
-        res = client.post(
-            "/api/turnos-quirofano/mock-turno-2/validar-lente-gs1",
-            json={"raw_code": "(01)00380658428867(17)281130(10)LOT999(21)SN888"},
-            headers=AUTH_HEADERS
-        )
+            res = client.post(
+                "/api/turnos-quirofano/mock-turno-2/validar-lente-gs1",
+                json={"raw_code": "(01)00380658428867(17)281130(10)LOT999(21)SN888"},
+                headers=AUTH_HEADERS
+            )
 
-        assert res.status_code == 200
-        data = res.json()
-        assert data["success"] is True
-        assert data["coincide"] is False
-        assert data["estado_validacion"] == "DISCREPANCIA"
-        assert any("Dioptría DISCREPANTE" in d for d in data["discrepancias"])
+            assert res.status_code == 200
+            data = res.json()
+            assert data["success"] is True
+            assert data["coincide"] is False
+            assert data["estado_validacion"] == "DISCREPANCIA"
+            assert any("Dioptría DISCREPANTE" in d for d in data["discrepancias"])
 
 
 def test_confirmar_pausa_oms_con_opcion_a():
@@ -141,35 +143,36 @@ def test_confirmar_pausa_oms_con_opcion_a():
     }
 
     with patch("app.main.supabase") as mock_sb:
-        mock_tbl = MagicMock()
-        mock_tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[mock_turno_prev])
-        mock_tbl.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[mock_turno_upd])
-        mock_sb.table.return_value = mock_tbl
+        with patch("app.db.supabase", mock_sb):
+            mock_tbl = MagicMock()
+            mock_tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[mock_turno_prev])
+            mock_tbl.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[mock_turno_upd])
+            mock_sb.table.return_value = mock_tbl
 
-        payload = {
-            "check_identidad": True,
-            "check_consentimiento": True,
-            "check_lio": True,
-            "check_esterilidad": True,
-            "lente_escaneado": {
-                "gtin": "00380658428867",
-                "modelo": "Clareon",
-                "dioptria": 22.0,
-                "lote": "LOT-CHANGE",
-                "serie": "SN-CHANGE",
-                "vencimiento": "2028-11-30"
-            },
-            "justificacion_cambio_lio": "Decisión médica intraoperatoria por hallazgo en saco capsular",
-            "autorizado_por_cirujano": True
-        }
+            payload = {
+                "check_identidad": True,
+                "check_consentimiento": True,
+                "check_lio": True,
+                "check_esterilidad": True,
+                "lente_escaneado": {
+                    "gtin": "00380658428867",
+                    "modelo": "Clareon",
+                    "dioptria": 22.0,
+                    "lote": "LOT-CHANGE",
+                    "serie": "SN-CHANGE",
+                    "vencimiento": "2028-11-30"
+                },
+                "justificacion_cambio_lio": "Decisión médica intraoperatoria por hallazgo en saco capsular",
+                "autorizado_por_cirujano": True
+            }
 
-        res = client.post(
-            "/api/turnos-quirofano/mock-turno-3/confirmar-pausa-oms",
-            json=payload,
-            headers=AUTH_HEADERS
-        )
+            res = client.post(
+                "/api/turnos-quirofano/mock-turno-3/confirmar-pausa-oms",
+                json=payload,
+                headers=AUTH_HEADERS
+            )
 
-        assert res.status_code == 200
-        data = res.json()
-        assert data["success"] is True
-        assert data["turno"]["estado"] == "en_operacion"
+            assert res.status_code == 200
+            data = res.json()
+            assert data["success"] is True
+            assert data["turno"]["estado"] == "en_operacion"

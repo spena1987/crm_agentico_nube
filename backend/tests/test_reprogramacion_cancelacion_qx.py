@@ -272,7 +272,9 @@ def test_cambio_fecha_definitiva_en_asesoria_cancela_turno_existente_sin_reempla
         "estado": "programado",
         "ojo": "OD",
         "fecha_definitiva_cirugia": "2026-11-16",
-        "checklist_prequirurgico": {},
+        "checklist_prequirurgico": {
+            "_lio_seleccion": {"estado": "tentativo", "lente_nombre": "Clareon"}
+        },
     }
     turno_activo = {
         "id": "t-viejo",
