@@ -593,7 +593,7 @@ export default function CasoFormularioActivo({
     return agendaInicial.quirofano_id || (caso as any).quirofano_id || ''
   })
   const [horaInicio, setHoraInicio] = useState<string>(() => {
-    return agendaInicial.hora_inicio || (caso as any).hora_inicio || '08:00'
+    return agendaInicial.hora_inicio || (caso as any).hora_inicio || ''
   })
   const [duracionMinutos, setDuracionMinutos] = useState<number>(() => {
     return Number(agendaInicial.duracion_minutos || (caso as any).duracion_minutos || 45)
@@ -607,7 +607,7 @@ export default function CasoFormularioActivo({
     return metaBilateralAgenda.quirofano_id_2do_ojo || (caso as any).quirofano_id_2do_ojo || ''
   })
   const [horaInicio2doOjo, setHoraInicio2doOjo] = useState<string>(() => {
-    return metaBilateralAgenda.hora_inicio_2do_ojo || (caso as any).hora_inicio_2do_ojo || '08:00'
+    return metaBilateralAgenda.hora_inicio_2do_ojo || (caso as any).hora_inicio_2do_ojo || ''
   })
   const [duracionMinutos2doOjo, setDuracionMinutos2doOjo] = useState<number>(() => {
     return Number(metaBilateralAgenda.duracion_minutos_2do_ojo || (caso as any).duracion_minutos_2do_ojo || 45)
@@ -780,6 +780,9 @@ export default function CasoFormularioActivo({
     bloqueosList: any[],
     turnoExcluirId?: string
   ) => {
+    if (!slotHora || !qId || !fecha) {
+      return { estado: 'sin_asignar', label: `${slotHora || '--:--'} hs`, badge: 'Pendiente' }
+    }
     const slotMin = horaAMinutos(slotHora)
 
     // 1. Bloqueo
@@ -928,6 +931,12 @@ export default function CasoFormularioActivo({
       fechaDefinitiva !== (caso.fecha_definitiva_cirugia || '') ||
       fechaProbable2doOjo !== (metaBilateralInicial.fecha_probable_2do_ojo || '') ||
       fechaDefinitiva2doOjo !== (metaBilateralInicial.fecha_definitiva_2do_ojo || '') ||
+      quirofanoId !== (agendaInicial.quirofano_id || (caso as any).quirofano_id || '') ||
+      horaInicio !== (agendaInicial.hora_inicio || (caso as any).hora_inicio || '') ||
+      Number(duracionMinutos) !== Number(agendaInicial.duracion_minutos || (caso as any).duracion_minutos || 45) ||
+      quirofanoId2doOjo !== (metaBilateralAgenda.quirofano_id_2do_ojo || (caso as any).quirofano_id_2do_ojo || '') ||
+      horaInicio2doOjo !== (metaBilateralAgenda.hora_inicio_2do_ojo || (caso as any).hora_inicio_2do_ojo || '') ||
+      Number(duracionMinutos2doOjo) !== Number(metaBilateralAgenda.duracion_minutos_2do_ojo || (caso as any).duracion_minutos_2do_ojo || 45) ||
       ojo !== (caso.ojo || 'OD') ||
       modalidadBilateral !== (metaBilateralInicial.modalidad || 'escalonada') ||
       ordenOjos !== (metaBilateralInicial.orden || 'OD_primero') ||
@@ -957,6 +966,14 @@ export default function CasoFormularioActivo({
     fechaDefinitiva,
     fechaProbable2doOjo,
     fechaDefinitiva2doOjo,
+    quirofanoId,
+    horaInicio,
+    duracionMinutos,
+    quirofanoId2doOjo,
+    horaInicio2doOjo,
+    duracionMinutos2doOjo,
+    agendaInicial,
+    metaBilateralAgenda,
     ojo,
     modalidadBilateral,
     ordenOjos,
@@ -1327,6 +1344,11 @@ export default function CasoFormularioActivo({
 
   const buildChecklistPayload = (lioSelOverride: any = lioSeleccion) => ({
     ...checklist,
+    _agenda_qx: {
+      quirofano_id: quirofanoId || null,
+      hora_inicio: horaInicio || null,
+      duracion_minutos: duracionMinutos || 45
+    },
     _pagos: {
       sena_ars: senaArs,
       sena_usd: senaUsd,
@@ -1337,7 +1359,10 @@ export default function CasoFormularioActivo({
       modalidad: ojo === 'AO' ? modalidadBilateral : null,
       orden: ojo === 'AO' && modalidadBilateral === 'escalonada' ? ordenOjos : null,
       fecha_probable_2do_ojo: ojo === 'AO' ? fechaProbable2doOjo || null : null,
-      fecha_definitiva_2do_ojo: ojo === 'AO' ? fechaDefinitiva2doOjo || null : null
+      fecha_definitiva_2do_ojo: ojo === 'AO' ? fechaDefinitiva2doOjo || null : null,
+      quirofano_id_2do_ojo: ojo === 'AO' && modalidadBilateral === 'escalonada' ? quirofanoId2doOjo || null : null,
+      hora_inicio_2do_ojo: ojo === 'AO' && modalidadBilateral === 'escalonada' ? horaInicio2doOjo || null : null,
+      duracion_minutos_2do_ojo: ojo === 'AO' && modalidadBilateral === 'escalonada' ? duracionMinutos2doOjo || 45 : null
     },
     _lio_seleccion: {
       estado: lioSelOverride.estado || 'a_definir',
@@ -1474,6 +1499,16 @@ export default function CasoFormularioActivo({
       fecha_probable_cirugia: fechaProbable || null,
       fecha_definitiva_cirugia: fechaDefinitiva || null,
       ojo: ojo,
+      quirofano_id: quirofanoId || null,
+      hora_inicio: horaInicio || null,
+      duracion_minutos: duracionMinutos || 45,
+      ...(ojo === 'AO' && modalidadBilateral === 'escalonada'
+        ? {
+            quirofano_id_2do_ojo: quirofanoId2doOjo || null,
+            hora_inicio_2do_ojo: horaInicio2doOjo || null,
+            duracion_minutos_2do_ojo: duracionMinutos2doOjo || 45
+          }
+        : {}),
       checklist_prequirurgico: buildChecklistPayload(),
       proxima_accion_fecha: proximaAccionFecha || null,
       proxima_accion_texto: proximaAccionTexto || null,
@@ -1563,6 +1598,16 @@ export default function CasoFormularioActivo({
       fecha_probable_cirugia: fechaProbable || null,
       fecha_definitiva_cirugia: fechaDefinitiva || null,
       ojo: ojo,
+      quirofano_id: quirofanoId || null,
+      hora_inicio: horaInicio || null,
+      duracion_minutos: duracionMinutos || 45,
+      ...(ojo === 'AO' && modalidadBilateral === 'escalonada'
+        ? {
+            quirofano_id_2do_ojo: quirofanoId2doOjo || null,
+            hora_inicio_2do_ojo: horaInicio2doOjo || null,
+            duracion_minutos_2do_ojo: duracionMinutos2doOjo || 45
+          }
+        : {}),
       checklist_prequirurgico: buildChecklistPayload(),
       proxima_accion_fecha: proximaAccionFecha || null,
       proxima_accion_texto: proximaAccionTexto || null,
@@ -1570,6 +1615,177 @@ export default function CasoFormularioActivo({
     }
 
     onGuardar(payload)
+  }
+
+  const renderSelectorSalaHorario = ({
+    titulo,
+    fechaObjetivo,
+    qId,
+    setQId,
+    hIni,
+    setHIni,
+    dur,
+    setDur,
+    turnosF,
+    bloqueosF,
+    cargandoF,
+    turnoAsignado,
+    accent = 'emerald'
+  }: {
+    titulo: string
+    fechaObjetivo: string
+    qId: string
+    setQId: (v: string) => void
+    hIni: string
+    setHIni: (v: string) => void
+    dur: number
+    setDur: (v: number) => void
+    turnosF: any[]
+    bloqueosF: any[]
+    cargandoF: boolean
+    turnoAsignado?: any
+    accent?: 'emerald' | 'blue' | 'purple'
+  }) => {
+    const qActual = quirofanos.find((q: any) => q.id === qId) || quirofanos[0]
+    const slots = generarSlotsHorarios(qActual)
+    const slotEstado = getSlotInfo(hIni, qId, fechaObjetivo, turnosF, bloqueosF, turnoAsignado?.id)
+    const salasEsteriles = quirofanos.filter((q: any) => q.tipo_sala !== 'consultorio')
+    const salasConsultorio = quirofanos.filter((q: any) => q.tipo_sala === 'consultorio')
+
+    const borderCls =
+      accent === 'purple'
+        ? 'border-purple-500/30'
+        : accent === 'blue'
+        ? 'border-blue-500/30'
+        : 'border-emerald-500/30'
+    const inputBorderCls =
+      accent === 'purple'
+        ? 'border-purple-500/40 focus:border-purple-400'
+        : accent === 'blue'
+        ? 'border-blue-500/40 focus:border-blue-400'
+        : 'border-[var(--border)] focus:border-amber-400'
+    const tieneSalaYHora = Boolean(qId && hIni)
+
+    return (
+      <div className={`p-2.5 rounded-xl bg-neutral-950/60 border ${borderCls} space-y-2.5`}>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <span className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-200">
+            <Building2 size={13} className="text-emerald-400 shrink-0" />
+            {titulo}
+          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-gray-400 font-mono flex items-center gap-1">
+              {cargandoF ? <Loader2 size={10} className="animate-spin text-blue-400" /> : '● En vivo'}
+            </span>
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                tieneSalaYHora
+                  ? 'bg-emerald-500/20 text-emerald-300'
+                  : 'bg-amber-500/20 text-amber-300'
+              }`}
+            >
+              {tieneSalaYHora ? 'Sala & Horario OK' : 'Opcional (o asigna Quirófano)'}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          <div>
+            <label className="text-[10px] text-gray-400 block mb-1 font-semibold">
+              Quirófano / Sala (opcional):
+            </label>
+            <select
+              disabled={guardando || cargandoQuirofanos}
+              value={qId}
+              onChange={(e) => setQId(e.target.value)}
+              className={`w-full p-2 rounded-lg bg-neutral-900 border ${inputBorderCls} text-xs text-white outline-none font-semibold`}
+            >
+              <option value="">-- Sin asignar (Pendiente Qx) --</option>
+              {salasEsteriles.length > 0 && (
+                <optgroup label="🏥 Quirófanos Estériles">
+                  {salasEsteriles.map((q: any) => (
+                    <option key={q.id} value={q.id}>
+                      {q.nombre} ({q.codigo || 'Qx'})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {salasConsultorio.length > 0 && (
+                <optgroup label="🏢 Salas de Consultorio / Tratamientos">
+                  {salasConsultorio.map((q: any) => (
+                    <option key={q.id} value={q.id}>
+                      {q.nombre} ({q.codigo || 'Consultorio'})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[10px] text-gray-400 font-semibold">Hora de Inicio:</label>
+              {slotEstado.estado === 'sin_asignar' ? (
+                <span className="text-[9px] font-medium text-gray-500">Sin horario</span>
+              ) : (
+                <span
+                  className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                    slotEstado.estado === 'libre'
+                      ? 'bg-emerald-500/20 text-emerald-300'
+                      : slotEstado.estado === 'ocupado'
+                      ? 'bg-red-500/20 text-red-300'
+                      : 'bg-amber-500/20 text-amber-300'
+                  }`}
+                >
+                  {(slotEstado as any).badge ||
+                    (slotEstado.estado === 'libre'
+                      ? '🟢 Libre'
+                      : slotEstado.estado === 'ocupado'
+                      ? '🔴 Ocupado'
+                      : '⛔ Bloqueado')}
+                </span>
+              )}
+            </div>
+            <select
+              disabled={guardando || !qId}
+              value={hIni}
+              onChange={(e) => setHIni(e.target.value)}
+              className={`w-full p-2 rounded-lg bg-neutral-900 border ${inputBorderCls} text-xs text-white outline-none font-mono font-bold disabled:opacity-50`}
+            >
+              <option value="">-- Seleccionar Horario --</option>
+              {slots.map((s) => (
+                <option key={s} value={s}>
+                  {getSlotInfo(s, qId, fechaObjetivo, turnosF, bloqueosF, turnoAsignado?.id).label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[10px] text-gray-400 font-semibold">Duración:</label>
+              <span className="text-[9px] font-mono text-gray-400">
+                Fin: {hIni ? `${minutosAHora(horaAMinutos(hIni) + Number(dur))} hs` : '--:--'}
+              </span>
+            </div>
+            <select
+              disabled={guardando}
+              value={dur}
+              onChange={(e) => setDur(Number(e.target.value))}
+              className={`w-full p-2 rounded-lg bg-neutral-900 border ${inputBorderCls} text-xs text-white outline-none font-semibold`}
+            >
+              <option value={15}>15 minutos</option>
+              <option value={20}>20 minutos</option>
+              <option value={30}>30 minutos</option>
+              <option value={45}>45 minutos</option>
+              <option value={60}>60 minutos</option>
+              <option value={90}>90 minutos</option>
+              <option value={120}>120 minutos</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -2251,28 +2467,23 @@ export default function CasoFormularioActivo({
                     </div>
                   </div>
 
-                  {/* Estado de Asignación de Quirófano y Horario (Solo lectura: gestionado por Quirófano) */}
+                  {/* Asignación opcional de Sala, Horario y Duración (puede quedar pendiente para Quirófano) */}
                   {fechaDefinitiva ? (
-                    (() => {
-                      const turnoAsignado = turnosActivos[0]
-                      return (
-                        <div className="p-2.5 rounded-xl bg-neutral-950/60 border border-emerald-500/30 text-[11px] flex items-center justify-between gap-2 flex-wrap">
-                          <span className="flex items-center gap-1.5 text-emerald-300 font-semibold">
-                            <Building2 size={13} className="text-emerald-400 shrink-0" />
-                            {turnoAsignado?.hora_inicio
-                              ? `Sala asignada por Quirófano: ${turnoAsignado?.quirofanos?.nombre || 'Quirófano'} — ${String(turnoAsignado.hora_inicio).slice(0, 5)} hs`
-                              : 'Fecha Definitiva fijada. Pendiente de asignación de sala y horario por Quirófano.'}
-                          </span>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            turnoAsignado?.hora_inicio
-                              ? 'bg-emerald-500/20 text-emerald-300'
-                              : 'bg-amber-500/20 text-amber-300'
-                          }`}>
-                            {turnoAsignado?.hora_inicio ? 'Sala & Horario OK' : 'Pendiente de Quirófano'}
-                          </span>
-                        </div>
-                      )
-                    })()
+                    renderSelectorSalaHorario({
+                      titulo: 'Sala, Horario y Duración del Turno (Opcional)',
+                      fechaObjetivo: fechaDefinitiva,
+                      qId: quirofanoId,
+                      setQId: setQuirofanoId,
+                      hIni: horaInicio,
+                      setHIni: setHoraInicio,
+                      dur: duracionMinutos,
+                      setDur: setDuracionMinutos,
+                      turnosF: turnosFecha,
+                      bloqueosF: bloqueosFecha,
+                      cargandoF: cargandoAgendaFecha,
+                      turnoAsignado: turnosActivos[0],
+                      accent: 'emerald'
+                    })
                   ) : (
                     <div className="p-2 rounded-lg bg-neutral-950/40 border border-neutral-800/80 text-[10.5px] text-gray-400 flex items-center gap-1.5">
                       <Info size={12} className="text-amber-400/80 shrink-0" />
@@ -2375,16 +2586,21 @@ export default function CasoFormularioActivo({
                       (() => {
                         const ojo1Code = ordenOjos === 'OI_primero' ? 'OI' : 'OD'
                         const turno1 = turnosActivos.find((t: any) => (t.ojo || 'OD') === ojo1Code)
-                        return (
-                          <div className="p-2 rounded-xl bg-neutral-950/60 border border-blue-500/30 text-[10.5px] flex items-center justify-between gap-2 flex-wrap">
-                            <span className="flex items-center gap-1.5 text-blue-300 font-semibold">
-                              <Building2 size={12} className="text-blue-400 shrink-0" />
-                              {turno1?.hora_inicio
-                                ? `1° Ojo (${ojo1Code}): ${turno1?.quirofanos?.nombre || 'Quirófano'} — ${String(turno1.hora_inicio).slice(0, 5)} hs`
-                                : `1° Ojo (${ojo1Code}): Pendiente de sala y horario por Quirófano.`}
-                            </span>
-                          </div>
-                        )
+                        return renderSelectorSalaHorario({
+                          titulo: `Sala y Horario 1° Ojo (${ojo1Code})`,
+                          fechaObjetivo: fechaDefinitiva,
+                          qId: quirofanoId,
+                          setQId: setQuirofanoId,
+                          hIni: horaInicio,
+                          setHIni: setHoraInicio,
+                          dur: duracionMinutos,
+                          setDur: setDuracionMinutos,
+                          turnosF: turnosFecha,
+                          bloqueosF: bloqueosFecha,
+                          cargandoF: cargandoAgendaFecha,
+                          turnoAsignado: turno1,
+                          accent: 'blue'
+                        })
                       })()
                     ) : (
                       <div className="p-2 rounded-lg bg-neutral-950/40 border border-neutral-800/80 text-[10.5px] text-gray-400 flex items-center gap-1.5">
@@ -2445,16 +2661,21 @@ export default function CasoFormularioActivo({
                       (() => {
                         const ojo2Code = ordenOjos === 'OI_primero' ? 'OD' : 'OI'
                         const turno2 = turnosActivos.find((t: any) => (t.ojo || 'OI') === ojo2Code)
-                        return (
-                          <div className="p-2 rounded-xl bg-purple-950/20 border border-purple-500/20 text-[10.5px] flex items-center justify-between gap-2 flex-wrap">
-                            <span className="flex items-center gap-1.5 text-purple-300 font-semibold">
-                              <Building2 size={12} className="text-purple-400 shrink-0" />
-                              {turno2?.hora_inicio
-                                ? `2° Ojo (${ojo2Code}): ${turno2?.quirofanos?.nombre || 'Quirófano'} — ${String(turno2.hora_inicio).slice(0, 5)} hs`
-                                : `2° Ojo (${ojo2Code}): Pendiente de sala y horario por Quirófano.`}
-                            </span>
-                          </div>
-                        )
+                        return renderSelectorSalaHorario({
+                          titulo: `Sala y Horario 2° Ojo (${ojo2Code})`,
+                          fechaObjetivo: fechaDefinitiva2doOjo,
+                          qId: quirofanoId2doOjo,
+                          setQId: setQuirofanoId2doOjo,
+                          hIni: horaInicio2doOjo,
+                          setHIni: setHoraInicio2doOjo,
+                          dur: duracionMinutos2doOjo,
+                          setDur: setDuracionMinutos2doOjo,
+                          turnosF: turnosFecha2doOjo,
+                          bloqueosF: bloqueosFecha2doOjo,
+                          cargandoF: cargandoAgendaFecha2doOjo,
+                          turnoAsignado: turno2,
+                          accent: 'purple'
+                        })
                       })()
                     ) : (
                       <div className="p-2 rounded-lg bg-neutral-950/40 border border-purple-500/20 text-[10.5px] text-gray-400 flex items-center gap-1.5">

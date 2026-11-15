@@ -3851,7 +3851,22 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
         resp = supabase.table("asesorias_quirurgicas").insert(datos).execute()
         if not resp.data:
             raise Exception("No se pudo crear la asesoría quirúrgica en Supabase.")
-        return resp.data[0]
+        caso_creado = resp.data[0]
+        asesoria_id_c = caso_creado.get("id")
+        meta_bil_c = chk_init.get("_meta_bilateral") if isinstance(chk_init.get("_meta_bilateral"), dict) else {}
+        fecha_2_c = payload.get("fecha_definitiva_2do_ojo") or meta_bil_c.get("fecha_definitiva_2do_ojo")
+        tiene_agenda_1 = bool(fecha_def_init and payload.get("quirofano_id") and payload.get("hora_inicio"))
+        tiene_agenda_2 = bool(fecha_2_c and payload.get("quirofano_id_2do_ojo") and payload.get("hora_inicio_2do_ojo"))
+        if asesoria_id_c and (tiene_agenda_1 or tiene_agenda_2):
+            try:
+                sincronizar_turno_quirofano_desde_asesoria(asesoria_id_c, payload, caso_creado)
+                res_t = supabase.table("turnos_quirofano").select("*, quirofanos(nombre, codigo, color)").eq("asesoria_id", asesoria_id_c).neq("estado", "cancelado").execute()
+                turnos_act = res_t.data or []
+                caso_creado["turnos_activos"] = turnos_act
+                caso_creado["turnos_quirofano"] = turnos_act
+            except Exception as e_sq_c:
+                logger.warning(f"Aviso al sincronizar turno al crear asesoría {asesoria_id_c}: {e_sq_c}")
+        return caso_creado
     except Exception as e:
         logger.error(f"Error al crear asesoría quirúrgica: {e}")
         raise
