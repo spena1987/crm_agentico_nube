@@ -321,7 +321,7 @@ export default function ItemCasoQuirurgicoAcordeon({
     try {
       const esAltaInicial = Boolean(caso.esBorrador)
       const url = esAltaInicial
-        ? '/api/asesorias-quirurgicas/'
+        ? '/api/asesorias-quirurgicas'
         : `/api/asesorias-quirurgicas/${caso.id}`
       const method = esAltaInicial ? 'POST' : 'PUT'
       const bodyPayload = esAltaInicial

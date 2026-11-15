@@ -4990,6 +4990,7 @@ def obtener_asesorias_paciente(paciente_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/asesorias-quirurgicas")
+@app.post("/api/asesorias-quirurgicas/")
 def crear_nueva_asesoria(payload: Dict[str, Any] = Body(...)):
     """
     Crea un nuevo caso de asesoramiento quirúrgico para un paciente.
