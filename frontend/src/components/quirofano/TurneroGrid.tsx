@@ -75,32 +75,66 @@ export default function TurneroGrid({
   const fechaHoyStr = new Date().toISOString().slice(0, 10)
   const esFechaHoy = fechaSeleccionada === fechaHoyStr
 
-  // Paso de slots
-  const pasoMinutos = modo === 'semana' && quirofanoActual?.duracion_slot_minutos
-    ? quirofanoActual.duracion_slot_minutos
-    : 10
-
-  // Horarios
-  const horaInicioMin = modo === 'semana' && quirofanoActual?.hora_inicio
-    ? horaAMinutos(quirofanoActual.hora_inicio)
-    : 8 * 60
-  const horaFinMin = modo === 'semana' && quirofanoActual?.hora_fin
-    ? horaAMinutos(quirofanoActual.hora_fin)
-    : 14 * 60 + 30
-
-  const slots: string[] = []
-  for (let m = horaInicioMin; m <= horaFinMin; m += pasoMinutos) {
-    slots.push(minutosAHora(m))
-  }
-
-  const numDiaHoy = getNumeroDiaSemana(fechaSeleccionada)
-  const algunQuirofanoOperaHoy = quirofanos.some((q) => (q.dias_operativos || [1, 2, 3, 4, 5]).includes(numDiaHoy))
   // Helper para filtrar por cirujano si se especifica
   const coincideCirujano = (t: any) => {
     if (!cirujanoFiltro || cirujanoFiltro === 'todos') return true
     const cNom = (t.cirujano_nombre || '').toLowerCase()
     return cNom.includes(cirujanoFiltro.toLowerCase())
   }
+
+  const getRangoQuirofano = (q: any) => ({
+    ini: horaAMinutos(q?.hora_inicio || '08:00'),
+    fin: horaAMinutos(q?.hora_fin || '19:00'),
+    paso: Math.max(1, Number(q?.duracion_slot_minutos) || 15),
+  })
+
+  const pasoMinutos = getRangoQuirofano(quirofanoActual).paso
+
+  // Generar eje horario dinámico desde la configuración real de los quirófanos
+  const slotMinSet = new Set<number>()
+  if (modo === 'semana') {
+    const { ini, fin, paso } = getRangoQuirofano(quirofanoActual)
+    for (let m = ini; m < fin; m += paso) {
+      slotMinSet.add(m)
+    }
+    const fechasSemana = new Set(diasSemana.map((d) => d.fecha))
+    turnos.forEach((t) => {
+      if (
+        t.quirofano_id === quirofanoActual?.id &&
+        fechasSemana.has(t.fecha_cirugia) &&
+        t.estado !== 'cancelado' &&
+        coincideCirujano(t) &&
+        t.hora_inicio
+      ) {
+        slotMinSet.add(horaAMinutos(t.hora_inicio))
+      }
+    })
+  } else {
+    if (quirofanos.length > 0) {
+      quirofanos.forEach((q) => {
+        const { ini, fin, paso } = getRangoQuirofano(q)
+        for (let m = ini; m < fin; m += paso) {
+          slotMinSet.add(m)
+        }
+      })
+    } else {
+      for (let m = 8 * 60; m < 19 * 60; m += 15) {
+        slotMinSet.add(m)
+      }
+    }
+    turnos.forEach((t) => {
+      if (t.fecha_cirugia === fechaSeleccionada && t.estado !== 'cancelado' && coincideCirujano(t) && t.hora_inicio) {
+        slotMinSet.add(horaAMinutos(t.hora_inicio))
+      }
+    })
+  }
+
+  const slots: string[] = Array.from(slotMinSet)
+    .sort((a, b) => a - b)
+    .map(minutosAHora)
+
+  const numDiaHoy = getNumeroDiaSemana(fechaSeleccionada)
+  const algunQuirofanoOperaHoy = quirofanos.some((q) => (q.dias_operativos || [1, 2, 3, 4, 5]).includes(numDiaHoy))
 
   const turnosHoy = turnos.filter((t) => t.fecha_cirugia === fechaSeleccionada && coincideCirujano(t))
 
@@ -295,9 +329,12 @@ export default function TurneroGrid({
 
         {/* Cuerpo */}
         <tbody>
-          {slots.map((horaSlot) => {
+          {slots.map((horaSlot, slotIdx) => {
             const slotMin = horaAMinutos(horaSlot)
-            const esSlotActual = esFechaHoy && minutoActual >= slotMin && minutoActual < slotMin + pasoMinutos
+            const nextSlotMin = slotIdx < slots.length - 1
+              ? horaAMinutos(slots[slotIdx + 1])
+              : slotMin + (modo === 'semana' ? pasoMinutos : 15)
+            const esSlotActual = esFechaHoy && minutoActual >= slotMin && minutoActual < nextSlotMin
 
             return (
               <tr
@@ -493,6 +530,30 @@ export default function TurneroGrid({
                             </span>
                           </div>
                         </td>
+                      )
+                    }
+
+                    const { ini: qIni, fin: qFin, paso: qPaso } = getRangoQuirofano(q)
+                    const estaEnHorario = slotMin >= qIni && slotMin < qFin
+                    const esSlotDeSala = estaEnHorario && ((slotMin - qIni) % qPaso === 0)
+
+                    if (!estaEnHorario) {
+                      return (
+                        <td
+                          key={q.id}
+                          className="p-1 border-r border-[var(--border)] last:border-0 bg-slate-100/50 dark:bg-slate-900/20 select-none opacity-40 text-center"
+                        >
+                          <span className="text-[9px] text-slate-400 italic">Fuera de horario</span>
+                        </td>
+                      )
+                    }
+
+                    if (!esSlotDeSala) {
+                      return (
+                        <td
+                          key={q.id}
+                          className="p-1 border-r border-[var(--border)] last:border-0 bg-slate-50/30 dark:bg-slate-900/10 select-none"
+                        />
                       )
                     }
 
