@@ -197,9 +197,27 @@ export default function FichaTurnoModal({
         false
       )
     ),
-    lente_tipo: turno?.lente_tipo || casoConfirmadoInicial?.lente_tipo || 'AcrySof IQ SN60WF (Alcon)',
-    lente_dioptria: turno?.lente_dioptria !== undefined && turno?.lente_dioptria !== null ? turno.lente_dioptria : (casoConfirmadoInicial?.lente_dioptria !== undefined ? String(casoConfirmadoInicial.lente_dioptria) : '+21.50'),
-    es_torico: turno?.es_torico ?? (casoConfirmadoInicial?.es_torico ?? false),
+    lente_tipo:
+      turno?.lente_tipo ||
+      casoConfirmadoInicial?.lente_tipo ||
+      casoConfirmadoInicial?.lio_propuesto?.modelo_lio_defecto_nombre ||
+      '',
+    lente_dioptria:
+      turno?.lente_dioptria !== undefined &&
+      turno?.lente_dioptria !== null &&
+      String(turno.lente_dioptria).trim() !== ''
+        ? String(turno.lente_dioptria)
+        : casoConfirmadoInicial?.lente_dioptria !== undefined &&
+          casoConfirmadoInicial?.lente_dioptria !== null &&
+          String(casoConfirmadoInicial.lente_dioptria).trim() !== ''
+        ? String(casoConfirmadoInicial.lente_dioptria)
+        : '',
+    es_torico:
+      turno?.es_torico !== undefined && turno?.es_torico !== null
+        ? Boolean(turno.es_torico)
+        : casoConfirmadoInicial?.es_torico !== undefined && casoConfirmadoInicial?.es_torico !== null
+        ? Boolean(casoConfirmadoInicial.es_torico)
+        : casoConfirmadoInicial?.lio_propuesto?.condicion_toricidad === 'torico',
     lente_torico_valor: turno?.lente_torico_valor !== undefined && turno?.lente_torico_valor !== null ? turno.lente_torico_valor : (casoConfirmadoInicial?.lente_torico_valor ?? 0),
     lente_torico_eje: turno?.lente_torico_eje !== undefined && turno?.lente_torico_eje !== null ? turno.lente_torico_eje : (casoConfirmadoInicial?.lente_torico_eje ?? 90),
     lente_incision_grados: turno?.lente_incision_grados !== undefined && turno?.lente_incision_grados !== null ? turno.lente_incision_grados : (casoConfirmadoInicial?.lente_incision_grados ?? ''),
@@ -219,6 +237,10 @@ export default function FichaTurnoModal({
     hora_citacion_paciente: turno?.hora_citacion_paciente ? turno.hora_citacion_paciente.slice(0, 5) : '',
     secuencia_ojo: turno?.secuencia_ojo || ''
   })
+  const [motivoOverrideQx, setMotivoOverrideQx] = useState<string>(turno?.override_quirofano?.motivo || '')
+  const [casoLioPropuesto, setCasoLioPropuesto] = useState<any>(
+    turno?.lio_propuesto || casoConfirmadoInicial?.lio_propuesto || null
+  )
 
   const sugerirHoraCitacion = (horaCir: string, duracionAntes = 50) => {
     if (!horaCir) return ''
@@ -340,6 +362,7 @@ export default function FichaTurnoModal({
       const quirofanoAsignado = slotSeleccionado?.quirofanoId || prev.quirofano_id || quirofanoDefectoId || quirofanos[0]?.id || ''
       const horaAsignada = (slotSeleccionado?.hora || prev.hora_inicio || horaDefecto || '08:30').slice(0, 5)
 
+      setCasoLioPropuesto(caso.lio_propuesto || null)
       return {
         ...prev,
         asesoria_id: caso.id,
@@ -360,9 +383,15 @@ export default function FichaTurnoModal({
         fecha_cirugia: fechaAsignada,
         quirofano_id: quirofanoAsignado,
         hora_inicio: horaAsignada,
-        lente_tipo: caso.lente_tipo || prev.lente_tipo || 'AcrySof IQ SN60WF (Alcon)',
-        lente_dioptria: caso.lente_dioptria !== undefined && caso.lente_dioptria !== null ? String(caso.lente_dioptria) : prev.lente_dioptria,
-        es_torico: caso.es_torico !== undefined ? Boolean(caso.es_torico) : prev.es_torico,
+        lente_tipo: caso.lente_tipo || caso.lio_propuesto?.modelo_lio_defecto_nombre || '',
+        lente_dioptria:
+          caso.lente_dioptria !== undefined && caso.lente_dioptria !== null && String(caso.lente_dioptria).trim() !== ''
+            ? String(caso.lente_dioptria)
+            : '',
+        es_torico:
+          caso.es_torico !== undefined && caso.es_torico !== null
+            ? Boolean(caso.es_torico)
+            : caso.lio_propuesto?.condicion_toricidad === 'torico',
         lente_torico_valor: caso.lente_torico_valor !== undefined && caso.lente_torico_valor !== null ? caso.lente_torico_valor : prev.lente_torico_valor,
         lente_torico_eje: caso.lente_torico_eje !== undefined && caso.lente_torico_eje !== null ? caso.lente_torico_eje : prev.lente_torico_eje,
         lio_calculado: Boolean(caso.lio_calculado),
@@ -521,6 +550,20 @@ export default function FichaTurnoModal({
       setGuardando(true)
       setError(null)
 
+      const diopStr = String(formData.lente_dioptria ?? '').trim()
+      const modeloStr = String(formData.lente_tipo ?? '').trim()
+      if (formData.lleva_lente && diopStr && !modeloStr) {
+        setError('Si ingresas una dioptría intraocular, debes seleccionar el Modelo de LIO.')
+        setGuardando(false)
+        return
+      }
+      const modeloLioMatch = modelosLio.find(
+        (m) =>
+          `${m.modelo} (${m.marca})` === modeloStr ||
+          m.modelo === modeloStr ||
+          `${m.marca} - ${m.modelo}` === modeloStr
+      )
+
       const payload = {
         ...formData,
         ...(esEdicion ? {} : { usuario_alta: currentUserName || (formData as any).usuario_alta || null }),
@@ -534,8 +577,10 @@ export default function FichaTurnoModal({
         lleva_lente: !!formData.lleva_lente,
         es_torico: !!formData.es_torico,
         lente_torico_valor: formData.es_torico ? Number(formData.lente_torico_valor) || 0 : null,
-        lente_dioptria: formData.lleva_lente ? formData.lente_dioptria : null,
-        lente_tipo: formData.lleva_lente ? formData.lente_tipo : null,
+        lente_dioptria: formData.lleva_lente && diopStr ? diopStr : null,
+        lente_tipo: formData.lleva_lente && modeloStr ? modeloStr : null,
+        modelo_lio_id: formData.lleva_lente ? modeloLioMatch?.id || null : null,
+        motivo_override: motivoOverrideQx.trim() || null,
         lente_incision_grados: formData.lleva_lente && formData.lente_incision_grados !== '' && formData.lente_incision_grados !== null ? Number(formData.lente_incision_grados) : null,
         observaciones_quirofano: formData.observaciones_quirofano?.trim() || null,
         lente_lote: formData.lleva_lente ? formData.lente_lote : null,
@@ -1908,82 +1953,194 @@ export default function FichaTurnoModal({
                       </div>
                     )
                   })()}
-                  {/* BANNER DE CERTIFICACIÓN DE BIOMETRÍA & LIO SELLADO */}
-                  {formData.lio_calculado && (
-                    <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-blue-500/10 border border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="px-2 py-0.5 rounded-md bg-emerald-600 text-white font-black text-[10px] uppercase flex items-center gap-1 shadow-xs">
-                            <CheckCircle2 size={12} />
-                            <span>LIO Calculado & Sellado</span>
-                          </span>
-                          {formData.lio_calculado_por && (
-                            <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">
-                              por {formData.lio_calculado_por}
-                            </span>
-                          )}
-                          {formData.lio_formula && (
-                            <span className="px-2 py-0.5 rounded-md bg-slate-900/80 text-cyan-300 text-[10px] font-mono border border-cyan-500/40">
-                              Fórmula: {formData.lio_formula}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-[var(--foreground)] font-medium">
-                          <strong className="text-[var(--foreground)]">Plan Principal Recomendado:</strong>{' '}
-                          <span className="font-bold text-blue-600 dark:text-blue-400">{formData.lente_tipo}</span>{' '}
-                          <span className="font-mono font-black text-cyan-600 dark:text-cyan-400">+{formData.lente_dioptria} D</span>{' '}
-                          {formData.es_torico && (
-                            <span className="px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 font-extrabold text-[10px] font-mono border border-purple-500/30">
-                              Tórico T{formData.lente_torico_valor} @ {formData.lente_torico_eje}°
-                            </span>
-                          )}
-                          {formData.lio_target_refractivo && (
-                            <span className="text-[var(--secondary)] text-[11px] ml-1">
-                              • Target: {formData.lio_target_refractivo}
-                            </span>
-                          )}
-                        </p>
-                      </div>
+                  {/* BANNERS DE TRAZABILIDAD G5 & AUDITORÍA MÉDICO ↔ QUIRÓFANO */}
+                  {(() => {
+                    const origMed =
+                      turno?.override_quirofano?.calculo_medico_original ||
+                      (formData.lio_calculado && turno?.origen_calculo !== 'quirofano' && formData.lio_calculo_opciones?.[0]
+                        ? {
+                            modelo: formData.lio_calculo_opciones[0].modelo,
+                            dioptria: formData.lio_calculo_opciones[0].dioptria,
+                            es_torico: Boolean(formData.lio_calculo_opciones[0].es_torico)
+                          }
+                        : null)
+                    const normDiop = (v: any) => String(v ?? '').trim().replace(/^\+/, '').replace(/d$/i, '').trim()
+                    const seModificoRespectoAMedico = Boolean(
+                      formData.lio_calculado &&
+                        origMed &&
+                        ((formData.lente_tipo || '') !== (origMed.modelo || '') ||
+                          normDiop(formData.lente_dioptria) !== normDiop(origMed.dioptria) ||
+                          Boolean(formData.es_torico) !== Boolean(origMed.es_torico))
+                    )
+                    const propObj = casoLioPropuesto || turno?.lio_propuesto
+                    const discServer = turno?.discrepancia_comercial_clinica
+                    const hayDiscLive = (() => {
+                      if (!propObj?.lente_nombre || !formData.lente_tipo) return false
+                      const famNombres: string[] = Array.isArray(propObj.familias_lio_nombres) ? propObj.familias_lio_nombres : []
+                      const famIds: string[] = Array.isArray(propObj.familias_lio_ids) ? propObj.familias_lio_ids : []
+                      const cond = propObj.condicion_toricidad || 'ambos'
+                      const modMatch = modelosLio.find(
+                        (m) => `${m.modelo} (${m.marca})` === formData.lente_tipo || m.modelo === formData.lente_tipo
+                      )
+                      let famOk = true
+                      if (famIds.length > 0 || famNombres.length > 0) {
+                        famOk =
+                          Boolean(modMatch?.id && famIds.includes(modMatch.id)) ||
+                          famNombres.some((n) => formData.lente_tipo.toLowerCase().includes(n.toLowerCase()))
+                      }
+                      const torOk =
+                        cond === 'torico' ? Boolean(formData.es_torico) : cond === 'esferico' ? !formData.es_torico : true
+                      return !famOk || !torOk
+                    })()
 
-                      <a
-                        href="/calculo-lio"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1.5 rounded-xl bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 text-[11px] font-bold flex items-center gap-1.5 shrink-0 transition"
-                      >
-                        <Eye size={13} />
-                        <span>Ver Mesa Biométrica</span>
-                      </a>
-                    </div>
-                  )}
+                    return (
+                      <div className="space-y-2.5">
+                        {!formData.lio_calculado && (
+                          <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-800 dark:text-cyan-200 text-xs flex items-start gap-2">
+                            <Sparkles size={14} className="shrink-0 mt-0.5 text-cyan-500" />
+                            <span>
+                              Sin cálculo biométrico médico previo. Si ingresas <strong>Modelo + Dioptría</strong> aquí y guardas, el caso quedará marcado como calculado con trazabilidad{' '}
+                              <strong>&quot;Cargado en Quirófano&quot;</strong>.
+                            </span>
+                          </div>
+                        )}
+
+                        {formData.lio_calculado && (
+                          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-blue-500/10 border border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="px-2 py-0.5 rounded-md bg-emerald-600 text-white font-black text-[10px] uppercase flex items-center gap-1 shadow-xs">
+                                  <CheckCircle2 size={12} />
+                                  <span>LIO Calculado & Sellado</span>
+                                </span>
+                                {turno?.origen_calculo === 'quirofano' && (
+                                  <span className="px-2 py-0.5 rounded-md bg-cyan-600 text-white font-black text-[10px] uppercase">
+                                    🏥 Cargado en Quirófano
+                                  </span>
+                                )}
+                                {formData.lio_calculado_por && (
+                                  <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">
+                                    por {formData.lio_calculado_por}
+                                  </span>
+                                )}
+                                {formData.lio_formula && (
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-900/80 text-cyan-300 text-[10px] font-mono border border-cyan-500/40">
+                                    Fórmula: {formData.lio_formula}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-[var(--foreground)] font-medium">
+                                <strong className="text-[var(--foreground)]">Plan Vigente:</strong>{' '}
+                                <span className="font-bold text-blue-600 dark:text-blue-400">{formData.lente_tipo || 'Sin modelo'}</span>{' '}
+                                {formData.lente_dioptria && (
+                                  <span className="font-mono font-black text-cyan-600 dark:text-cyan-400">+{formData.lente_dioptria} D</span>
+                                )}{' '}
+                                {formData.es_torico && (
+                                  <span className="px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 font-extrabold text-[10px] font-mono border border-purple-500/30">
+                                    Tórico T{formData.lente_torico_valor} @ {formData.lente_torico_eje}°
+                                  </span>
+                                )}
+                                {formData.lio_target_refractivo && (
+                                  <span className="text-[var(--secondary)] text-[11px] ml-1">
+                                    • Target: {formData.lio_target_refractivo}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+
+                            <a
+                              href="/calculo-lio"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-3 py-1.5 rounded-xl bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 text-[11px] font-bold flex items-center gap-1.5 shrink-0 transition"
+                            >
+                              <Eye size={13} />
+                              <span>Ver Mesa Biométrica</span>
+                            </a>
+                          </div>
+                        )}
+
+                        {turno?.override_quirofano?.activo && (
+                          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-xs space-y-1.5">
+                            <div className="font-bold text-amber-800 dark:text-amber-200 flex items-center justify-between gap-2">
+                              <span>⚠️ Cambio Auditado desde Quirófano</span>
+                              {turno.override_quirofano.modificado_por && (
+                                <span className="text-[10.5px] font-normal opacity-80">
+                                  por {turno.override_quirofano.modificado_por}
+                                </span>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                              <div className="p-2 rounded-lg bg-[var(--card)] border border-[var(--border)]">
+                                <span className="text-[10px] text-[var(--secondary)] block">Plan Médico Original (preservado):</span>
+                                <b>
+                                  {turno.override_quirofano.calculo_medico_original?.modelo || '—'}{' '}
+                                  {turno.override_quirofano.calculo_medico_original?.dioptria
+                                    ? `(${turno.override_quirofano.calculo_medico_original.dioptria} D)`
+                                    : ''}
+                                </b>
+                              </div>
+                              <div className="p-2 rounded-lg bg-amber-500/15 border border-amber-500/30">
+                                <span className="text-[10px] text-amber-700 dark:text-amber-300 block">Aplicado en Quirófano:</span>
+                                <b>
+                                  {turno.override_quirofano.lente_aplicado_quirofano?.modelo || '—'}{' '}
+                                  {turno.override_quirofano.lente_aplicado_quirofano?.dioptria
+                                    ? `(${turno.override_quirofano.lente_aplicado_quirofano.dioptria} D)`
+                                    : ''}
+                                </b>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {seModificoRespectoAMedico && (
+                          <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/50 text-amber-900 dark:text-amber-100 text-xs space-y-2">
+                            <div className="flex items-start gap-2 font-bold">
+                              <AlertTriangle size={15} className="text-amber-500 shrink-0 mt-0.5" />
+                              <span>
+                                Modificaste el lente respecto al cálculo original del médico ({origMed?.modelo}{' '}
+                                {origMed?.dioptria ? `${origMed.dioptria} D` : ''}). El cálculo original permanecerá guardado y este cambio se auditará en el historial.
+                              </span>
+                            </div>
+                            <input
+                              type="text"
+                              value={motivoOverrideQx}
+                              onChange={(e) => setMotivoOverrideQx(e.target.value)}
+                              placeholder="Motivo del cambio en Quirófano (opcional, ej: indicación telefónica del cirujano, falta stock...)"
+                              className="w-full px-3 py-1.5 rounded-lg bg-[var(--card)] border border-amber-500/40 text-xs outline-none focus:border-amber-500"
+                            />
+                          </div>
+                        )}
+
+                        {(discServer?.hay_discrepancia || hayDiscLive) && (
+                          <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/40 text-rose-700 dark:text-rose-200 text-xs flex items-start gap-2">
+                            <AlertCircle size={14} className="shrink-0 mt-0.5 text-rose-500" />
+                            <span>
+                              <strong>Discrepancia comercial vs. clínico:</strong>{' '}
+                              {discServer?.detalle ||
+                                `El lente seleccionado (${formData.lente_tipo}) no coincide en familia o toricidad con el LIO optado comercialmente (${propObj?.lente_nombre}).`}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
                     {/* 1. Modelo de LIO */}
                     <div className="lg:col-span-2">
-                    <label className="text-[11px] font-semibold text-[var(--secondary)]">Modelo de Lente Intraocular *</label>
+                    <label className="text-[11px] font-semibold text-[var(--secondary)]">Modelo de Lente Intraocular</label>
                     <select
                       value={formData.lente_tipo}
                       onChange={(e) => setFormData({ ...formData, lente_tipo: e.target.value })}
                       className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold outline-none focus:border-blue-500"
                     >
                       <option value="">-- Seleccionar Modelo de LIO --</option>
-                      {modelosLio.length > 0 ? (
-                        modelosLio.map((m) => (
-                          <option key={m.id || m.modelo} value={`${m.modelo} (${m.marca})`}>
-                            {m.marca} - {m.modelo} ({m.tipo_optica})
-                          </option>
-                        ))
-                      ) : (
-                        <>
-                          <option value="AcrySof IQ SN60WF (Alcon)">Alcon - AcrySof IQ SN60WF (Monofocal)</option>
-                          <option value="Clareon CNA0T0 (Alcon)">Alcon - Clareon CNA0T0 (Monofocal Asférico)</option>
-                          <option value="PanOptix TFNT00 (Alcon)">Alcon - PanOptix TFNT00 (Trifocal)</option>
-                          <option value="TECNIS ZCB00 (J&J)">Johnson & Johnson - TECNIS ZCB00 (Monofocal)</option>
-                          <option value="TECNIS Eyhance ICB00 (J&J)">Johnson & Johnson - TECNIS Eyhance ICB00 (Monofocal Plus)</option>
-                          <option value="RayOne EMV (Rayner)">Rayner - RayOne EMV (EDOF)</option>
-                          <option value="AT LISA tri 839MP (Zeiss)">Zeiss - AT LISA tri 839MP (Trifocal)</option>
-                        </>
-                      )}
+                      {modelosLio.map((m) => (
+                        <option key={m.id || m.modelo} value={`${m.modelo} (${m.marca})`}>
+                          {m.marca} - {m.modelo} ({m.tipo_optica})
+                        </option>
+                      ))}
                       {formData.lente_tipo && !modelosLio.some((m) => `${m.modelo} (${m.marca})` === formData.lente_tipo) && (
                         <option value={formData.lente_tipo}>{formData.lente_tipo}</option>
                       )}
@@ -1993,7 +2150,7 @@ export default function FichaTurnoModal({
                   {/* 2. Dioptría Esférica (Saltos de 0.25) */}
                   <div>
                     <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between">
-                      <span>Dioptría (Esfera) *</span>
+                      <span>Dioptría (Esfera)</span>
                       <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400">Paso 0.25 D</span>
                     </label>
                     <input
@@ -2003,9 +2160,8 @@ export default function FichaTurnoModal({
                       max="45.00"
                       value={formData.lente_dioptria}
                       onChange={(e) => setFormData({ ...formData, lente_dioptria: e.target.value })}
-                      placeholder="+21.50"
+                      placeholder="Ej: 21.50 (opcional sin cálculo)"
                       className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-blue-600 dark:text-blue-400 font-mono font-extrabold text-center outline-none focus:border-blue-500"
-                      required={formData.lleva_lente}
                     />
                   </div>
 

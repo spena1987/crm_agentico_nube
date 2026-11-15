@@ -209,9 +209,9 @@ def test_guardar_calculo_lio_con_asesoria_no_inyecta_es_torico_en_asesorias():
 
 def test_listar_pacientes_calculo_lio_incluye_en_asesoramiento_y_detecta_cambio_lio():
     """
-    Verifica que /api/calculo-lio/pacientes:
-    1. Incluya casos en 'en_asesoramiento' con _lio_seleccion y estado_label 'Tentativo' / 'Definitivo'.
-    2. No marque lio_cambio_post_calculo=True si falta lio_propuesto_ref o solo cambió el estado a confirmado.
+    Verifica que /api/calculo-lio/pacientes (con reglas G3):
+    1. Excluya casos sin calcular en 'en_asesoramiento' o con _lio_seleccion 'a_definir'.
+    2. Incluya casos sin calcular en 'confirmado' con _lio_seleccion distinto de 'a_definir' (estado_label 'Tentativo' / 'Definitivo').
     3. Marque lio_cambio_post_calculo=True si cambió el modelo de lente respecto a lio_propuesto_ref.
     """
     with patch("app.main.supabase") as mock_supa:
@@ -221,17 +221,36 @@ def test_listar_pacientes_calculo_lio_incluye_en_asesoramiento_y_detecta_cambio_
         mock_asesorias = MagicMock()
         mock_asesorias.select.return_value.in_.return_value.order.return_value.execute.return_value = MagicMock(data=[
             {
+                "id": "as-a-definir",
+                "paciente_id": "pac-0",
+                "codigo_caso": "QX-26-0099",
+                "practica_nombre": "Catarata con Facoemulsificación",
+                "ojo": "OD",
+                "estado": "en_asesoramiento",
+                "fecha_probable_cirugia": "2026-12-09",
+                "fecha_definitiva_cirugia": None,
+                "checklist_prequirurgico": {
+                    "_lio_seleccion": {
+                        "estado": "a_definir",
+                        "lente_nombre": "Clareon Monofocal",
+                        "lente_id": "l-1",
+                        "lente_codigo": "CLR-1",
+                    }
+                },
+                "pacientes": {"nombre": "Caso Sin Confirmar", "dni": "30000000"},
+            },
+            {
                 "id": "as-tentativo",
                 "paciente_id": "pac-1",
                 "codigo_caso": "QX-26-0100",
                 "practica_nombre": "Catarata con Facoemulsificación",
                 "ojo": "OD",
-                "estado": "en_asesoramiento",
+                "estado": "confirmado",
                 "fecha_probable_cirugia": "2026-12-10",
                 "fecha_definitiva_cirugia": None,
                 "checklist_prequirurgico": {
                     "_lio_seleccion": {
-                        "estado": "a_definir",
+                        "estado": "tentativo",
                         "lente_nombre": "Clareon Monofocal",
                         "lente_id": "l-1",
                         "lente_codigo": "CLR-1",
@@ -281,6 +300,7 @@ def test_listar_pacientes_calculo_lio_incluye_en_asesoramiento_y_detecta_cambio_
         assert body["success"] is True
         pacs = {p["asesoria_id"]: p for p in body["pacientes"]}
 
+        assert "as-a-definir" not in pacs
         assert "as-tentativo" in pacs
         assert pacs["as-tentativo"]["lio_propuesto"]["lente_nombre"] == "Clareon Monofocal"
         assert pacs["as-tentativo"]["lio_propuesto"]["estado_label"] == "Tentativo"

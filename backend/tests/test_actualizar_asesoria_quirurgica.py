@@ -166,6 +166,9 @@ def test_auto_transicion_a_programado_al_fijar_fecha_definitiva():
         "medico_cirujano_nombre": "Dr. Juan Pérez",
         "estado": "en_asesoramiento",
         "fecha_definitiva_cirugia": "2026-12-01",
+        "checklist_prequirurgico": {
+            "_lio_seleccion": {"estado": "tentativo", "lente_nombre": "Clareon Monofocal"}
+        },
     }
 
     with patch("app.db.supabase") as mock_sb:

@@ -34,6 +34,18 @@ import {
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 import { RichConsentEditor } from './RichConsentEditor'
 
+interface ModeloLioFamilia {
+  id: string
+  marca: string
+  modelo: string
+  tipo_optica?: string
+  constante_a?: number
+  admite_toricos?: boolean
+  apto_sulcus?: boolean
+  activo?: boolean
+  items_count?: number
+}
+
 interface LioConfigItem {
   id: string
   codigo: string
@@ -46,6 +58,12 @@ interface LioConfigItem {
   es_torico?: boolean
   tipo_vision?: string
   habilitado_en_practica?: boolean
+  condicion_toricidad?: 'esferico' | 'torico' | 'ambos'
+  familias_lio_ids?: string[]
+  familias_lio_nombres?: string[]
+  familias_clinicas?: ModeloLioFamilia[]
+  modelo_lio_defecto_id?: string | null
+  modelo_lio_defecto_nombre?: string | null
 }
 
 interface GeclisaTipoNomenclador {
@@ -77,6 +95,10 @@ interface CrmPracticaConfigurada {
   origen: 'GECLISA' | 'MANUAL'
   requiere_lente?: boolean
   lios_habilitados?: string[] | null
+  familias_lio_ids?: string[] | null
+  condicion_toricidad?: 'esferico' | 'torico' | 'ambos' | null
+  familias_lio_nombres?: string[] | null
+  familias_clinicas?: ModeloLioFamilia[] | null
   habilitar_arancel: boolean
   habilitar_preparacion: boolean
   preparacion_plantilla_id?: string | null
@@ -217,6 +239,7 @@ export default function NomencladorSettingsCard() {
 
   // Estados para Gestión Integral de Lentes Intraoculares (Opción A)
   const [listaLiosModal, setListaLiosModal] = useState<LioConfigItem[]>([])
+  const [modelosLioCatalogo, setModelosLioCatalogo] = useState<ModeloLioFamilia[]>([])
   const [loadingLiosModal, setLoadingLiosModal] = useState(false)
   const [savingLioCodigo, setSavingLioCodigo] = useState<string | null>(null)
   const [feedbackLio, setFeedbackLio] = useState<{ codigo: string; texto: string; tipo: 'success' | 'error' } | null>(null)
@@ -225,7 +248,9 @@ export default function NomencladorSettingsCard() {
     codigo: '',
     nombre: '',
     precio: 0,
-    moneda: 'USD' as 'ARS' | 'USD'
+    moneda: 'USD' as 'ARS' | 'USD',
+    condicion_toricidad: 'ambos' as 'esferico' | 'torico' | 'ambos',
+    familias_lio_ids: [] as string[]
   })
   const [creandoLio, setCreandoLio] = useState(false)
 
@@ -246,6 +271,8 @@ export default function NomencladorSettingsCard() {
     habilitar_preparacion: false,
     requiere_lente: false,
     lios_habilitados: [] as string[],
+    familias_lio_ids: [] as string[],
+    condicion_toricidad: 'ambos' as 'esferico' | 'torico' | 'ambos',
     modo_preparacion: 'plantilla' as 'plantilla' | 'custom',
     preparacion_plantilla_id: '',
     preparacion_custom_texto: '',
@@ -304,6 +331,15 @@ export default function NomencladorSettingsCard() {
         }
       })
       .catch((err) => console.error('Error cargando prestadores en nomenclador:', err))
+
+    fetch(`${API_BASE_URL}/api/modelos-lio?solo_activos=true`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success && Array.isArray(d.modelos)) {
+          setModelosLioCatalogo(d.modelos)
+        }
+      })
+      .catch((err) => console.error('Error cargando familias clínicas LIO:', err))
   }, [])
 
   useEffect(() => {
@@ -623,6 +659,113 @@ export default function NomencladorSettingsCard() {
     })
   }
 
+  const toggleFamiliaIdInArray = (ids: string[], familiaId: string): string[] =>
+    ids.includes(familiaId) ? ids.filter((id) => id !== familiaId) : [...ids, familiaId]
+
+  const renderVinculacionLioControls = (
+    selectedIds: string[],
+    onToggleId: (familiaId: string) => void,
+    condicionToricidad: 'esferico' | 'torico' | 'ambos',
+    onChangeToricidad: (val: 'esferico' | 'torico' | 'ambos') => void
+  ) => {
+    const incompatiblesToricos =
+      condicionToricidad === 'torico'
+        ? modelosLioCatalogo.filter((m) => selectedIds.includes(m.id) && !m.admite_toricos)
+        : []
+
+    return (
+      <div className="space-y-3">
+        <div>
+          <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide block mb-1.5">
+            Condición de Toricidad Aplicable
+          </label>
+          <div className="grid grid-cols-3 gap-1.5">
+            {(
+              [
+                { value: 'esferico', label: 'Solo Esférico' },
+                { value: 'torico', label: '🎯 Solo Tórico' },
+                { value: 'ambos', label: 'Ambos (Esf / Tórico)' }
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => onChangeToricidad(opt.value)}
+                className={`py-1.5 px-2 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                  condicionToricidad === opt.value
+                    ? 'bg-purple-600 border-purple-600 text-white shadow-xs'
+                    : 'bg-white dark:bg-slate-900 border-[var(--border)] text-slate-600 dark:text-slate-300 hover:border-purple-400'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+              Familias Clínicas Vinculadas (`modelos_lio`)
+            </label>
+            <span className="text-[10px] font-mono text-purple-600 dark:text-purple-300">
+              {selectedIds.length} seleccionada(s)
+            </span>
+          </div>
+
+          {modelosLioCatalogo.length === 0 ? (
+            <p className="text-[11px] text-slate-400 italic">
+              No se encontraron familias clínicas activas en el catálogo biométrico.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {modelosLioCatalogo.map((m) => {
+                const isSelected = selectedIds.includes(m.id)
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => onToggleId(m.id)}
+                    className={`px-2.5 py-1.5 rounded-xl border text-left transition flex items-center gap-1.5 cursor-pointer text-[11px] ${
+                      isSelected
+                        ? 'bg-purple-50 dark:bg-purple-950/60 border-purple-500 text-purple-900 dark:text-purple-100 font-bold shadow-xs'
+                        : 'bg-white dark:bg-slate-900 border-[var(--border)] text-slate-600 dark:text-slate-300 hover:border-slate-400'
+                    }`}
+                  >
+                    <span>{isSelected ? '✓' : '+'}</span>
+                    <span>
+                      {m.modelo} <span className="opacity-65">({m.marca})</span>
+                    </span>
+                    {m.tipo_optica && (
+                      <span className="px-1.5 py-0.2 rounded bg-slate-200/70 dark:bg-slate-800 text-[9px] font-semibold">
+                        {m.tipo_optica}
+                      </span>
+                    )}
+                    {m.admite_toricos && (
+                      <span className="px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 text-[9px] font-extrabold">
+                        Tórico
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {incompatiblesToricos.length > 0 && (
+            <div className="mt-2 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 text-[11px] text-amber-800 dark:text-amber-200 flex items-center gap-1.5 font-medium">
+              <AlertCircle size={13} className="shrink-0 text-amber-600 dark:text-amber-400" />
+              <span>
+                Advertencia: {incompatiblesToricos.map((f) => `${f.modelo} (${f.marca})`).join(', ')} tiene{' '}
+                <code>admite_toricos = false</code>. Verifica antes de asignar condición Solo Tórico.
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   const handleCrearNuevoLio = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!nuevoLioForm.codigo.trim() || !nuevoLioForm.nombre.trim()) return
@@ -635,13 +778,23 @@ export default function NomencladorSettingsCard() {
           codigo: nuevoLioForm.codigo.trim().toUpperCase(),
           nombre: nuevoLioForm.nombre.trim().toUpperCase(),
           precio: Number(nuevoLioForm.precio) || 0,
-          moneda: nuevoLioForm.moneda
+          moneda: nuevoLioForm.moneda,
+          condicion_toricidad: nuevoLioForm.condicion_toricidad,
+          familias_lio_ids: nuevoLioForm.familias_lio_ids
         })
       })
       if (res.ok) {
         setMostrarNuevoLioModal(false)
-        setNuevoLioForm({ codigo: '', nombre: '', precio: 0, moneda: 'USD' })
+        setNuevoLioForm({
+          codigo: '',
+          nombre: '',
+          precio: 0,
+          moneda: 'USD',
+          condicion_toricidad: 'ambos',
+          familias_lio_ids: []
+        })
         await loadLiosPractica(formData.id)
+        loadCatalogoCrm()
         setFeedback({ tipo: 'success', texto: 'Nuevo LIO registrado correctamente en el catálogo.' })
       } else {
         const err = await res.json()
@@ -702,6 +855,8 @@ export default function NomencladorSettingsCard() {
       habilitar_preparacion: crmMatch?.habilitar_preparacion || false,
       requiere_lente: crmMatch?.requiere_lente || false,
       lios_habilitados: crmMatch?.lios_habilitados || [],
+      familias_lio_ids: crmMatch?.familias_lio_ids || [],
+      condicion_toricidad: (crmMatch?.condicion_toricidad as 'esferico' | 'torico' | 'ambos') || 'ambos',
       modo_preparacion: crmMatch?.preparacion_custom_texto ? 'custom' : 'plantilla',
       preparacion_plantilla_id: crmMatch?.preparacion_plantilla_id || plantillasPrep[0]?.id || '',
       preparacion_custom_texto: crmMatch?.preparacion_custom_texto || '',
@@ -752,6 +907,8 @@ export default function NomencladorSettingsCard() {
       habilitar_preparacion: false,
       requiere_lente: false,
       lios_habilitados: [],
+      familias_lio_ids: [],
+      condicion_toricidad: 'ambos',
       modo_preparacion: 'plantilla',
       preparacion_plantilla_id: plantillasPrep[0]?.id || '',
       preparacion_custom_texto: '',
@@ -798,6 +955,8 @@ export default function NomencladorSettingsCard() {
       habilitar_preparacion: item.habilitar_preparacion || false,
       requiere_lente: item.requiere_lente || false,
       lios_habilitados: item.lios_habilitados || [],
+      familias_lio_ids: item.familias_lio_ids || [],
+      condicion_toricidad: (item.condicion_toricidad as 'esferico' | 'torico' | 'ambos') || 'ambos',
       modo_preparacion: item.preparacion_custom_texto ? 'custom' : 'plantilla',
       preparacion_plantilla_id: item.preparacion_plantilla_id || plantillasPrep[0]?.id || '',
       preparacion_custom_texto: item.preparacion_custom_texto || '',
@@ -816,6 +975,11 @@ export default function NomencladorSettingsCard() {
     loadIndicacionesPractica(item.id)
     setIsModalOpen(true)
   }
+
+  const esCategoriaLioComercial =
+    (formData.categoria || '').toLowerCase().includes('lentes intraoculares') ||
+    (formData.categoria || '').trim().toLowerCase() === 'lio' ||
+    (!formData.requiere_lente && (formData.familias_lio_ids || []).length > 0)
 
   const handleSavePracticaIntegral = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -837,8 +1001,10 @@ export default function NomencladorSettingsCard() {
         vigencia_hasta: formData.vigencia_hasta || null,
         arancel_id: formData.arancel_id || undefined,
         habilitar_preparacion: formData.habilitar_preparacion,
-        requiere_lente: !!formData.requiere_lente,
+        requiere_lente: esCategoriaLioComercial ? false : !!formData.requiere_lente,
         lios_habilitados: formData.lios_habilitados,
+        familias_lio_ids: formData.familias_lio_ids || [],
+        condicion_toricidad: formData.condicion_toricidad || 'ambos',
         preparacion_plantilla_id:
           formData.habilitar_preparacion && formData.modo_preparacion === 'plantilla'
             ? formData.preparacion_plantilla_id
@@ -1647,6 +1813,19 @@ export default function NomencladorSettingsCard() {
                                   💎 LIO
                                 </span>
                               ) : null}
+                              {(p.familias_lio_ids?.length || 0) > 0 ? (
+                                <span
+                                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-900 dark:bg-purple-950/60 dark:text-purple-200"
+                                  title={`Familias vinculadas: ${(p.familias_lio_nombres || []).join(', ') || p.familias_lio_ids?.length}`}
+                                >
+                                  🔗 {p.familias_lio_ids?.length} fam. ·{' '}
+                                  {p.condicion_toricidad === 'torico'
+                                    ? 'Tórico'
+                                    : p.condicion_toricidad === 'esferico'
+                                    ? 'Esf.'
+                                    : 'Esf/Tór'}
+                                </span>
+                              ) : null}
                             </div>
                           </td>
                           <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 dark:text-slate-100">
@@ -2197,42 +2376,69 @@ export default function NomencladorSettingsCard() {
                     </div>
                   </div>
 
-                  {/* Requiere Selección de Lente Intraocular (LIO) */}
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3.5 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl">
-                    <div className="space-y-0.5 flex-1 min-w-0 pr-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">💎</span>
-                        <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
-                          Requiere Selección de Lente Intraocular (LIO)
-                        </span>
+                  {/* G1: Si es práctica comercial de LIO -> Vinculación con Familias Clínicas; si no -> Switch Requiere LIO */}
+                  {esCategoriaLioComercial ? (
+                    <div className="p-3.5 bg-purple-50/60 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 rounded-xl space-y-3">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <Link2 size={14} className="text-purple-600 dark:text-purple-300" />
+                          <span className="text-xs font-bold text-purple-900 dark:text-purple-100">
+                            Vinculación con Familias Clínicas (`modelos_lio`) & Toricidad
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-purple-700 dark:text-purple-300">
+                          Asocia este ítem comercial con sus familias clínicas biométricas para pre-cargar el Plan A en Cálculo LIO / Quirófano y detectar discrepancias.
+                        </p>
                       </div>
-                      <p className="text-[11px] text-amber-700 dark:text-amber-300">
-                        Habilita la elección del LIO en la Lateralidad del caso (Cataratas) y sugiere los lentes comerciales con precio al crear presupuestos.
-                      </p>
-                    </div>
 
-                    <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center">
-                      {formData.requiere_lente && (
-                        <button
-                          type="button"
-                          onClick={() => setModalSubTab('lios')}
-                          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-xs transition cursor-pointer"
-                        >
-                          <span>Configurar LIOs & Precios</span>
-                          <ArrowRight size={13} />
-                        </button>
+                      {renderVinculacionLioControls(
+                        formData.familias_lio_ids || [],
+                        (famId) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            familias_lio_ids: toggleFamiliaIdInArray(prev.familias_lio_ids || [], famId)
+                          })),
+                        formData.condicion_toricidad || 'ambos',
+                        (val) => setFormData((prev) => ({ ...prev, condicion_toricidad: val }))
                       )}
-                      <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                        <input
-                          type="checkbox"
-                          checked={formData.requiere_lente || false}
-                          onChange={(e) => setFormData({ ...formData, requiere_lente: e.target.checked })}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-amber-600"></div>
-                      </label>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3.5 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl">
+                      <div className="space-y-0.5 flex-1 min-w-0 pr-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm">💎</span>
+                          <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                            Requiere Selección de Lente Intraocular (LIO)
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                          Habilita la elección del LIO en la Lateralidad del caso (Cataratas) y sugiere los lentes comerciales con precio al crear presupuestos.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center">
+                        {formData.requiere_lente && (
+                          <button
+                            type="button"
+                            onClick={() => setModalSubTab('lios')}
+                            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-xs transition cursor-pointer"
+                          >
+                            <span>Configurar LIOs & Precios</span>
+                            <ArrowRight size={13} />
+                          </button>
+                        )}
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={formData.requiere_lente || false}
+                            onChange={(e) => setFormData({ ...formData, requiere_lente: e.target.checked })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-amber-600"></div>
+                        </label>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Resumen de Módulos Activos */}
                   <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] rounded-xl space-y-2">
@@ -2245,21 +2451,26 @@ export default function NomencladorSettingsCard() {
                         📋 Prep ({formData.habilitar_preparacion ? 'Sí' : 'No'})
                       </div>
                       <div className={`p-2 rounded-lg border font-bold ${formData.habilitar_consentimiento ? 'bg-purple-50 border-purple-300 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300' : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800'}`}>
-                        ✍️ Consent ({formData.habilitar_consentimiento ? 'Sí' : 'No'})\n                      </div>\n                      <div className={`p-2 rounded-lg border font-bold ${formData.habilitar_indicaciones ? 'bg-rose-50 border-rose-300 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300' : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800'}`}>\n                        💊 Ind ({formData.habilitar_indicaciones ? 'Sí' : 'No'})
+                        ✍️ Consent ({formData.habilitar_consentimiento ? 'Sí' : 'No'})
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, requiere_lente: !formData.requiere_lente })}
-                        className={`p-2 rounded-lg border font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
-                          formData.requiere_lente
-                            ? 'bg-amber-100 border-amber-400 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200 shadow-xs ring-1 ring-amber-400/40'
-                            : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800 hover:border-slate-300'
-                        }`}
-                        title="Clic para activar/desactivar requerimiento de LIO"
-                      >
-                        <span>💎 Requiere LIO</span>
-                        <span className="text-[10px]">({formData.requiere_lente ? 'Sí' : 'No'})</span>
-                      </button>
+                      <div className={`p-2 rounded-lg border font-bold ${formData.habilitar_indicaciones ? 'bg-rose-50 border-rose-300 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300' : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800'}`}>
+                        💊 Ind ({formData.habilitar_indicaciones ? 'Sí' : 'No'})
+                      </div>
+                      {!esCategoriaLioComercial && (
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, requiere_lente: !formData.requiere_lente })}
+                          className={`p-2 rounded-lg border font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
+                            formData.requiere_lente
+                              ? 'bg-amber-100 border-amber-400 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200 shadow-xs ring-1 ring-amber-400/40'
+                              : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800 hover:border-slate-300'
+                          }`}
+                          title="Clic para activar/desactivar requerimiento de LIO"
+                        >
+                          <span>💎 Requiere LIO</span>
+                          <span className="text-[10px]">({formData.requiere_lente ? 'Sí' : 'No'})</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3272,6 +3483,19 @@ export default function NomencladorSettingsCard() {
                           </button>
                         </div>
                       </div>
+
+                      <div className="pt-2 border-t border-amber-300/40 dark:border-amber-800/50">
+                        {renderVinculacionLioControls(
+                          nuevoLioForm.familias_lio_ids,
+                          (famId) =>
+                            setNuevoLioForm((prev) => ({
+                              ...prev,
+                              familias_lio_ids: toggleFamiliaIdInArray(prev.familias_lio_ids, famId)
+                            })),
+                          nuevoLioForm.condicion_toricidad,
+                          (val) => setNuevoLioForm((prev) => ({ ...prev, condicion_toricidad: val }))
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -3354,7 +3578,7 @@ export default function NomencladorSettingsCard() {
                                 </td>
 
                                 <td className="py-2.5 px-3 whitespace-nowrap">
-                                  <div className="flex items-center gap-1.5">
+                                  <div className="flex flex-wrap items-center gap-1.5">
                                     <span
                                       className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                         lio.tipo_vision?.includes('Trifocal')
@@ -3366,9 +3590,28 @@ export default function NomencladorSettingsCard() {
                                     >
                                       {lio.tipo_vision || 'Monofocal'}
                                     </span>
-                                    {lio.es_torico && (
+                                    {(lio.condicion_toricidad === 'torico' || lio.es_torico) && (
                                       <span className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300/60">
                                         🎯 TÓRICO
+                                      </span>
+                                    )}
+                                    {lio.condicion_toricidad === 'esferico' && (
+                                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300">
+                                        Esférico
+                                      </span>
+                                    )}
+                                    {(lio.familias_lio_nombres?.length || 0) > 0 ? (
+                                      lio.familias_lio_nombres!.map((famNom) => (
+                                        <span
+                                          key={famNom}
+                                          className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-200 border border-purple-300/50"
+                                        >
+                                          🔗 {famNom}
+                                        </span>
+                                      ))
+                                    ) : (
+                                      <span className="px-1.5 py-0.5 rounded-md text-[10px] bg-slate-100 text-slate-400 dark:bg-slate-800">
+                                        Sin familia clínica
                                       </span>
                                     )}
                                   </div>

@@ -140,6 +140,66 @@ export default function CalculoLioPage() {
   const [opcionesLio, setOpcionesLio] = useState<OpcionLio[]>([])
   const [modelosLio, setModelosLio] = useState<any[]>([])
   const [modoEdicion, setModoEdicion] = useState<boolean>(false)
+  const [limpiarOverrideQuirofano, setLimpiarOverrideQuirofano] = useState<boolean>(false)
+
+  const discrepanciaTiempoReal = useMemo(() => {
+    if (!pacienteActivo) return null
+    const prop = pacienteActivo.lio_propuesto
+    const planA = opcionesLio.find((o) => o.tipo_opcion === 'principal' || o.es_implantado) || opcionesLio[0]
+    if (!prop?.lente_nombre || !planA?.modelo) {
+      return pacienteActivo.discrepancia_comercial_clinica || null
+    }
+
+    const famIds: string[] = Array.isArray(prop.familias_lio_ids) ? prop.familias_lio_ids : []
+    const famNombres: string[] = Array.isArray(prop.familias_lio_nombres) ? prop.familias_lio_nombres : []
+    const cond: string = prop.condicion_toricidad || 'ambos'
+
+    let familiaOk = true
+    if (famIds.length > 0 || famNombres.length > 0) {
+      const modPlanObj = modelosLio.find(
+        (m) =>
+          (planA.modelo_lio_id && m.id === planA.modelo_lio_id) ||
+          `${m.modelo} (${m.marca})` === planA.modelo ||
+          m.modelo === planA.modelo
+      )
+      const modPlanId = planA.modelo_lio_id || modPlanObj?.id
+      const matchPorId = Boolean(modPlanId && famIds.includes(modPlanId))
+      const planLow = planA.modelo.toLowerCase()
+      const matchPorNombre = famNombres.some((n) => {
+        const nl = n.toLowerCase()
+        return planLow.includes(nl) || nl.includes(planLow)
+      })
+      familiaOk = matchPorId || matchPorNombre
+    }
+
+    let toricOk = true
+    if (cond === 'torico' && !planA.es_torico) toricOk = false
+    if (cond === 'esferico' && planA.es_torico) toricOk = false
+
+    if (familiaOk && toricOk) {
+      return { hay_discrepancia: false, tipo: null, detalle: null }
+    }
+
+    const motivos: string[] = []
+    if (!familiaOk) {
+      motivos.push(
+        `El LIO comercial (${prop.lente_nombre}) corresponde a [${famNombres.join(', ') || 'otra familia'}], pero el Plan A seleccionado es "${planA.modelo}".`
+      )
+    }
+    if (!toricOk) {
+      motivos.push(
+        cond === 'torico'
+          ? 'El LIO comercial es TÓRICO, pero el Plan A no tiene marcado "Lente Tórico".'
+          : 'El LIO comercial es ESFÉRICO, pero el Plan A está marcado como Tórico.'
+      )
+    }
+
+    return {
+      hay_discrepancia: true,
+      tipo: !familiaOk && !toricOk ? 'ambos' : !familiaOk ? 'familia_optica' : 'toricidad',
+      detalle: motivos.join(' ')
+    }
+  }, [pacienteActivo, opcionesLio, modelosLio])
 
   // Asistente Biométrico SRK/T (Modal Manual)
   const [modalSrktAbierto, setModalSrktAbierto] = useState<boolean>(false)
@@ -276,16 +336,35 @@ export default function CalculoLioPage() {
   // Seleccionar paciente para la mesa de trabajo
   const seleccionarPaciente = (p: any) => {
     setPacienteActivo(p)
+    setLimpiarOverrideQuirofano(false)
     const ops = p.lio_calculo_opciones || []
     if (ops.length > 0) {
       setOpcionesLio(ops)
     } else {
-      // Inicializar con Opción Principal por defecto
+      // Plan A (Principal): pre-cargar familia clínica vinculada desde Nomenclador (sin inventar modelo ni dioptría)
+      const prop = p.lio_propuesto || {}
+      const modPropObj =
+        modelosLio.find(
+          (m) =>
+            (prop.modelo_lio_defecto_id && m.id === prop.modelo_lio_defecto_id) ||
+            (prop.modelo_lio_defecto_nombre && `${m.modelo} (${m.marca})` === prop.modelo_lio_defecto_nombre)
+        ) || null
       const modeloDefault =
-        modelosLio.length > 0
-          ? `${modelosLio[0].modelo} (${modelosLio[0].marca})`
-          : p.lente_tipo || 'Clareon CNA0T0 (Alcon)'
-      const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === modeloDefault || m.modelo === modeloDefault)
+        prop.modelo_lio_defecto_nombre ||
+        (modPropObj ? `${modPropObj.modelo} (${modPropObj.marca})` : '') ||
+        p.lente_tipo ||
+        ''
+      const modObj =
+        modPropObj ||
+        (modeloDefault
+          ? modelosLio.find((m) => `${m.modelo} (${m.marca})` === modeloDefault || m.modelo === modeloDefault)
+          : null)
+      const esToricoDefault =
+        prop.condicion_toricidad === 'torico'
+          ? true
+          : prop.condicion_toricidad === 'esferico'
+          ? false
+          : Boolean(p.es_torico)
 
       setOpcionesLio([
         {
@@ -293,11 +372,11 @@ export default function CalculoLioPage() {
           tipo_opcion: 'principal',
           etiqueta: 'Plan A (Principal)',
           modelo: modeloDefault,
-          modelo_lio_id: modObj?.id,
-          dioptria: p.lente_dioptria || '20.00',
-          es_torico: Boolean(p.es_torico),
-          torico_valor: p.lente_torico_valor || (p.es_torico ? 3 : null),
-          torico_eje: p.lente_torico_eje || (p.es_torico ? 90 : null),
+          modelo_lio_id: prop.modelo_lio_defecto_id || modObj?.id,
+          dioptria: p.lente_dioptria ? String(p.lente_dioptria) : '',
+          es_torico: esToricoDefault,
+          torico_valor: p.lente_torico_valor || (esToricoDefault ? 3 : null),
+          torico_eje: p.lente_torico_eje || (esToricoDefault ? 90 : null),
           target_refractivo: '-0.25 D (Miopía Leve)',
           formula: 'Barrett Universal II',
           observaciones: '',
@@ -501,7 +580,8 @@ export default function CalculoLioPage() {
         lio_calculado_por: cirujano,
         opciones: opcionesLio,
         confirmar: false,
-        ojo: pacienteActivo.ojo
+        ojo: pacienteActivo.ojo,
+        limpiar_override_quirofano: false
       }
 
       const res = await apiFetch('/api/calculo-lio/guardar', {
@@ -549,7 +629,8 @@ export default function CalculoLioPage() {
         lio_calculado_por: cirujano,
         opciones: opcionesLio,
         confirmar: true,
-        ojo: pacienteActivo.ojo
+        ojo: pacienteActivo.ojo,
+        limpiar_override_quirofano: limpiarOverrideQuirofano
       }
 
       const res = await apiFetch('/api/calculo-lio/guardar', {
@@ -913,6 +994,21 @@ export default function CalculoLioPage() {
                               ⚠ Recalcular
                             </span>
                           )}
+                          {p.origen_calculo === 'quirofano' && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30 text-[9px] font-black uppercase">
+                              🏥 Cargado en Qx
+                            </span>
+                          )}
+                          {p.override_quirofano?.activo && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-[9px] font-black uppercase">
+                              ⚠ Cambio en Qx
+                            </span>
+                          )}
+                          {p.discrepancia_comercial_clinica?.hay_discrepancia && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 text-[9px] font-black uppercase">
+                              ⚠ Discrepancia
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -972,6 +1068,16 @@ export default function CalculoLioPage() {
                     >
                       {pacienteActivo.lio_calculado ? '✔ LIO Confirmado & Sellado' : '⏳ Pendiente LIO'}
                     </span>
+                    {pacienteActivo.origen_calculo === 'quirofano' && (
+                      <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30">
+                        🏥 Cargado en Quirófano ({pacienteActivo.lio_calculado_por || 'Sala'})
+                      </span>
+                    )}
+                    {pacienteActivo.override_quirofano?.activo && (
+                      <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                        ⚠️ Cambio en Quirófano
+                      </span>
+                    )}
                   </div>
 
                   <h2 className="text-lg md:text-xl font-black text-[var(--foreground)] mt-1 tracking-tight">
@@ -996,6 +1102,11 @@ export default function CalculoLioPage() {
                         }`}>
                           {pacienteActivo.lio_propuesto.estado_label || 'Tentativo'}
                         </span>
+                        {pacienteActivo.lio_propuesto.familias_lio_nombres?.length > 0 && (
+                          <span className="text-[10.5px] font-semibold text-purple-600 dark:text-purple-300">
+                            · Familia esperada: {pacienteActivo.lio_propuesto.familias_lio_nombres.join(' / ')}
+                          </span>
+                        )}
                         {pacienteActivo.lio_propuesto.observaciones && (
                           <span className="text-[11px] text-[var(--secondary)] italic">
                             — {pacienteActivo.lio_propuesto.observaciones}
@@ -1009,6 +1120,65 @@ export default function CalculoLioPage() {
                             El LIO elegido por el paciente cambió después del último cálculo guardado. Verificá si corresponde recalcular la dioptría.
                           </span>
                         </div>
+                      )}
+                    </div>
+                  )}
+                  {discrepanciaTiempoReal?.hay_discrepancia && (
+                    <div className="mt-2 px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/40 text-rose-700 dark:text-rose-200 text-xs flex items-start gap-2">
+                      <AlertCircle size={15} className="shrink-0 mt-0.5 text-rose-500" />
+                      <div className="space-y-0.5">
+                        <span className="font-black block">
+                          ⚠️ Discrepancia entre LIO Comercial Propuesto y Plan A Clínico
+                        </span>
+                        <span className="text-[11px] font-medium block">
+                          {discrepanciaTiempoReal.detalle} (El cambio médico sigue siendo válido y quedará registrado al guardar.)
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  {pacienteActivo.override_quirofano?.activo && (
+                    <div className="mt-2 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-800 dark:text-amber-200 text-xs space-y-1.5">
+                      <div className="font-black flex items-center justify-between gap-2">
+                        <span>⚠️ Cambio registrado desde Quirófano (Sin pisar el Plan Médico Original)</span>
+                        {pacienteActivo.override_quirofano.modificado_por && (
+                          <span className="text-[10.5px] font-normal opacity-80">
+                            Modificado por {pacienteActivo.override_quirofano.modificado_por}
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                        <div className="p-2 rounded-lg bg-[var(--background)] border border-[var(--border)]">
+                          <span className="text-[10px] text-[var(--secondary)] block">Plan Médico Original:</span>
+                          <b>
+                            {pacienteActivo.override_quirofano.calculo_medico_original?.modelo || '—'}{' '}
+                            {pacienteActivo.override_quirofano.calculo_medico_original?.dioptria
+                              ? `(${pacienteActivo.override_quirofano.calculo_medico_original.dioptria} D)`
+                              : ''}
+                          </b>
+                        </div>
+                        <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                          <span className="text-[10px] text-amber-600 dark:text-amber-300 block">Lente Aplicado en Quirófano:</span>
+                          <b>
+                            {pacienteActivo.override_quirofano.lente_aplicado_quirofano?.modelo || '—'}{' '}
+                            {pacienteActivo.override_quirofano.lente_aplicado_quirofano?.dioptria
+                              ? `(${pacienteActivo.override_quirofano.lente_aplicado_quirofano.dioptria} D)`
+                              : ''}
+                          </b>
+                        </div>
+                      </div>
+                      {pacienteActivo.override_quirofano.motivo && (
+                        <p className="text-[11px] italic">Motivo: {pacienteActivo.override_quirofano.motivo}</p>
+                      )}
+                      {modoEdicion && (
+                        <label className="flex items-center gap-2 pt-1 text-[11px] font-bold cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={limpiarOverrideQuirofano}
+                            onChange={(e) => setLimpiarOverrideQuirofano(e.target.checked)}
+                            className="rounded border-amber-500 accent-amber-600"
+                          />
+                          <span>Conciliar y cerrar esta alerta de Quirófano al confirmar el cálculo</span>
+                        </label>
                       )}
                     </div>
                   )}

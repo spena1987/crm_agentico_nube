@@ -1,4 +1,5 @@
 import os
+import copy
 import uuid
 import logging
 import re
@@ -1630,6 +1631,85 @@ def guardar_practica_crm_con_arancel(payload: dict):
         logger.error(f"Error al guardar práctica con arancel: {e}")
         raise
 
+def _normalizar_condicion_toricidad(
+    valor: Optional[str] = None,
+    codigo: Optional[str] = None,
+    nombre: Optional[str] = None,
+) -> str:
+    """Normaliza la condición de toricidad a 'esferico', 'torico' o 'ambos'."""
+    v = str(valor or "").strip().lower()
+    if v in ("esferico", "torico", "ambos"):
+        return v
+    cod_up = str(codigo or "").strip().upper()
+    nom_low = str(nombre or "").strip().lower()
+    if cod_up in ("MULTIFOCAL", "EXPAND"):
+        return "ambos"
+    if (
+        "toric" in nom_low
+        or "tóric" in nom_low
+        or "toric" in cod_up.lower()
+        or cod_up in ("CLAREONT", "TRIFOCALT", "VIVTYT", "ICLHT", "ICLT")
+        or (len(cod_up) >= 3 and cod_up.endswith("T"))
+    ):
+        return "torico"
+    return "esferico"
+
+
+def _extraer_vinculo_lio_practica(practica: Dict[str, Any]) -> tuple:
+    """
+    Extrae (familias_lio_ids, condicion_toricidad) desde una fila de nomenclador_practicas,
+    con fallback a indicaciones_reglas_cirujano._lio_vinculo y heurística por nombre/código
+    para tolerar entornos donde la migración SQL aún no se haya ejecutado.
+    """
+    reglas = practica.get("indicaciones_reglas_cirujano")
+    vinculo_fb = reglas.get("_lio_vinculo") if isinstance(reglas, dict) else None
+    if not isinstance(vinculo_fb, dict):
+        vinculo_fb = {}
+
+    raw_fams = practica.get("familias_lio_ids")
+    if raw_fams is None or (isinstance(raw_fams, list) and len(raw_fams) == 0):
+        raw_fams = vinculo_fb.get("familias_lio_ids")
+
+    familias_ids: List[str] = []
+    if isinstance(raw_fams, list):
+        vistos = set()
+        for fid in raw_fams:
+            s = str(fid or "").strip()
+            if s and s not in vistos:
+                vistos.add(s)
+                familias_ids.append(s)
+
+    cond_raw = practica.get("condicion_toricidad") or vinculo_fb.get("condicion_toricidad")
+    condicion = _normalizar_condicion_toricidad(
+        cond_raw,
+        codigo=practica.get("codigo"),
+        nombre=practica.get("nombre"),
+    )
+    return familias_ids, condicion
+
+
+def _nombre_canonico_familia_lio(fam: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(fam, dict) or not fam.get("modelo"):
+        return None
+    modelo = str(fam.get("modelo") or "").strip()
+    marca = str(fam.get("marca") or "").strip()
+    return f"{modelo} ({marca})" if marca else modelo
+
+
+def _cargar_mapa_modelos_lio_activos() -> Dict[str, Dict[str, Any]]:
+    """Retorna {id_str: familia_dict} para todas las familias registradas en modelos_lio."""
+    if not supabase:
+        return {}
+    try:
+        resp = supabase.table("modelos_lio").select(
+            "id, marca, modelo, tipo_optica, constante_a, admite_toricos, activo"
+        ).execute()
+        return {str(f["id"]): f for f in (resp.data or []) if f.get("id")}
+    except Exception as e:
+        logger.warning(f"Aviso cargando mapa de modelos_lio: {e}")
+        return {}
+
+
 def listar_catalogo_completo_crm(
     filtro_moneda: Optional[str] = None,
     filtro_origen: Optional[str] = None,
@@ -1642,15 +1722,25 @@ def listar_catalogo_completo_crm(
         return []
         
     try:
-        query = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, descripcion, activo, created_at, requiere_lente, lios_habilitados, habilitar_arancel, habilitar_preparacion, preparacion_plantilla_id, preparacion_custom_texto, habilitar_consentimiento, consentimiento_plantilla_id, consentimiento_custom_texto, habilitar_indicaciones, plantilla_indicacion_id, geclisa_pim_id_default, indicaciones_reglas_cirujano, nomencladores(id, nombre, codigo, moneda_default), plantillas_preparaciones(id, titulo), plantillas_consentimientos(id, titulo)")\
-            .eq("activo", True)
+        cols_base = "id, codigo, nombre, categoria, descripcion, activo, created_at, requiere_lente, lios_habilitados, habilitar_arancel, habilitar_preparacion, preparacion_plantilla_id, preparacion_custom_texto, habilitar_consentimiento, consentimiento_plantilla_id, consentimiento_custom_texto, habilitar_indicaciones, plantilla_indicacion_id, geclisa_pim_id_default, indicaciones_reglas_cirujano"
+        joins_sel = "nomencladores(id, nombre, codigo, moneda_default), plantillas_preparaciones(id, titulo), plantillas_consentimientos(id, titulo)"
+        try:
+            query = supabase.table("nomenclador_practicas")\
+                .select(f"{cols_base}, familias_lio_ids, condicion_toricidad, {joins_sel}")\
+                .eq("activo", True)
+            term = (q or "").strip().upper()
+            if term:
+                query = query.or_(f"codigo.ilike.%{term}%,nombre.ilike.%{term}%,categoria.ilike.%{term}%")
+            p_resp = query.order("nombre").execute()
+        except Exception:
+            query = supabase.table("nomenclador_practicas")\
+                .select(f"{cols_base}, {joins_sel}")\
+                .eq("activo", True)
+            term = (q or "").strip().upper()
+            if term:
+                query = query.or_(f"codigo.ilike.%{term}%,nombre.ilike.%{term}%,categoria.ilike.%{term}%")
+            p_resp = query.order("nombre").execute()
 
-        term = (q or "").strip().upper()
-        if term:
-            query = query.or_(f"codigo.ilike.%{term}%,nombre.ilike.%{term}%,categoria.ilike.%{term}%")
-            
-        p_resp = query.order("nombre").execute()
         practicas = p_resp.data or []
         if not practicas:
             return []
@@ -1672,6 +1762,8 @@ def listar_catalogo_completo_crm(
             ar_counts[pid] = ar_counts.get(pid, 0) + 1
             if pid not in ar_map:
                 ar_map[pid] = ar
+
+        fam_map = _cargar_mapa_modelos_lio_activos()
                 
         resultados = []
         for p in practicas:
@@ -1694,6 +1786,12 @@ def listar_catalogo_completo_crm(
 
             prep_master = p.get("plantillas_preparaciones") or {}
             cons_master = p.get("plantillas_consentimientos") or {}
+            familias_ids, cond_tor = _extraer_vinculo_lio_practica(p)
+            familias_nombres = [
+                _nombre_canonico_familia_lio(fam_map.get(fid))
+                for fid in familias_ids
+                if fam_map.get(fid)
+            ]
                 
             resultados.append({
                 "id": p["id"],
@@ -1704,6 +1802,9 @@ def listar_catalogo_completo_crm(
                 "origen": origen,
                 "requiere_lente": bool(p.get("requiere_lente", False)),
                 "lios_habilitados": p.get("lios_habilitados"),
+                "familias_lio_ids": familias_ids,
+                "familias_lio_nombres": familias_nombres,
+                "condicion_toricidad": cond_tor,
                 "habilitar_arancel": p.get("habilitar_arancel", True),
                 "habilitar_preparacion": p.get("habilitar_preparacion", False),
                 "preparacion_plantilla_id": p.get("preparacion_plantilla_id"),
@@ -1730,6 +1831,7 @@ def listar_catalogo_completo_crm(
         return resultados
     except Exception as e:
         logger.error(f"Error al listar catálogo completo del CRM: {e}")
+        return []
 def buscar_practicas_presupuesto(
     query: Optional[str] = None,
     q: Optional[str] = None,
@@ -2405,18 +2507,57 @@ def guardar_practica_crm_integral(payload: Dict[str, Any]) -> Dict[str, Any]:
             p_data["plantilla_indicacion_id"] = payload.get("plantilla_indicacion_id") or None
         if "geclisa_pim_id_default" in payload:
             p_data["geclisa_pim_id_default"] = payload.get("geclisa_pim_id_default") or None
-        if "indicaciones_reglas_cirujano" in payload:
-            p_data["indicaciones_reglas_cirujano"] = payload.get("indicaciones_reglas_cirujano") or {}
-        
-        if practica_id:
-            # Actualizar existente
-            p_resp = supabase.table("nomenclador_practicas").update(p_data).eq("id", practica_id).execute()
-        else:
-            # Upsert por nomenclador_id y codigo
-            p_resp = supabase.table("nomenclador_practicas").upsert(
-                p_data,
+
+        reglas_cir = payload.get("indicaciones_reglas_cirujano")
+        reglas_cir_dict = dict(reglas_cir) if isinstance(reglas_cir, dict) else {}
+
+        tiene_vinculo_lio = ("familias_lio_ids" in payload) or ("condicion_toricidad" in payload)
+        fams_clean: List[str] = []
+        cond_clean: Optional[str] = None
+        if tiene_vinculo_lio:
+            raw_fams = payload.get("familias_lio_ids") or []
+            if isinstance(raw_fams, list):
+                vistos_f = set()
+                for fid in raw_fams:
+                    s = str(fid or "").strip()
+                    if s and s not in vistos_f:
+                        vistos_f.add(s)
+                        fams_clean.append(s)
+            cond_clean = _normalizar_condicion_toricidad(
+                payload.get("condicion_toricidad"),
+                codigo=codigo,
+                nombre=nombre,
+            )
+            p_data["familias_lio_ids"] = fams_clean
+            p_data["condicion_toricidad"] = cond_clean
+            reglas_cir_dict["_lio_vinculo"] = {
+                "familias_lio_ids": fams_clean,
+                "condicion_toricidad": cond_clean,
+            }
+
+        if "indicaciones_reglas_cirujano" in payload or tiene_vinculo_lio:
+            p_data["indicaciones_reglas_cirujano"] = reglas_cir_dict
+
+        def _ejecutar_persistencia_practica(payload_dict: Dict[str, Any]):
+            if practica_id:
+                return supabase.table("nomenclador_practicas").update(payload_dict).eq("id", practica_id).execute()
+            return supabase.table("nomenclador_practicas").upsert(
+                payload_dict,
                 on_conflict="nomenclador_id,codigo"
             ).execute()
+
+        try:
+            p_resp = _ejecutar_persistencia_practica(p_data)
+        except Exception as e_col:
+            err_msg = str(e_col).lower()
+            if tiene_vinculo_lio and ("familias_lio_ids" in err_msg or "condicion_toricidad" in err_msg or "42703" in err_msg or "pgrst204" in err_msg):
+                logger.warning(f"Columnas familias_lio_ids/condicion_toricidad aún no existen en BD; guardando respaldo en indicaciones_reglas_cirujano: {e_col}")
+                p_data_fb = dict(p_data)
+                p_data_fb.pop("familias_lio_ids", None)
+                p_data_fb.pop("condicion_toricidad", None)
+                p_resp = _ejecutar_persistencia_practica(p_data_fb)
+            else:
+                raise e_col
             
         if not p_resp.data:
             raise Exception("No se pudo persistir la práctica en Supabase.")
@@ -2628,6 +2769,8 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
             except Exception:
                 pass
 
+        familias_ids, cond_tor = _extraer_vinculo_lio_practica(practica)
+
         return {
             "id": practica["id"],
             "codigo": practica["codigo"],
@@ -2639,6 +2782,8 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
             "duracion_estimada_minutos": duracion_def,
             "requiere_lente": bool(practica.get("requiere_lente", False)),
             "lios_habilitados": practica.get("lios_habilitados"),
+            "familias_lio_ids": familias_ids,
+            "condicion_toricidad": cond_tor,
             "habilitar_arancel": practica.get("habilitar_arancel", True),
             "precio": float(ar_vigente.get("precio", 0.0)) if ar_vigente else 0.0,
             "moneda": ar_vigente.get("moneda", "ARS") if ar_vigente else "ARS",
@@ -2693,12 +2838,21 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
             except Exception as p_err:
                 logger.warning(f"Error leyendo lios_habilitados de práctica {practica_id}: {p_err}")
 
-        res = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, descripcion, activo, requiere_lente")\
-            .eq("activo", True)\
-            .or_("categoria.ilike.%lente%,categoria.ilike.%lio%,codigo.in.(CLAREON,CLAREONT,TRIFOCAL,TRIFOCALT,VIVTY,VIVTYT),codigo.ilike.LIO-%,nombre.ilike.%lente %")\
-            .order("nombre")\
-            .execute()
+        sel_cols = "id, codigo, nombre, categoria, descripcion, activo, requiere_lente, indicaciones_reglas_cirujano"
+        try:
+            res = supabase.table("nomenclador_practicas")\
+                .select(f"{sel_cols}, familias_lio_ids, condicion_toricidad")\
+                .eq("activo", True)\
+                .or_("categoria.ilike.%lente%,categoria.ilike.%lio%,codigo.in.(CLAREON,CLAREONT,TRIFOCAL,TRIFOCALT,VIVTY,VIVTYT,MULTIFOCAL,EXPAND,MONOFOCAL),codigo.ilike.LIO-%,nombre.ilike.%lente %")\
+                .order("nombre")\
+                .execute()
+        except Exception:
+            res = supabase.table("nomenclador_practicas")\
+                .select(sel_cols)\
+                .eq("activo", True)\
+                .or_("categoria.ilike.%lente%,categoria.ilike.%lio%,codigo.in.(CLAREON,CLAREONT,TRIFOCAL,TRIFOCALT,VIVTY,VIVTYT,MULTIFOCAL,EXPAND,MONOFOCAL),codigo.ilike.LIO-%,nombre.ilike.%lente %")\
+                .order("nombre")\
+                .execute()
             
         practicas = res.data or []
         # Excluir cirugías principales (como 34031 Catarata) que no son el lente en sí
@@ -2730,6 +2884,32 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
             pid = ar["practica_id"]
             if pid not in ar_map:
                 ar_map[pid] = ar
+
+        fam_map = _cargar_mapa_modelos_lio_activos()
+
+        def _inferir_familias_por_defecto(cod_up: str, nom_low: str) -> List[str]:
+            activas = [f for f in fam_map.values() if f.get("activo", True)]
+            if not activas:
+                activas = list(fam_map.values())
+            if cod_up in ("TRIFOCAL", "TRIFOCALT") or ("panoptix" in nom_low or "trifocal" in nom_low):
+                m = next((f for f in activas if "panoptix" in (f.get("modelo") or "").lower() and "pro" not in (f.get("modelo") or "").lower()), None)
+                return [str(m["id"])] if m else []
+            if cod_up in ("VIVTY", "VIVTYT") or "vivity" in nom_low:
+                m = next((f for f in activas if "vivity" in (f.get("modelo") or "").lower()), None)
+                return [str(m["id"])] if m else []
+            if cod_up in ("CLAREON", "CLAREONT") or "clareon" in nom_low:
+                m = next((f for f in activas if "clareon monofocal" in (f.get("modelo") or "").lower()), None)
+                return [str(m["id"])] if m else []
+            if cod_up == "MULTIFOCAL":
+                ids_m = [
+                    str(f["id"]) for f in activas
+                    if any(k in (f.get("modelo") or "").lower() or k in (f.get("tipo_optica") or "").lower() for k in ("trifocal", "panoptix", "vivity", "edof", "multifocal"))
+                ]
+                return ids_m
+            if cod_up == "MONOFOCAL":
+                m = next((f for f in activas if "sa60at" in (f.get("modelo") or "").lower()), None)
+                return [str(m["id"])] if m else []
+            return []
                 
         resultados = []
         for p in practicas:
@@ -2740,7 +2920,32 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
             nom_low = (p.get("nombre") or "").lower()
             cod_low = (p.get("codigo") or "").lower()
             cod_up = (p.get("codigo") or "").upper().strip()
-            es_torico = "toric" in nom_low or "tóric" in nom_low or "toric" in cod_low or cod_low.endswith("t")
+
+            familias_ids, condicion_tor = _extraer_vinculo_lio_practica(p)
+            reglas_p = p.get("indicaciones_reglas_cirujano")
+            explicitamente_configurado = (
+                (p.get("familias_lio_ids") is not None and len(p.get("familias_lio_ids") or []) > 0)
+                or (isinstance(reglas_p, dict) and "_lio_vinculo" in reglas_p)
+            )
+            if not familias_ids and not explicitamente_configurado:
+                familias_ids = _inferir_familias_por_defecto(cod_up, nom_low)
+
+            familias_clinicas = []
+            for fid in familias_ids:
+                f_obj = fam_map.get(str(fid))
+                if f_obj:
+                    familias_clinicas.append({
+                        "id": str(f_obj["id"]),
+                        "marca": f_obj.get("marca"),
+                        "modelo": f_obj.get("modelo"),
+                        "tipo_optica": f_obj.get("tipo_optica"),
+                        "constante_a": f_obj.get("constante_a"),
+                        "admite_toricos": bool(f_obj.get("admite_toricos", False)),
+                        "nombre_completo": _nombre_canonico_familia_lio(f_obj),
+                    })
+
+            fam_def = familias_clinicas[0] if familias_clinicas else None
+            es_torico = condicion_tor == "torico"
             
             tipo_vision = "Estándar"
             if "trifocal" in nom_low or "panoptix" in nom_low:
@@ -2769,6 +2974,12 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
                 "vigencia_desde": ar.get("vigencia_desde") if ar else None,
                 "vigencia_hasta": ar.get("vigencia_hasta") if ar else None,
                 "es_torico": es_torico,
+                "condicion_toricidad": condicion_tor,
+                "familias_lio_ids": familias_ids,
+                "familias_clinicas": familias_clinicas,
+                "familias_lio_nombres": [fc["nombre_completo"] for fc in familias_clinicas if fc.get("nombre_completo")],
+                "modelo_lio_defecto_id": fam_def["id"] if fam_def else None,
+                "modelo_lio_defecto_nombre": fam_def["nombre_completo"] if fam_def else None,
                 "tipo_vision": tipo_vision,
                 "habilitado_en_practica": habilitado_en_practica
             })
@@ -2834,7 +3045,14 @@ def actualizar_arancel_lio_rapido(codigo: str, precio: float, moneda: str = "USD
         return {"success": False, "error": str(e)}
 
 
-def crear_lio_comercial_rapido(codigo: str, nombre: str, precio: float, moneda: str = "USD") -> Dict[str, Any]:
+def crear_lio_comercial_rapido(
+    codigo: str,
+    nombre: str,
+    precio: float,
+    moneda: str = "USD",
+    familias_lio_ids: Optional[List[str]] = None,
+    condicion_toricidad: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Da de alta un nuevo modelo de LIO en nomenclador_practicas y le asigna su arancel inicial.
     """
@@ -2842,6 +3060,7 @@ def crear_lio_comercial_rapido(codigo: str, nombre: str, precio: float, moneda: 
         return {"success": False, "error": "No database client"}
     try:
         cod = codigo.strip().upper()
+        nom_clean = nombre.strip().upper()
         from datetime import date
         today_str = date.today().isoformat()
         
@@ -2853,17 +3072,39 @@ def crear_lio_comercial_rapido(codigo: str, nombre: str, precio: float, moneda: 
         exist = supabase.table("nomenclador_practicas").select("id").eq("codigo", cod).execute()
         if exist.data:
             return {"success": False, "error": f"Ya existe una práctica o LIO con el código {cod}"}
-            
-        p_ins = supabase.table("nomenclador_practicas").insert({
+
+        fams_clean = [str(fid).strip() for fid in (familias_lio_ids or []) if str(fid or "").strip()]
+        cond_clean = _normalizar_condicion_toricidad(condicion_toricidad, codigo=cod, nombre=nom_clean)
+
+        p_payload = {
             "nomenclador_id": nom_id,
             "codigo": cod,
-            "nombre": nombre.strip().upper(),
+            "nombre": nom_clean,
             "categoria": "Lentes Intraoculares",
             "descripcion": "[ORIGEN:MANUAL] Lente Intraocular comercial/genérico",
             "activo": True,
             "habilitar_arancel": True,
-            "requiere_lente": False
-        }).execute()
+            "requiere_lente": False,
+            "familias_lio_ids": fams_clean,
+            "condicion_toricidad": cond_clean,
+            "indicaciones_reglas_cirujano": {
+                "_lio_vinculo": {
+                    "familias_lio_ids": fams_clean,
+                    "condicion_toricidad": cond_clean,
+                }
+            },
+        }
+        try:
+            p_ins = supabase.table("nomenclador_practicas").insert(p_payload).execute()
+        except Exception as e_ins_col:
+            err_msg = str(e_ins_col).lower()
+            if "familias_lio_ids" in err_msg or "condicion_toricidad" in err_msg or "42703" in err_msg or "pgrst204" in err_msg:
+                p_payload_fb = dict(p_payload)
+                p_payload_fb.pop("familias_lio_ids", None)
+                p_payload_fb.pop("condicion_toricidad", None)
+                p_ins = supabase.table("nomenclador_practicas").insert(p_payload_fb).execute()
+            else:
+                raise e_ins_col
         
         if not p_ins.data:
             return {"success": False, "error": "Error al insertar práctica LIO"}
@@ -2881,13 +3122,291 @@ def crear_lio_comercial_rapido(codigo: str, nombre: str, precio: float, moneda: 
             "success": True,
             "id": pid,
             "codigo": cod,
-            "nombre": nombre.strip().upper(),
+            "nombre": nom_clean,
             "precio": float(precio),
-            "moneda": moneda.upper()
+            "moneda": moneda.upper(),
+            "familias_lio_ids": fams_clean,
+            "condicion_toricidad": cond_clean,
         }
     except Exception as e:
         logger.error(f"Error en crear_lio_comercial_rapido: {e}")
         return {"success": False, "error": str(e)}
+
+
+def _coincide_lio_comercial(comercial: Dict[str, Any], lente_id: Any = None, lente_codigo: Any = None, lente_nombre: Any = None) -> bool:
+    """Evalúa si un ítem de nomenclador LIO coincide por ID, código o nombre."""
+    if not isinstance(comercial, dict):
+        return False
+    cid = str(comercial.get("id") or "").strip()
+    ccod = str(comercial.get("codigo") or "").strip().upper()
+    cnom = str(comercial.get("nombre") or "").strip().upper()
+    if lente_id and cid and str(lente_id).strip() == cid:
+        return True
+    if lente_codigo and ccod and str(lente_codigo).strip().upper() == ccod:
+        return True
+    if lente_nombre and cnom and str(lente_nombre).strip().upper() == cnom:
+        return True
+    return False
+
+
+def _coincide_modelo_clinico(
+    modelo_elegido_id: Optional[str],
+    modelo_elegido_nombre: Optional[str],
+    fams_ids: List[str],
+    fams_clinicas: List[Dict[str, Any]],
+    fams_nombres: List[str],
+) -> bool:
+    """Comprueba si un modelo elegido en Cálculo/Quirófano pertenece a alguna de las familias clínicas permitidas."""
+    mid = str(modelo_elegido_id or "").strip()
+    if mid and mid in [str(fid).strip() for fid in (fams_ids or []) if str(fid or "").strip()]:
+        return True
+
+    nom_raw = str(modelo_elegido_nombre or "").strip()
+    if not nom_raw:
+        return False
+    nom_up = nom_raw.upper()
+    nom_sin_marca = re.sub(r"\s*\([^)]*\)\s*$", "", nom_up).strip()
+    cod_elegido = _extraer_codigo_canonico_lio(nom_sin_marca or nom_up)
+
+    candidatos_up = set()
+    for n in (fams_nombres or []):
+        nu = str(n or "").strip().upper()
+        if nu:
+            candidatos_up.add(nu)
+            candidatos_up.add(re.sub(r"\s*\([^)]*\)\s*$", "", nu).strip())
+    for fc in (fams_clinicas or []):
+        if not isinstance(fc, dict):
+            continue
+        mod = str(fc.get("modelo") or "").strip().upper()
+        nc = str(fc.get("nombre_completo") or "").strip().upper()
+        if mod:
+            candidatos_up.add(mod)
+        if nc:
+            candidatos_up.add(nc)
+            candidatos_up.add(re.sub(r"\s*\([^)]*\)\s*$", "", nc).strip())
+
+    if nom_up in candidatos_up or (nom_sin_marca and nom_sin_marca in candidatos_up):
+        return True
+    if cod_elegido:
+        for cand in candidatos_up:
+            if _extraer_codigo_canonico_lio(cand) == cod_elegido:
+                return True
+    return False
+
+
+def _construir_lio_propuesto_desde_asesoria(
+    asesoria: Optional[Dict[str, Any]],
+    ojo: str = "OD",
+    lios_cache: Optional[List[Dict[str, Any]]] = None,
+) -> tuple:
+    """
+    Construye `(lio_propuesto, huella_clinica)` para un ojo a partir de `checklist_prequirurgico._lio_seleccion`,
+    enriquecido con `condicion_toricidad`, `familias_lio_ids`, `familias_clinicas` y `modelo_lio_defecto_*`.
+    """
+    if not isinstance(asesoria, dict) or not asesoria:
+        return None, None
+    chk = asesoria.get("checklist_prequirurgico") or {}
+    if not isinstance(chk, dict):
+        return None, None
+    sel = chk.get("_lio_seleccion")
+    if not isinstance(sel, dict) or not sel:
+        return None, None
+
+    ojo_norm = (ojo or asesoria.get("ojo") or "OD").strip().upper()
+    caso_ojo = (asesoria.get("ojo") or "OD").strip().upper()
+    modalidad = sel.get("modalidad_bilateral") or "mismo_lente"
+
+    if caso_ojo == "AO" and modalidad == "diferenciado":
+        if ojo_norm == "OI":
+            lente_nombre = sel.get("lente_oi")
+            lente_id = sel.get("lente_oi_id")
+            lente_codigo = sel.get("lente_oi_codigo")
+        else:
+            lente_nombre = sel.get("lente_od")
+            lente_id = sel.get("lente_od_id")
+            lente_codigo = sel.get("lente_od_codigo")
+    else:
+        lente_nombre = sel.get("lente_nombre") or (sel.get("lente_oi") if ojo_norm == "OI" else sel.get("lente_od"))
+        lente_id = sel.get("lente_id") or (sel.get("lente_oi_id") if ojo_norm == "OI" else sel.get("lente_od_id"))
+        lente_codigo = sel.get("lente_codigo") or (sel.get("lente_oi_codigo") if ojo_norm == "OI" else sel.get("lente_od_codigo"))
+
+    if not (lente_nombre and str(lente_nombre).strip()):
+        return None, None
+
+    nombre_limpio = str(lente_nombre).strip()
+    estado = (sel.get("estado") or "a_definir").strip().lower()
+    if estado == "confirmado":
+        estado_label = "Definitivo"
+    elif estado == "a_definir":
+        estado_label = "A Definir"
+    else:
+        estado_label = "Tentativo"
+
+    catalogo_lios = lios_cache if lios_cache is not None else obtener_lios_comerciales()
+    lio_com = next(
+        (c for c in (catalogo_lios or []) if _coincide_lio_comercial(c, lente_id, lente_codigo, nombre_limpio)),
+        None,
+    )
+
+    if lio_com:
+        condicion_toricidad = lio_com.get("condicion_toricidad") or _normalizar_condicion_toricidad(
+            None, codigo=lente_codigo or lio_com.get("codigo"), nombre=nombre_limpio
+        )
+        familias_lio_ids = list(lio_com.get("familias_lio_ids") or [])
+        familias_clinicas = list(lio_com.get("familias_clinicas") or [])
+        familias_lio_nombres = list(lio_com.get("familias_lio_nombres") or [])
+        modelo_defecto_id = lio_com.get("modelo_lio_defecto_id")
+        modelo_defecto_nombre = lio_com.get("modelo_lio_defecto_nombre")
+        if not lente_id:
+            lente_id = lio_com.get("id")
+        if not lente_codigo:
+            lente_codigo = lio_com.get("codigo")
+    else:
+        condicion_toricidad = _normalizar_condicion_toricidad(None, codigo=lente_codigo, nombre=nombre_limpio)
+        familias_lio_ids = []
+        familias_clinicas = []
+        familias_lio_nombres = []
+        modelo_defecto_id = None
+        modelo_defecto_nombre = None
+
+    lio_propuesto = {
+        "lente_nombre": nombre_limpio,
+        "lente_codigo": lente_codigo,
+        "lente_id": lente_id,
+        "estado": estado,
+        "estado_label": estado_label,
+        "observaciones": sel.get("observaciones"),
+        "ojo": ojo_norm,
+        "condicion_toricidad": condicion_toricidad,
+        "familias_lio_ids": familias_lio_ids,
+        "familias_lio_nombres": familias_lio_nombres,
+        "familias_clinicas": familias_clinicas,
+        "modelo_lio_defecto_id": modelo_defecto_id,
+        "modelo_lio_defecto_nombre": modelo_defecto_nombre,
+    }
+    huella_clinica = {
+        "lente_nombre": nombre_limpio,
+        "lente_id": lente_id,
+        "lente_codigo": lente_codigo,
+    }
+    return lio_propuesto, huella_clinica
+
+
+def _evaluar_discrepancia_comercial_clinica(
+    lio_propuesto_ojo: Optional[Dict[str, Any]],
+    opcion_principal: Optional[Dict[str, Any]],
+    usuario: str = "Sistema",
+    lios_comerciales_cache: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """
+    Evalúa si el modelo clínico/toricidad elegido en Cálculo de LIO o Quirófano diverge
+    del LIO Comercial/Propuesto contratado en el Expediente y sugiere la práctica comercial equivalente.
+    """
+    from datetime import datetime, timezone
+
+    resultado_base = {
+        "hay_discrepancia": False,
+        "tipo": None,
+        "detalle": None,
+        "evaluado_at": datetime.now(timezone.utc).isoformat(),
+        "evaluado_por": usuario,
+        "comercial_esperado": None,
+        "clinico_elegido": None,
+        "comercial_sugerido": None,
+    }
+    if not isinstance(lio_propuesto_ojo, dict) or not lio_propuesto_ojo:
+        return resultado_base
+    if not isinstance(opcion_principal, dict) or not opcion_principal:
+        return resultado_base
+
+    modelo_elegido = str(opcion_principal.get("modelo") or opcion_principal.get("lente_tipo") or "").strip()
+    modelo_elegido_id = opcion_principal.get("modelo_lio_id")
+    if not modelo_elegido and not modelo_elegido_id:
+        return resultado_base
+
+    es_torico_calc = bool(opcion_principal.get("es_torico"))
+    cond_esperada = _normalizar_condicion_toricidad(
+        lio_propuesto_ojo.get("condicion_toricidad"),
+        codigo=lio_propuesto_ojo.get("lente_codigo"),
+        nombre=lio_propuesto_ojo.get("lente_nombre"),
+    )
+    fams_ids = [str(fid).strip() for fid in (lio_propuesto_ojo.get("familias_lio_ids") or []) if str(fid or "").strip()]
+    fams_clinicas = list(lio_propuesto_ojo.get("familias_clinicas") or [])
+    fams_nombres = list(lio_propuesto_ojo.get("familias_lio_nombres") or [])
+
+    err_toricidad = (cond_esperada == "esferico" and es_torico_calc) or (cond_esperada == "torico" and not es_torico_calc)
+    err_familia = False
+    if fams_ids or fams_clinicas or fams_nombres:
+        err_familia = not _coincide_modelo_clinico(
+            modelo_elegido_id, modelo_elegido, fams_ids, fams_clinicas, fams_nombres
+        )
+
+    hay_discrepancia = bool(err_familia or err_toricidad)
+    tipo = "ambos" if (err_familia and err_toricidad) else ("familia_optica" if err_familia else ("toricidad" if err_toricidad else None))
+
+    motivos: List[str] = []
+    if err_familia:
+        esperados_str = ", ".join(fams_nombres) if fams_nombres else str(lio_propuesto_ojo.get("lente_nombre") or "")
+        motivos.append(f"familia óptica calculada '{modelo_elegido or modelo_elegido_id}' difiere de [{esperados_str}]")
+    if err_toricidad:
+        esp_txt = "Esférico" if cond_esperada == "esferico" else "Tórico"
+        calc_txt = "Tórico" if es_torico_calc else "Esférico"
+        motivos.append(f"el comercial indica {esp_txt} pero se eligió {calc_txt}")
+
+    comercial_sugerido = None
+    if hay_discrepancia:
+        catalogo = lios_comerciales_cache if lios_comerciales_cache is not None else obtener_lios_comerciales()
+        cond_deseada = "torico" if es_torico_calc else "esferico"
+        candidato_exacto = None
+        candidato_ambos = None
+        for com in (catalogo or []):
+            c_fams = [str(fid).strip() for fid in (com.get("familias_lio_ids") or []) if str(fid or "").strip()]
+            c_clinicas = list(com.get("familias_clinicas") or [])
+            c_noms = list(com.get("familias_lio_nombres") or [])
+            if not _coincide_modelo_clinico(modelo_elegido_id, modelo_elegido, c_fams, c_clinicas, c_noms):
+                continue
+            c_cond = _normalizar_condicion_toricidad(
+                com.get("condicion_toricidad"), codigo=com.get("codigo"), nombre=com.get("nombre")
+            )
+            if c_cond == cond_deseada:
+                candidato_exacto = com
+                break
+            if c_cond == "ambos" and not candidato_ambos:
+                candidato_ambos = com
+        elegido_com = candidato_exacto or candidato_ambos
+        if elegido_com:
+            comercial_sugerido = {
+                "lente_id": elegido_com.get("id"),
+                "lente_codigo": elegido_com.get("codigo"),
+                "lente_nombre": elegido_com.get("nombre"),
+                "precio": elegido_com.get("precio"),
+                "moneda": elegido_com.get("moneda"),
+                "condicion_toricidad": elegido_com.get("condicion_toricidad"),
+            }
+
+    return {
+        "hay_discrepancia": hay_discrepancia,
+        "tipo": tipo,
+        "detalle": "; ".join(motivos) if motivos else None,
+        "evaluado_at": resultado_base["evaluado_at"],
+        "evaluado_por": usuario,
+        "comercial_esperado": {
+            "lente_nombre": lio_propuesto_ojo.get("lente_nombre"),
+            "lente_codigo": lio_propuesto_ojo.get("lente_codigo"),
+            "lente_id": lio_propuesto_ojo.get("lente_id"),
+            "condicion_toricidad": cond_esperada,
+            "familias_lio_ids": fams_ids,
+            "familias_lio_nombres": fams_nombres,
+        },
+        "clinico_elegido": {
+            "modelo": modelo_elegido,
+            "modelo_lio_id": modelo_elegido_id,
+            "es_torico": es_torico_calc,
+            "torico_valor": opcion_principal.get("torico_valor"),
+            "dioptria": opcion_principal.get("dioptria") or opcion_principal.get("lente_dioptria"),
+        },
+        "comercial_sugerido": comercial_sugerido,
+    }
 
 
 def guardar_lios_habilitados_practica(practica_id: str, lios_habilitados: List[str]) -> Dict[str, Any]:
@@ -3114,6 +3633,147 @@ def _validar_campos_obligatorios_asesoria(
             raise ValueError("El Médico Cirujano (Qx) es obligatorio para guardar el caso quirúrgico.")
 
 
+def _caso_requiere_lente(datos: Dict[str, Any]) -> bool:
+    """
+    Determina si un caso quirúrgico requiere LIO Comercial/Propuesto según su práctica en el Nomenclador
+    (con respaldo heurístico si la práctica aún no existe en nomenclador_practicas).
+    """
+    if not isinstance(datos, dict):
+        return False
+    if "requiere_lente" in datos and isinstance(datos.get("requiere_lente"), bool):
+        return bool(datos["requiere_lente"])
+
+    cod = str(datos.get("practica_codigo") or "").strip()
+    nom = str(datos.get("practica_nombre") or "").strip()
+
+    if supabase and (cod or nom):
+        try:
+            row = None
+            if cod:
+                r1 = supabase.table("nomenclador_practicas").select("requiere_lente").eq("codigo", cod).limit(1).execute()
+                if r1 and r1.data:
+                    row = r1.data[0]
+            if not row and nom:
+                r2 = supabase.table("nomenclador_practicas").select("requiere_lente").ilike("nombre", nom).limit(1).execute()
+                if r2 and r2.data:
+                    row = r2.data[0]
+            if row is not None and "requiere_lente" in row:
+                return bool(row.get("requiere_lente"))
+        except Exception as e_req:
+            logger.debug(f"Aviso consultando requiere_lente para práctica ({cod}/{nom}): {e_req}")
+
+    chk = datos.get("checklist_prequirurgico") or {}
+    if isinstance(chk, dict) and isinstance(chk.get("_lio_seleccion"), dict) and chk.get("_lio_seleccion"):
+        sel = chk["_lio_seleccion"]
+        if isinstance(sel.get("requiere_lente"), bool):
+            return bool(sel["requiere_lente"])
+        if str(sel.get("estado") or "").strip().lower() in ("tentativo", "confirmado") and (
+            sel.get("lente_nombre") or sel.get("lente_od") or sel.get("lente_oi")
+        ):
+            return True
+
+    nom_up = nom.upper()
+    return any(tok in nom_up for tok in ("CATARATA", "FACO", "FACOEMULSIFICACION", "IMPL. LIO", "IMPLANTE LIO", "LENTE INTRAOCULAR"))
+
+
+def _validar_lio_definido_para_confirmacion(datos: Dict[str, Any]) -> None:
+    """
+    Gate de consistencia G3: impide confirmar o programar casos que requieren LIO
+    mientras el LIO Comercial/Propuesto permanezca en estado 'a_definir' o sin lente asignado.
+    """
+    estado = str(datos.get("estado") or "").strip().lower()
+    if estado not in ("confirmado", "programado"):
+        return
+    if not _caso_requiere_lente(datos):
+        return
+
+    chk = datos.get("checklist_prequirurgico") or {}
+    if not isinstance(chk, dict):
+        chk = {}
+    sel = chk.get("_lio_seleccion")
+    if not isinstance(sel, dict) or not sel:
+        raise ValueError(
+            "No se puede confirmar o programar la cirugía: requiere seleccionar un LIO Comercial/Propuesto (Tentativo o Definitivo)."
+        )
+
+    sel_estado = str(sel.get("estado") or "a_definir").strip().lower()
+    if sel_estado == "a_definir":
+        raise ValueError(
+            "No se puede confirmar o programar el caso mientras el LIO Comercial/Propuesto esté 'A Definir'. Seleccione un lente primero."
+        )
+
+    ojo = str(datos.get("ojo") or "OD").strip().upper()
+    modalidad = str(sel.get("modalidad_bilateral") or sel.get("modalidad_ojo") or "mismo_lente").strip()
+    if ojo == "AO" and modalidad == "diferenciado":
+        if not (str(sel.get("lente_od") or "").strip() and str(sel.get("lente_oi") or "").strip()):
+            raise ValueError(
+                "En cirugía bilateral con lentes diferenciados debe seleccionar el LIO Comercial/Propuesto para ambos ojos (OD y OI) antes de confirmar o programar."
+            )
+    else:
+        tiene_lente = bool(str(sel.get("lente_nombre") or sel.get("lente_od") or sel.get("lente_oi") or "").strip())
+        if not tiene_lente:
+            raise ValueError(
+                "Debe seleccionar un LIO Comercial/Propuesto antes de confirmar o programar la cirugía."
+            )
+
+
+def _proteger_y_reevaluar_checklist_lio(
+    prev_chk: Dict[str, Any],
+    incoming_chk: Dict[str, Any],
+    caso_context: Dict[str, Any],
+    permitir_sobrescribir: bool = False,
+) -> Dict[str, Any]:
+    """
+    Preserva los nodos clínicos `_lio_calculo_OD` y `_lio_calculo_OI` ya existentes en BD cuando la ficha
+    de asesoramiento guarda cambios en paralelo (concurrencia), y re-evalúa `discrepancia_comercial_clinica`
+    si el usuario modificó `_lio_seleccion`.
+    """
+    resultado = dict(incoming_chk or {})
+    if not isinstance(prev_chk, dict):
+        prev_chk = {}
+
+    if not permitir_sobrescribir:
+        for ojo_tag in ("OD", "OI"):
+            key_calc = f"_lio_calculo_{ojo_tag}"
+            prev_calc = prev_chk.get(key_calc)
+            if isinstance(prev_calc, dict) and prev_calc:
+                resultado[key_calc] = copy.deepcopy(prev_calc)
+
+    sel_prev = prev_chk.get("_lio_seleccion") if isinstance(prev_chk.get("_lio_seleccion"), dict) else {}
+    sel_new = resultado.get("_lio_seleccion") if isinstance(resultado.get("_lio_seleccion"), dict) else {}
+    if sel_new != sel_prev:
+        lios_cache = obtener_lios_comerciales()
+        caso_tmp = {**caso_context, "checklist_prequirurgico": resultado}
+        for ojo_tag in ("OD", "OI"):
+            key_calc = f"_lio_calculo_{ojo_tag}"
+            calc_node = resultado.get(key_calc)
+            if not isinstance(calc_node, dict) or not calc_node:
+                continue
+            ov_qx = calc_node.get("override_quirofano") or {}
+            opcion_eval = None
+            if isinstance(ov_qx, dict) and ov_qx.get("activo") and isinstance(ov_qx.get("lente_aplicado_quirofano"), dict):
+                opcion_eval = ov_qx.get("lente_aplicado_quirofano")
+            else:
+                opts = calc_node.get("opciones") or []
+                opcion_eval = next(
+                    (o for o in opts if isinstance(o, dict) and o.get("tipo_opcion") == "principal"),
+                    opts[0] if opts else None,
+                )
+            if opcion_eval:
+                lio_prop, _ = _construir_lio_propuesto_desde_asesoria(caso_tmp, ojo_tag, lios_cache=lios_cache)
+                disc = _evaluar_discrepancia_comercial_clinica(
+                    lio_prop,
+                    opcion_eval,
+                    usuario="Asesoramiento Quirúrgico",
+                    lios_comerciales_cache=lios_cache,
+                )
+                calc_copy = dict(calc_node)
+                calc_copy["discrepancia_comercial_clinica"] = disc
+                resultado[key_calc] = calc_copy
+
+    return resultado
+
+
 def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
     """
     Crea un nuevo caso de asesoramiento quirúrgico para un paciente con su código institucional.
@@ -3187,6 +3847,7 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
             except Exception as e_sla_c:
                 logger.warning(f"Aviso al evaluar SLA de recontacto en crear_asesoria: {e_sla_c}")
         
+        _validar_lio_definido_para_confirmacion(datos)
         resp = supabase.table("asesorias_quirurgicas").insert(datos).execute()
         if not resp.data:
             raise Exception("No se pudo crear la asesoría quirúrgica en Supabase.")
@@ -3257,7 +3918,7 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
         prev_row_estado: Dict[str, Any] = {}
         try:
             q_est = supabase.table("asesorias_quirurgicas").select(
-                "estado, paciente_id, checklist_prequirurgico, fecha_definitiva_cirugia, ojo, modalidad_bilateral"
+                "estado, paciente_id, checklist_prequirurgico, fecha_definitiva_cirugia, ojo, modalidad_bilateral, practica_codigo, practica_nombre"
             ).eq("id", asesoria_id).limit(1).execute()
             prev_row_estado = q_est.data[0] if (q_est and q_est.data) else {}
         except Exception as e_prev_est:
@@ -3267,6 +3928,13 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
         prev_chk = prev_row_estado.get("checklist_prequirurgico") or {}
         if not isinstance(prev_chk, dict):
             prev_chk = {}
+        if "checklist_prequirurgico" in datos:
+            datos["checklist_prequirurgico"] = _proteger_y_reevaluar_checklist_lio(
+                prev_chk,
+                datos["checklist_prequirurgico"],
+                {**prev_row_estado, **datos},
+                permitir_sobrescribir=bool(payload.get("_permitir_sobrescribir_calculo_lio")),
+            )
         prev_meta_b = prev_chk.get("_meta_bilateral") or {}
         if not isinstance(prev_meta_b, dict):
             prev_meta_b = {}
@@ -3347,6 +4015,7 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
             except Exception as e_sla_upd:
                 logger.warning(f"Aviso al evaluar SLA de recontacto en actualizar_asesoria {asesoria_id}: {e_sla_upd}")
 
+        _validar_lio_definido_para_confirmacion({**prev_row_estado, **datos})
         datos["updated_at"] = "now()"
         
         resp = supabase.table("asesorias_quirurgicas").update(datos).eq("id", asesoria_id).execute()
@@ -4618,29 +5287,117 @@ def cambiar_estado_presupuesto(
                     .eq("id", target_asesoria_id) \
                     .execute()
             elif estado_normalizado == "aprobado":
-                # a & b) Actualizar estado a "confirmado" y preservar checklist_prequirurgico con presupuesto_aceptado = True
+                # a & b) Hidratar _lio_seleccion desde items_presupuesto si hace falta y evaluar gate LIO antes de confirmar
                 curr_checklist = {}
                 as_curr = None
+                as_curr_row = {}
                 try:
-                    as_curr = supabase.table("asesorias_quirurgicas").select("checklist_prequirurgico, paciente_id").eq("id", target_asesoria_id).execute()
+                    as_curr = (
+                        supabase.table("asesorias_quirurgicas")
+                        .select("checklist_prequirurgico, paciente_id, practica_codigo, practica_nombre, ojo, modalidad_bilateral, estado")
+                        .eq("id", target_asesoria_id)
+                        .execute()
+                    )
                     if as_curr.data:
-                        curr_checklist = as_curr.data[0].get("checklist_prequirurgico") or {}
+                        as_curr_row = as_curr.data[0]
+                        curr_checklist = as_curr_row.get("checklist_prequirurgico") or {}
                 except Exception as chk_err:
                     logger.warning(f"Error leyendo checklist actual de asesoría {target_asesoria_id}: {chk_err}")
-                
+
+                if not isinstance(curr_checklist, dict):
+                    curr_checklist = {}
+                curr_checklist = dict(curr_checklist)
                 curr_checklist["presupuesto_aceptado"] = True
 
-                supabase.table("asesorias_quirurgicas") \
-                    .update({
+                sel_actual = curr_checklist.get("_lio_seleccion")
+                if not isinstance(sel_actual, dict) or str(sel_actual.get("estado") or "a_definir").strip().lower() == "a_definir":
+                    try:
+                        p_items = (
+                            supabase.table("items_presupuesto")
+                            .select("id, servicio_id, codigo, nombre_prestacion, cantidad")
+                            .eq("presupuesto_id", presupuesto_id)
+                            .execute()
+                            .data
+                            or []
+                        )
+                        lios_catalogo = obtener_lios_comerciales()
+                        lio_items_ppto = []
+                        for pit in p_items:
+                            match_com = next(
+                                (
+                                    c for c in lios_catalogo
+                                    if _coincide_lio_comercial(c, pit.get("servicio_id"), pit.get("codigo"), pit.get("nombre_prestacion"))
+                                ),
+                                None,
+                            )
+                            if match_com:
+                                lio_items_ppto.append(match_com)
+
+                        ojo_caso = str(as_curr_row.get("ojo") or "OD").strip().upper()
+                        base_sel = dict(sel_actual) if isinstance(sel_actual, dict) else {}
+                        if len(lio_items_ppto) == 1:
+                            c1 = lio_items_ppto[0]
+                            curr_checklist["_lio_seleccion"] = {
+                                **base_sel,
+                                "estado": "confirmado",
+                                "modalidad_ojo": "mismo_lente",
+                                "modalidad_bilateral": "mismo_lente",
+                                "lente_id": c1.get("id"),
+                                "lente_codigo": c1.get("codigo"),
+                                "lente_nombre": c1.get("nombre"),
+                                "lente_od": c1.get("nombre"),
+                                "lente_od_id": c1.get("id"),
+                                "lente_od_codigo": c1.get("codigo"),
+                                "lente_oi": c1.get("nombre"),
+                                "lente_oi_id": c1.get("id"),
+                                "lente_oi_codigo": c1.get("codigo"),
+                            }
+                        elif len(lio_items_ppto) >= 2 and ojo_caso == "AO":
+                            c1, c2 = lio_items_ppto[0], lio_items_ppto[1]
+                            curr_checklist["_lio_seleccion"] = {
+                                **base_sel,
+                                "estado": "confirmado",
+                                "modalidad_ojo": "diferenciado",
+                                "modalidad_bilateral": "diferenciado",
+                                "lente_od": c1.get("nombre"),
+                                "lente_od_id": c1.get("id"),
+                                "lente_od_codigo": c1.get("codigo"),
+                                "lente_oi": c2.get("nombre"),
+                                "lente_oi_id": c2.get("id"),
+                                "lente_oi_codigo": c2.get("codigo"),
+                                "lente_nombre": c1.get("nombre"),
+                                "lente_id": c1.get("id"),
+                                "lente_codigo": c1.get("codigo"),
+                            }
+                    except Exception as e_hid_ppto:
+                        logger.warning(f"Aviso hidratando LIO desde items_presupuesto ({presupuesto_id}): {e_hid_ppto}")
+
+                puede_confirmar_as = True
+                try:
+                    _validar_lio_definido_para_confirmacion({
+                        **as_curr_row,
                         "estado": "confirmado",
-                        "presupuesto_id": presupuesto_id,
-                        "monto_extra": float(presupuesto.get("total") or 0.0),
                         "checklist_prequirurgico": curr_checklist,
-                        "seguimiento_auto_activo": False,
-                        "seguimiento_estado_actual": "convertido",
-                        "canal_resolucion": canal_resolucion or ("whatsapp_bot" if origen == "IA_WHATSAPP" else "presencial"),
-                        "updated_at": "now()"
-                    }) \
+                    })
+                except ValueError:
+                    puede_confirmar_as = False
+
+                update_as_aprobado = {
+                    "estado": "confirmado" if puede_confirmar_as else "en_analisis",
+                    "presupuesto_id": presupuesto_id,
+                    "monto_extra": float(presupuesto.get("total") or 0.0),
+                    "checklist_prequirurgico": curr_checklist,
+                    "canal_resolucion": canal_resolucion or ("whatsapp_bot" if origen == "IA_WHATSAPP" else "presencial"),
+                    "updated_at": "now()"
+                }
+                if puede_confirmar_as:
+                    update_as_aprobado["seguimiento_auto_activo"] = False
+                    update_as_aprobado["seguimiento_estado_actual"] = "convertido"
+                else:
+                    presupuesto["requiere_definir_lio"] = True
+
+                supabase.table("asesorias_quirurgicas") \
+                    .update(update_as_aprobado) \
                     .eq("id", target_asesoria_id) \
                     .execute()
 
@@ -4658,12 +5415,17 @@ def cambiar_estado_presupuesto(
                             .limit(1) \
                             .execute()
                         if not check_ev.data:
+                            msg_estado = (
+                                "Caso quirúrgico confirmado automáticamente."
+                                if puede_confirmar_as
+                                else "Presupuesto aceptado; permanece en 'En Análisis' hasta definir el LIO Comercial/Propuesto."
+                            )
                             crear_evolucion_asesoria({
                                 "asesoria_id": target_asesoria_id,
                                 "paciente_id": p_id,
                                 "usuario_nombre": "Asistente IA WhatsApp" if origen == "IA_WHATSAPP" else "Sistema CRM",
                                 "tipo_contacto": "whatsapp" if origen == "IA_WHATSAPP" else "presencial",
-                                "contenido": f"Presupuesto #{str(presupuesto_id)[:8]} aprobado ({origen}). Caso quirúrgico confirmado automáticamente.",
+                                "contenido": f"Presupuesto #{str(presupuesto_id)[:8]} aprobado ({origen}). {msg_estado}",
                                 "fecha_contacto": "now()"
                             })
                         else:
@@ -6800,6 +7562,116 @@ def eliminar_quirofano_bloqueo(bloqueo_id: str) -> bool:
         logger.error(f"Error al eliminar bloqueo de quirófano: {e}")
         return False
 
+def _hidratar_lio_metadata_turno(
+    row: Dict[str, Any],
+    as_rel: Optional[Dict[str, Any]] = None,
+    ojo_override: Optional[str] = None,
+    lios_cache: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """
+    Adjunta metadatos unificados de LIO (`lio_propuesto`, `origen_calculo`, `discrepancia_comercial_clinica`,
+    `override_quirofano`, `historial_overrides`) sobre un turno o pendiente y proyecta el override activo
+    de Quirófano sobre los campos operativos sin sobrescribir las opciones originales del médico.
+    """
+    if not isinstance(row, dict):
+        return row
+
+    as_dict = as_rel if isinstance(as_rel, dict) else (row.get("asesorias_quirurgicas") if isinstance(row.get("asesorias_quirurgicas"), dict) else None)
+    ojo_norm = str(ojo_override or row.get("sub_ojo") or row.get("ojo") or (as_dict or {}).get("ojo") or "OD").strip().upper()
+    if ojo_norm not in ("OD", "OI"):
+        ojo_norm = "OD"
+
+    chk = (as_dict or row).get("checklist_prequirurgico") or {}
+    if not isinstance(chk, dict):
+        chk = {}
+
+    lio_propuesto = row.get("lio_propuesto")
+    if lio_propuesto is None and as_dict:
+        caso_ctx = {**as_dict, "checklist_prequirurgico": chk}
+        lio_propuesto, _ = _construir_lio_propuesto_desde_asesoria(caso_ctx, ojo_norm, lios_cache=lios_cache)
+    elif lio_propuesto is None and row.get("checklist_prequirurgico"):
+        lio_propuesto, _ = _construir_lio_propuesto_desde_asesoria(row, ojo_norm, lios_cache=lios_cache)
+
+    calc_node = chk.get(f"_lio_calculo_{ojo_norm}")
+    if not isinstance(calc_node, dict):
+        calc_node = {}
+
+    opciones = list(calc_node.get("opciones") or row.get("lio_calculo_opciones") or [])
+    standalone_meta = {}
+    if not calc_node and opciones and isinstance(opciones[0], dict):
+        standalone_meta = opciones[0]
+
+    origen_calculo = (
+        row.get("origen_calculo")
+        or calc_node.get("origen_calculo")
+        or standalone_meta.get("_origen_calculo")
+        or standalone_meta.get("origen_calculo")
+        or ("medico" if (row.get("lio_calculado") or calc_node.get("lio_calculado")) else None)
+    )
+    override_qx = (
+        row.get("override_quirofano")
+        or calc_node.get("override_quirofano")
+        or standalone_meta.get("_override_quirofano")
+        or standalone_meta.get("override_quirofano")
+    )
+    historial_ov = list(
+        row.get("historial_overrides")
+        or calc_node.get("historial_overrides")
+        or standalone_meta.get("_historial_overrides")
+        or standalone_meta.get("historial_overrides")
+        or []
+    )
+
+    if calc_node:
+        if row.get("lio_calculado") is None and calc_node.get("lio_calculado") is not None:
+            row["lio_calculado"] = bool(calc_node.get("lio_calculado"))
+        if not row.get("lio_calculado_por") and calc_node.get("lio_calculado_por"):
+            row["lio_calculado_por"] = calc_node.get("lio_calculado_por")
+        if not row.get("lio_calculado_at") and calc_node.get("lio_calculado_at"):
+            row["lio_calculado_at"] = calc_node.get("lio_calculado_at")
+        if not row.get("lio_calculo_opciones") and opciones:
+            row["lio_calculo_opciones"] = opciones
+
+    if isinstance(override_qx, dict) and override_qx.get("activo") and isinstance(override_qx.get("lente_aplicado_quirofano"), dict):
+        app = override_qx["lente_aplicado_quirofano"]
+        if app.get("modelo"):
+            row["lente_tipo"] = app["modelo"]
+        if app.get("dioptria") is not None and str(app.get("dioptria")).strip() != "":
+            row["lente_dioptria"] = str(app["dioptria"])
+        row["es_torico"] = bool(app.get("es_torico"))
+        if app.get("torico_valor") is not None:
+            row["lente_torico_valor"] = app.get("torico_valor")
+        if app.get("torico_eje") is not None:
+            row["lente_torico_eje"] = app.get("torico_eje")
+        row["lleva_lente"] = True
+
+    disc = row.get("discrepancia_comercial_clinica") or calc_node.get("discrepancia_comercial_clinica")
+    if lio_propuesto and (disc is None or isinstance(disc, dict) and not disc.get("evaluado_at")):
+        opcion_operativa = None
+        if isinstance(override_qx, dict) and override_qx.get("activo") and isinstance(override_qx.get("lente_aplicado_quirofano"), dict):
+            opcion_operativa = override_qx["lente_aplicado_quirofano"]
+        elif opciones:
+            opcion_operativa = next((o for o in opciones if isinstance(o, dict) and o.get("tipo_opcion") == "principal"), opciones[0])
+        elif row.get("lente_tipo"):
+            opcion_operativa = {
+                "modelo": row.get("lente_tipo"),
+                "dioptria": row.get("lente_dioptria"),
+                "es_torico": bool(row.get("es_torico")),
+                "torico_valor": row.get("lente_torico_valor"),
+            }
+        if opcion_operativa:
+            disc = _evaluar_discrepancia_comercial_clinica(
+                lio_propuesto, opcion_operativa, lios_comerciales_cache=lios_cache
+            )
+
+    row["lio_propuesto"] = lio_propuesto
+    row["origen_calculo"] = origen_calculo
+    row["discrepancia_comercial_clinica"] = disc
+    row["override_quirofano"] = override_qx
+    row["historial_overrides"] = historial_ov
+    return row
+
+
 # Turnos Quirúrgicos
 def get_turnos_quirofano(
     fecha_desde: Optional[str] = None, 
@@ -6812,7 +7684,7 @@ def get_turnos_quirofano(
     if not supabase:
         return []
     try:
-        q = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala, permite_simultaneos, capacidad_simultanea), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)")
+        q = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala, permite_simultaneos, capacidad_simultanea), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo, ojo, checklist_prequirurgico)")
         if fecha_desde:
             q = q.gte("fecha_cirugia", fecha_desde)
         if fecha_hasta:
@@ -6827,7 +7699,9 @@ def get_turnos_quirofano(
             q = q.neq("estado", "cancelado")
         
         resp = q.order("fecha_cirugia").order("hora_inicio").execute()
-        return resp.data or []
+        rows = resp.data or []
+        lios_cache = obtener_lios_comerciales() if rows else []
+        return [_hidratar_lio_metadata_turno(r, lios_cache=lios_cache) for r in rows]
     except Exception as e:
         logger.error(f"Error al obtener turnos de quirófano: {e}")
         return []
@@ -6836,9 +7710,10 @@ def get_turno_quirofano_by_id(turno_id: str) -> Optional[Dict[str, Any]]:
     if not supabase or not turno_id:
         return None
     try:
-        resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala, permite_simultaneos, capacidad_simultanea), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)").eq("id", turno_id).limit(1).execute()
+        resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala, permite_simultaneos, capacidad_simultanea), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo, ojo, checklist_prequirurgico)").eq("id", turno_id).limit(1).execute()
         if resp.data and len(resp.data) > 0:
-            return resp.data[0]
+            lios_cache = obtener_lios_comerciales()
+            return _hidratar_lio_metadata_turno(resp.data[0], lios_cache=lios_cache)
         return None
     except Exception as e:
         logger.error(f"Error al obtener turno por ID {turno_id}: {e}")
@@ -7026,6 +7901,7 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                 logger.warning(f"Aviso al cargar turnos en lote para asesorias confirmadas: {e_t}")
 
         resultado = []
+        lios_cache = obtener_lios_comerciales() if casos else []
         for caso in casos:
             asesoria_id = caso["id"]
             turnos_existentes = turnos_por_asesoria.get(asesoria_id, [])
@@ -7090,6 +7966,7 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                         c1["lio_target_refractivo"] = ppal_1.get("target_refractivo")
                         c1["lleva_lente"] = True
 
+                    _hidratar_lio_metadata_turno(c1, caso, ojo_override=ojo_1, lios_cache=lios_cache)
                     resultado.append(c1)
                     
                 if not tiene_t2:
@@ -7124,6 +8001,7 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                         c2["lio_target_refractivo"] = ppal_2.get("target_refractivo")
                         c2["lleva_lente"] = True
 
+                    _hidratar_lio_metadata_turno(c2, caso, ojo_override=ojo_2, lios_cache=lios_cache)
                     resultado.append(c2)
             else:
                 # Caso Unilateral (OD u OI) o AO Simultáneo: pendiente si no tiene turno activo y está confirmado o programado
@@ -7156,6 +8034,7 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                         c_uni["lio_target_refractivo"] = ppal_u.get("target_refractivo")
                         c_uni["lleva_lente"] = True
 
+                    _hidratar_lio_metadata_turno(c_uni, caso, ojo_override=ojo_caso, lios_cache=lios_cache)
                     resultado.append(c_uni)
                     
         return resultado
@@ -7286,12 +8165,267 @@ def evaluar_y_sincronizar_estado_caso_quirurgico(asesoria_id: str, turno_origen:
         logger.error(f"Error en evaluar_y_sincronizar_estado_caso_quirurgico para asesoria {asesoria_id}: {e}")
         return {}
 
+def _resolver_modelo_lio_id_por_nombre(modelo_nombre: Optional[str]) -> Optional[str]:
+    """Busca el UUID en `modelos_lio` a partir del nombre comercial/clínico ('Modelo (Marca)' o 'Modelo')."""
+    raw = str(modelo_nombre or "").strip()
+    if not raw or not supabase:
+        return None
+    try:
+        modelos = get_modelos_lio(solo_activos=False)
+        raw_up = raw.upper()
+        sin_marca = re.sub(r"\s*\([^)]*\)\s*$", "", raw_up).strip()
+        for m in modelos:
+            mod_up = str(m.get("modelo") or "").strip().upper()
+            full_up = f"{mod_up} ({str(m.get('marca') or '').strip().upper()})".strip()
+            if raw_up == full_up or raw_up == mod_up or (sin_marca and sin_marca == mod_up):
+                return m.get("id")
+        cod = _extraer_codigo_canonico_lio(sin_marca or raw_up)
+        if cod:
+            for m in modelos:
+                if _extraer_codigo_canonico_lio(m.get("modelo")) == cod and m.get("activo", True):
+                    return m.get("id")
+    except Exception as e_res_id:
+        logger.debug(f"Aviso resolviendo modelo_lio_id para '{raw}': {e_res_id}")
+    return None
+
+
+def _norm_diop_cmp(val: Any) -> str:
+    s = str(val or "").strip().replace(",", ".").replace("+", "")
+    if not s:
+        return ""
+    try:
+        return f"{float(s):.2f}"
+    except Exception:
+        return s.upper()
+
+
+def _procesar_lio_desde_quirofano(
+    calc_prev: Optional[Dict[str, Any]],
+    datos_turno: Dict[str, Any],
+    lio_propuesto: Optional[Dict[str, Any]],
+    huella_actual: Any,
+    lios_cache: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Ejecuta Escenario A (si el ojo aún no estaba calculado y Quirófano ingresa modelo + dioptría)
+    y Escenario B (si ya estaba calculado y Quirófano cambia modelo/dioptría/toricidad: preserva
+    las opciones originales del médico y registra `override_quirofano` + historial).
+    Retorna el nuevo nodo `_lio_calculo_{ojo}` o None si no hubo carga ni cambios de LIO.
+    """
+    if datos_turno.get("lleva_lente") is False:
+        return None
+
+    modelo_qx = str(datos_turno.get("lente_tipo") or "").strip()
+    dioptria_qx = str(datos_turno.get("lente_dioptria") or "").strip()
+    if not modelo_qx and not dioptria_qx:
+        return None
+
+    estaba_calculado = bool(isinstance(calc_prev, dict) and calc_prev.get("lio_calculado"))
+    es_torico_qx = bool(datos_turno.get("es_torico", False))
+    t_val_raw = datos_turno.get("lente_torico_valor")
+    t_eje_raw = datos_turno.get("lente_torico_eje")
+    torico_valor_qx = str(t_val_raw).strip() if (es_torico_qx and t_val_raw not in (None, "", 0, "0")) else None
+    torico_eje_qx = str(t_eje_raw).strip() if (es_torico_qx and t_eje_raw not in (None, "", 0, "0")) else None
+
+    usuario = str(datos_turno.get("usuario_operador") or datos_turno.get("modificado_por") or "Quirófano").strip()
+    motivo = str(datos_turno.get("motivo_override") or "").strip() or None
+    ahora_iso = datetime.now(timezone.utc).isoformat()
+    modelo_lio_id_qx = datos_turno.get("modelo_lio_id") or _resolver_modelo_lio_id_por_nombre(modelo_qx)
+
+    # ESCENARIO A: no estaba calculado y Quirófano carga modelo + dioptría válidos
+    if not estaba_calculado:
+        if not modelo_qx or not dioptria_qx:
+            return None
+        opcion_qx = {
+            "id": "opt-quirofano",
+            "tipo_opcion": "principal",
+            "modelo": modelo_qx,
+            "modelo_lio_id": modelo_lio_id_qx,
+            "dioptria": dioptria_qx,
+            "es_torico": es_torico_qx,
+            "torico_valor": torico_valor_qx,
+            "torico_eje": torico_eje_qx,
+            "origen": "quirofano",
+        }
+        disc = _evaluar_discrepancia_comercial_clinica(
+            lio_propuesto, opcion_qx, usuario=usuario, lios_comerciales_cache=lios_cache
+        )
+        return {
+            "lio_calculado": True,
+            "lio_calculado_at": ahora_iso,
+            "lio_calculado_por": f"{usuario} (Cargado en Quirófano)",
+            "origen_calculo": "quirofano",
+            "opciones": [opcion_qx],
+            "lio_propuesto_ref": huella_actual,
+            "discrepancia_comercial_clinica": disc,
+            "override_quirofano": {"activo": False},
+            "historial_overrides": list((calc_prev or {}).get("historial_overrides") or []),
+        }
+
+    # ESCENARIO B: ya estaba calculado; verificar si hubo modificación real respecto al estado operativo vigente
+    if not modelo_qx:
+        return None
+
+    opciones_prev = list((calc_prev or {}).get("opciones") or [])
+    ppal_prev = next((o for o in opciones_prev if isinstance(o, dict) and o.get("tipo_opcion") == "principal"), opciones_prev[0] if opciones_prev else {})
+    prev_ov = (calc_prev or {}).get("override_quirofano") or {}
+    op_vigente = (
+        prev_ov.get("lente_aplicado_quirofano")
+        if (isinstance(prev_ov, dict) and prev_ov.get("activo") and isinstance(prev_ov.get("lente_aplicado_quirofano"), dict))
+        else ppal_prev
+    ) or {}
+
+    def _firma(op: Dict[str, Any]):
+        es_t = bool(op.get("es_torico"))
+        tv = str(op.get("torico_valor") or op.get("lente_torico_valor") or "").strip() if es_t else ""
+        te = str(op.get("torico_eje") or op.get("lente_torico_eje") or "").strip() if es_t else ""
+        return (
+            str(op.get("modelo") or op.get("lente_tipo") or "").strip().upper(),
+            _norm_diop_cmp(op.get("dioptria") or op.get("lente_dioptria")),
+            es_t,
+            "" if tv in ("0", "None") else tv.upper(),
+            "" if te in ("0", "None") else te.upper(),
+        )
+
+    nuevo_op = {
+        "modelo": modelo_qx,
+        "modelo_lio_id": modelo_lio_id_qx,
+        "dioptria": dioptria_qx or str(op_vigente.get("dioptria") or ""),
+        "es_torico": es_torico_qx,
+        "torico_valor": torico_valor_qx,
+        "torico_eje": torico_eje_qx,
+    }
+    if _firma(nuevo_op) == _firma(op_vigente):
+        return None
+
+    calc_medico_original = (
+        prev_ov.get("calculo_medico_original")
+        if (isinstance(prev_ov, dict) and isinstance(prev_ov.get("calculo_medico_original"), dict))
+        else {
+            "modelo": ppal_prev.get("modelo"),
+            "modelo_lio_id": ppal_prev.get("modelo_lio_id"),
+            "dioptria": ppal_prev.get("dioptria"),
+            "es_torico": bool(ppal_prev.get("es_torico")),
+            "torico_valor": ppal_prev.get("torico_valor"),
+            "torico_eje": ppal_prev.get("torico_eje"),
+            "calculado_por": (calc_prev or {}).get("lio_calculado_por"),
+            "calculado_at": (calc_prev or {}).get("lio_calculado_at"),
+            "origen": (calc_prev or {}).get("origen_calculo") or "medico",
+        }
+    )
+
+    historial = list((calc_prev or {}).get("historial_overrides") or [])
+    historial.append({
+        "fecha": ahora_iso,
+        "usuario": usuario,
+        "motivo": motivo,
+        "anterior": {
+            "modelo": op_vigente.get("modelo"),
+            "dioptria": op_vigente.get("dioptria"),
+            "es_torico": bool(op_vigente.get("es_torico")),
+            "torico_valor": op_vigente.get("torico_valor"),
+            "torico_eje": op_vigente.get("torico_eje"),
+        },
+        "nuevo": copy.deepcopy(nuevo_op),
+    })
+
+    # Si Quirófano revirtió al plan original del médico
+    reconciliado_con_original = (_firma(nuevo_op) == _firma(ppal_prev)) if ppal_prev else False
+    override_obj = (
+        {"activo": False, "calculo_medico_original": calc_medico_original, "revertido_por": usuario, "revertido_at": ahora_iso}
+        if reconciliado_con_original
+        else {
+            "activo": True,
+            "calculo_medico_original": calc_medico_original,
+            "lente_aplicado_quirofano": nuevo_op,
+            "modificado_por": usuario,
+            "modificado_at": ahora_iso,
+            "motivo": motivo,
+        }
+    )
+    disc = _evaluar_discrepancia_comercial_clinica(
+        lio_propuesto,
+        ppal_prev if reconciliado_con_original else nuevo_op,
+        usuario=usuario,
+        lios_comerciales_cache=lios_cache,
+    )
+
+    return {
+        **copy.deepcopy(calc_prev or {}),
+        "lio_calculado": True,
+        "origen_calculo": (calc_prev or {}).get("origen_calculo") or "medico",
+        "opciones": opciones_prev,  # Se preservan intactas las opciones originales del cirujano
+        "lio_propuesto_ref": huella_actual or (calc_prev or {}).get("lio_propuesto_ref"),
+        "discrepancia_comercial_clinica": disc,
+        "override_quirofano": override_obj,
+        "historial_overrides": historial,
+    }
+
+
+def _campos_lio_para_turno_desde_asesoria(
+    checklist: Dict[str, Any],
+    asesoria_db: Dict[str, Any],
+    ojo_turno: str,
+) -> Dict[str, Any]:
+    """
+    Extrae campos operativos de LIO para poblar `turnos_quirofano` desde `_lio_calculo_{ojo_turno}`,
+    respetando `override_quirofano.lente_aplicado_quirofano` cuando está activo.
+    """
+    ojo_key = (ojo_turno or asesoria_db.get("ojo") or "OD").strip().upper()
+    if ojo_key not in ("OD", "OI"):
+        ojo_key = "OD"
+    calc_node = checklist.get(f"_lio_calculo_{ojo_key}") if isinstance(checklist, dict) else None
+    if not isinstance(calc_node, dict):
+        calc_node = {}
+
+    opciones = calc_node.get("opciones") or (asesoria_db.get("lio_calculo_opciones") if not calc_node else None) or []
+    es_calc = bool(calc_node.get("lio_calculado")) if calc_node else bool(asesoria_db.get("lio_calculado"))
+    por = calc_node.get("lio_calculado_por") or (asesoria_db.get("lio_calculado_por") if not calc_node else None)
+    calc_at = calc_node.get("lio_calculado_at") or (asesoria_db.get("lio_calculado_at") if not calc_node else None)
+
+    out: Dict[str, Any] = {}
+    if calc_node or opciones:
+        out["lio_calculado"] = es_calc
+        if por:
+            out["lio_calculado_por"] = por
+        if calc_at:
+            out["lio_calculado_at"] = calc_at
+        if opciones:
+            out["lio_calculo_opciones"] = opciones
+
+    ov = calc_node.get("override_quirofano")
+    fuente_op = None
+    if isinstance(ov, dict) and ov.get("activo") and isinstance(ov.get("lente_aplicado_quirofano"), dict):
+        fuente_op = ov["lente_aplicado_quirofano"]
+    elif opciones:
+        fuente_op = next((o for o in opciones if isinstance(o, dict) and o.get("tipo_opcion") == "principal"), opciones[0])
+
+    if isinstance(fuente_op, dict) and (fuente_op.get("modelo") or fuente_op.get("dioptria")):
+        out["lleva_lente"] = True
+        if fuente_op.get("modelo"):
+            out["lente_tipo"] = fuente_op.get("modelo")
+        if fuente_op.get("dioptria") is not None and str(fuente_op.get("dioptria")).strip() != "":
+            out["lente_dioptria"] = str(fuente_op.get("dioptria"))
+        es_t = bool(fuente_op.get("es_torico"))
+        out["es_torico"] = es_t
+        tv = fuente_op.get("torico_valor")
+        te = fuente_op.get("torico_eje")
+        if tv is not None and str(tv).strip().isdigit():
+            out["lente_torico_valor"] = int(str(tv).strip())
+        elif es_t:
+            out["lente_torico_valor"] = 3
+        if te is not None and str(te).strip().isdigit():
+            out["lente_torico_eje"] = int(str(te).strip())
+
+    return out
+
+
 def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str, Any], nuevo_estado: Optional[str] = "programado"):
     """
     Sincroniza atómicamente la ficha de asesoramiento quirúrgico (paciente)
     cuando el personal de quirófano programa o actualiza el turno.
-    Maneja fechas definitivas tanto de 1° ojo como de 2° ojo en cirugías bilaterales.
-    Pasa el caso a estado 'programado' o evalúa bilateralidad si pasa a 'operado'.
+    Maneja fechas definitivas tanto de 1° ojo como de 2° ojo en cirugías bilaterales,
+    e implementa Escenario A (cálculo desde Quirófano) y Escenario B (override auditado sin pisar plan médico).
     """
     if not supabase or not asesoria_id:
         return
@@ -7302,8 +8436,10 @@ def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str
             return
         asesoria = res_a.data[0]
         ojo_caso = (asesoria.get("ojo") or "OD").upper()
-        checklist = asesoria.get("checklist_prequirurgico") or {}
-        meta_bilateral = checklist.get("_meta_bilateral") or {}
+        checklist = copy.deepcopy(asesoria.get("checklist_prequirurgico") or {})
+        if not isinstance(checklist, dict):
+            checklist = {}
+        meta_bilateral = dict(checklist.get("_meta_bilateral") or {})
         es_bilateral = (ojo_caso == "AO") or bool(meta_bilateral) or (asesoria.get("modalidad_bilateral") in ["escalonada", "simultanea"])
 
         orden = meta_bilateral.get("orden") or "OD_primero"
@@ -7364,6 +8500,58 @@ def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str
         if "observaciones" in datos_turno and datos_turno["observaciones"]:
             payload_asesoria["situacion_paciente"] = datos_turno["observaciones"]
 
+        # G5: Escenario A / Escenario B de LIO desde Quirófano (solo si el turno no se está cancelando)
+        if estado_turno != "cancelado" and (datos_turno.get("lente_tipo") or datos_turno.get("lente_dioptria")):
+            ojos_a_eval = ["OD", "OI"] if (ojo_turno == "AO" or (ojo_caso == "AO" and not ojo_turno)) else [ojo_turno if ojo_turno in ("OD", "OI") else (ojo_caso if ojo_caso in ("OD", "OI") else "OD")]
+            lios_cache = obtener_lios_comerciales()
+            hubo_calc_qx = False
+            ultimo_calc_node = None
+            for ojo_eval in ojos_a_eval:
+                key_calc = f"_lio_calculo_{ojo_eval}"
+                calc_prev = checklist.get(key_calc) if isinstance(checklist.get(key_calc), dict) else None
+                if not calc_prev and asesoria.get("lio_calculado"):
+                    calc_prev = {
+                        "lio_calculado": True,
+                        "lio_calculado_at": asesoria.get("lio_calculado_at"),
+                        "lio_calculado_por": asesoria.get("lio_calculado_por"),
+                        "origen_calculo": "medico",
+                        "opciones": asesoria.get("lio_calculo_opciones") or [],
+                    }
+                lio_prop, huella = _construir_lio_propuesto_desde_asesoria(asesoria, ojo_eval, lios_cache=lios_cache)
+                nuevo_calc = _procesar_lio_desde_quirofano(calc_prev, datos_turno, lio_prop, huella, lios_cache=lios_cache)
+                if nuevo_calc:
+                    checklist[key_calc] = nuevo_calc
+                    hubo_calc_qx = True
+                    ultimo_calc_node = nuevo_calc
+
+            if hubo_calc_qx and ultimo_calc_node:
+                payload_asesoria["checklist_prequirurgico"] = checklist
+                if ojo_caso == "AO":
+                    od_c = checklist.get("_lio_calculo_OD") or {}
+                    oi_c = checklist.get("_lio_calculo_OI") or {}
+                    payload_asesoria["lio_calculado"] = bool(od_c.get("lio_calculado")) and bool(oi_c.get("lio_calculado"))
+                else:
+                    payload_asesoria["lio_calculado"] = bool(ultimo_calc_node.get("lio_calculado"))
+                if ultimo_calc_node.get("lio_calculado_at") and not asesoria.get("lio_calculado_at"):
+                    payload_asesoria["lio_calculado_at"] = ultimo_calc_node.get("lio_calculado_at")
+                if ultimo_calc_node.get("lio_calculado_por") and not asesoria.get("lio_calculado_por"):
+                    payload_asesoria["lio_calculado_por"] = ultimo_calc_node.get("lio_calculado_por")
+                payload_asesoria["lio_calculo_opciones"] = ultimo_calc_node.get("opciones") or []
+
+                # Reflejar estado calculado y trazabilidad en el turno de quirófano
+                if datos_turno.get("id"):
+                    try:
+                        supabase.table("turnos_quirofano").update({
+                            "lio_calculado": bool(ultimo_calc_node.get("lio_calculado")),
+                            "lio_calculado_at": ultimo_calc_node.get("lio_calculado_at"),
+                            "lio_calculado_por": ultimo_calc_node.get("lio_calculado_por"),
+                            "lio_calculo_opciones": ultimo_calc_node.get("opciones") or [],
+                            "lleva_lente": True,
+                            "updated_at": "now()",
+                        }).eq("id", datos_turno["id"]).execute()
+                    except Exception as e_tupd:
+                        logger.warning(f"Aviso actualizando estado LIO en turno {datos_turno.get('id')}: {e_tupd}")
+
         if payload_asesoria:
             supabase.table("asesorias_quirurgicas").update(payload_asesoria).eq("id", asesoria_id).execute()
         
@@ -7377,6 +8565,44 @@ def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str
     except Exception as e:
         logger.error(f"Error sincronizando asesoría {asesoria_id} desde quirófano: {e}")
 
+
+def _aplicar_audit_lio_turno_independiente(
+    turno_row: Dict[str, Any],
+    datos_orig: Dict[str, Any],
+    calc_prev_standalone: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Aplica Escenario A y Escenario B para turnos creados/editados directamente en Quirófano
+    sin `asesoria_id`, persistiendo metadatos auditables dentro de `lio_calculo_opciones`.
+    """
+    calc_node = _procesar_lio_desde_quirofano(calc_prev_standalone, datos_orig, None, None)
+    if not calc_node:
+        return turno_row
+    opciones_meta = copy.deepcopy(calc_node.get("opciones") or [])
+    if not opciones_meta:
+        opciones_meta = [{}]
+    opciones_meta[0] = {
+        **opciones_meta[0],
+        "_origen_calculo": calc_node.get("origen_calculo"),
+        "_override_quirofano": calc_node.get("override_quirofano"),
+        "_historial_overrides": calc_node.get("historial_overrides") or [],
+    }
+    upd_campos = {
+        "lio_calculado": bool(calc_node.get("lio_calculado")),
+        "lio_calculado_at": calc_node.get("lio_calculado_at"),
+        "lio_calculado_por": calc_node.get("lio_calculado_por"),
+        "lio_calculo_opciones": opciones_meta,
+        "lleva_lente": True,
+        "updated_at": "now()",
+    }
+    try:
+        supabase.table("turnos_quirofano").update(upd_campos).eq("id", turno_row["id"]).execute()
+        turno_row.update(upd_campos)
+    except Exception as e_sa:
+        logger.warning(f"Aviso persistiendo auditoría LIO en turno manual {turno_row.get('id')}: {e_sa}")
+    return turno_row
+
+
 def crear_turno_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
     """
     Crea un turno de quirófano sanitizando columnas y generando token de consentimiento.
@@ -7386,8 +8612,9 @@ def crear_turno_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
         return {}
     import secrets
     try:
+        datos_orig = dict(datos)
         # Sanitizar payload para enviar solo columnas válidas de turnos_quirofano
-        payload = {k: v for k, v in datos.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None and v != ""}
+        payload = {k: v for k, v in datos_orig.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None and v != ""}
         
         token = secrets.token_urlsafe(24)
         payload["consentimiento_token"] = token
@@ -7398,7 +8625,7 @@ def crear_turno_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
         
         # Si hay asesoría, completar datos faltantes (paciente_id, medico_derivador_nombre, practica_nombre, etc.)
         if payload.get("asesoria_id"):
-            res_as = supabase.table("asesorias_quirurgicas").select("paciente_id, medico_derivador_nombre, practica_nombre, practica_codigo, cobertura_obra_social").eq("id", payload["asesoria_id"]).limit(1).execute()
+            res_as = supabase.table("asesorias_quirurgicas").select("paciente_id, medico_derivador_nombre, practica_nombre, practica_codigo, cobertura_obra_social, medico_cirujano_nombre").eq("id", payload["asesoria_id"]).limit(1).execute()
             if res_as.data:
                 as_data = res_as.data[0]
                 if not payload.get("paciente_id"):
@@ -7424,11 +8651,17 @@ def crear_turno_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
         
         # Sincronización bidireccional y cambio de estado a 'programado'
         if payload.get("asesoria_id"):
-            sincronizar_asesoria_desde_quirofano(payload["asesoria_id"], payload, nuevo_estado="programado")
+            sincronizar_asesoria_desde_quirofano(
+                payload["asesoria_id"],
+                {**datos_orig, **payload, "id": turno_creado.get("id")},
+                nuevo_estado="programado",
+            )
             try:
                 sincronizar_presupuesto_desde_caso_quirurgico(asesoria_id=payload["asesoria_id"], nuevo_estado_asesoria="programado", origen="CREAR_TURNO_QUIROFANO")
             except Exception as e_pr:
                 logger.warning(f"Aviso al auto-aprobar presupuesto desde turno quirofano: {e_pr}")
+        elif payload.get("lleva_lente") is not False and payload.get("lente_tipo") and payload.get("lente_dioptria"):
+            turno_creado = _aplicar_audit_lio_turno_independiente(turno_creado, datos_orig)
                 
         return turno_creado
     except Exception as e:
@@ -7439,7 +8672,16 @@ def actualizar_turno_quirofano(turno_id: str, datos: Dict[str, Any]) -> Dict[str
     if not supabase or not turno_id:
         return {}
     try:
-        payload = {k: v for k, v in datos.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
+        datos_orig = dict(datos)
+        turno_previo = None
+        if not datos_orig.get("asesoria_id"):
+            try:
+                rp = supabase.table("turnos_quirofano").select("asesoria_id, lio_calculado, lio_calculado_at, lio_calculado_por, lio_calculo_opciones").eq("id", turno_id).limit(1).execute()
+                turno_previo = rp.data[0] if rp.data else None
+            except Exception:
+                turno_previo = None
+
+        payload = {k: v for k, v in datos_orig.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
         payload["updated_at"] = "now()"
         
         resp = supabase.table("turnos_quirofano").update(payload).eq("id", turno_id).execute()
@@ -7452,7 +8694,27 @@ def actualizar_turno_quirofano(turno_id: str, datos: Dict[str, Any]) -> Dict[str
         if asesoria_id:
             # Preservar el estado existente o el provisto en el payload sin forzar 'programado'
             estado_destino = payload.get("estado") or turno_actualizado.get("estado")
-            sincronizar_asesoria_desde_quirofano(asesoria_id, payload, nuevo_estado=estado_destino)
+            sincronizar_asesoria_desde_quirofano(
+                asesoria_id,
+                {**datos_orig, **payload, "id": turno_id},
+                nuevo_estado=estado_destino,
+            )
+        elif payload.get("estado") != "cancelado" and (datos_orig.get("lente_tipo") or datos_orig.get("lente_dioptria")):
+            tp = turno_previo or {}
+            opts_prev = tp.get("lio_calculo_opciones") or []
+            meta0 = opts_prev[0] if (isinstance(opts_prev, list) and opts_prev and isinstance(opts_prev[0], dict)) else {}
+            calc_prev_sa = None
+            if tp.get("lio_calculado"):
+                calc_prev_sa = {
+                    "lio_calculado": True,
+                    "lio_calculado_at": tp.get("lio_calculado_at"),
+                    "lio_calculado_por": tp.get("lio_calculado_por"),
+                    "origen_calculo": meta0.get("_origen_calculo") or meta0.get("origen_calculo") or "medico",
+                    "opciones": opts_prev,
+                    "override_quirofano": meta0.get("_override_quirofano") or meta0.get("override_quirofano"),
+                    "historial_overrides": meta0.get("_historial_overrides") or meta0.get("historial_overrides") or [],
+                }
+            turno_actualizado = _aplicar_audit_lio_turno_independiente(turno_actualizado, datos_orig, calc_prev_standalone=calc_prev_sa)
 
         # Enriquecer retorno con relaciones completas para preservar pacientes y quirofanos en el frontend
         try:
@@ -7460,11 +8722,11 @@ def actualizar_turno_quirofano(turno_id: str, datos: Dict[str, Any]) -> Dict[str
                 .select("*, pacientes(*), quirofanos(id, nombre, codigo, color, duracion_slot_minutos, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(*)") \
                 .eq("id", turno_id).limit(1).execute()
             if res_full.data and len(res_full.data) > 0:
-                return res_full.data[0]
+                return _hidratar_lio_metadata_turno(res_full.data[0])
         except Exception as e_full:
             logger.warning(f"Aviso recuperando joins de turno {turno_id}: {e_full}")
 
-        return turno_actualizado
+        return _hidratar_lio_metadata_turno(turno_actualizado)
     except Exception as e:
         logger.error(f"Error al actualizar turno de quirófano: {e}")
         return {}
@@ -7566,6 +8828,18 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
         checklist = asesoria_db.get("checklist_prequirurgico") or {}
         if not isinstance(checklist, dict):
             checklist = {}
+
+        if _caso_requiere_lente(asesoria_db):
+            try:
+                _validar_lio_definido_para_confirmacion({
+                    **asesoria_db,
+                    "estado": "programado",
+                    "checklist_prequirurgico": checklist,
+                })
+            except ValueError as e_gate:
+                logger.info(f"Sincronización a quirófano omitida para asesoría {asesoria_id} (Gate LIO): {e_gate}")
+                return []
+
         meta_bilateral = checklist.get("_meta_bilateral") or {}
         if not isinstance(meta_bilateral, dict):
             meta_bilateral = {}
@@ -7659,6 +8933,7 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                 supabase.table("turnos_quirofano").update({"estado": "cancelado", "updated_at": "now()"}).eq("id", turno_p1["id"]).execute()
                 logger.info(f"Turno de quirófano {turno_p1['id']} cancelado al limpiar fecha en asesoría {asesoria_id}")
         elif fecha_p1 and quirofano_p1 and hora_p1:
+            lio_p1 = _campos_lio_para_turno_desde_asesoria(checklist, asesoria_db, ojo_p1)
             datos_turno_1 = {
                 "asesoria_id": asesoria_id,
                 "paciente_id": asesoria_db.get("paciente_id"),
@@ -7673,7 +8948,8 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                 "practica_codigo": asesoria_db.get("practica_codigo"),
                 "practica_nombre": asesoria_db.get("practica_nombre"),
                 "obra_social": asesoria_db.get("cobertura_obra_social"),
-                "estado": "programado"
+                "estado": "programado",
+                **lio_p1,
             }
             if turno_p1:
                 # Actualizar turno existente preservando estado si ya avanzó en quirófano
@@ -7686,7 +8962,7 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                     turnos_procesados.append(upd_res.data[0])
             else:
                 # Heredar consentimiento previo asentado en asesorias_quirurgicas
-                c1_chk = (chk.get(f"_consentimiento_qx_{ojo_p1}") if es_bilateral_escalonada else None) or chk.get("_consentimiento_qx") or {}
+                c1_chk = (checklist.get(f"_consentimiento_qx_{ojo_p1}") if es_bilateral_escalonada else None) or checklist.get("_consentimiento_qx") or {}
                 if isinstance(c1_chk, dict):
                     if c1_chk.get("token"):
                         datos_turno_1["consentimiento_token"] = c1_chk["token"]
@@ -7715,6 +8991,7 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                     supabase.table("turnos_quirofano").update({"estado": "cancelado", "updated_at": "now()"}).eq("id", turno_p2["id"]).execute()
                     logger.info(f"Turno de 2° ojo {turno_p2['id']} cancelado al limpiar fecha en asesoría {asesoria_id}")
             elif fecha_p2 and quirofano_p2 and hora_p2:
+                lio_p2 = _campos_lio_para_turno_desde_asesoria(checklist, asesoria_db, segundo_ojo)
                 datos_turno_2 = {
                     "asesoria_id": asesoria_id,
                     "paciente_id": asesoria_db.get("paciente_id"),
@@ -7729,7 +9006,8 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                     "practica_codigo": asesoria_db.get("practica_codigo"),
                     "practica_nombre": asesoria_db.get("practica_nombre"),
                     "obra_social": asesoria_db.get("cobertura_obra_social"),
-                    "estado": "programado"
+                    "estado": "programado",
+                    **lio_p2,
                 }
                 if turno_p2:
                     # Actualizar turno existente preservando estado si ya avanzó en quirófano
@@ -7741,7 +9019,7 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                     if upd_res2.data:
                         turnos_procesados.append(upd_res2.data[0])
                 else:
-                    c2_chk = chk.get(f"_consentimiento_qx_{segundo_ojo}") or {}
+                    c2_chk = checklist.get(f"_consentimiento_qx_{segundo_ojo}") or {}
                     if isinstance(c2_chk, dict):
                         if c2_chk.get("token"):
                             datos_turno_2["consentimiento_token"] = c2_chk["token"]
@@ -9103,6 +10381,227 @@ def obtener_prestador_por_cirujano(medico_id: Optional[Any] = None, medico_nombr
 # MODELOS DE LENTES INTRAOCULARES (LIO) Y SKUS GECLISA (GTIN)
 # ====================================================================
 
+_ALIAS_CANONICOS_LIO = (
+    (r"\bSA60AT\b", "SA60AT"),
+    (r"\bSN60WF\b", "SN60WF"),
+    (r"\bCNA0T0\b", "CNA0T0"),
+    (r"\bCNW0T[0-9A-Z]*\b", "CNW0T"),
+    (r"\bTFNT(?:00|[0-9]{2})?\b", "TFNT"),
+    (r"\bDFT(?:015|[0-9]{3})?\b", "DFT"),
+    (r"\bMA60AC\b", "MA60AC"),
+    (r"\bMA60MA\b", "MA60MA"),
+)
+
+_MODELO_CANONICO_PREFERIDO_POR_CODIGO = {
+    "SA60AT": "Natural SA60AT",
+}
+
+
+def _extraer_codigo_canonico_lio(texto: Optional[str]) -> Optional[str]:
+    """
+    Extrae el código canónico de serie clínica LIO (SA60AT, SN60WF, CNA0T0, CNW0T, TFNT, DFT, MA60AC, MA60MA)
+    desde el nombre de familia, producto o referencia técnica para deduplicar variantes del catálogo.
+    """
+    raw = str(texto or "").strip().upper()
+    if not raw:
+        return None
+    clean = re.sub(r"[^A-Z0-9]+", " ", raw).strip()
+    for patron, codigo in _ALIAS_CANONICOS_LIO:
+        if re.search(patron, clean):
+            return codigo
+    return None
+
+
+def _buscar_familia_existente_por_nombre_o_codigo(
+    familias_existentes: List[Dict[str, Any]],
+    marca: str,
+    familia_nombre: str,
+    texto_referencia: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Resuelve una familia existente priorizando coincidencia exacta y luego código canónico."""
+    marca_up = str(marca or "").strip().upper()
+    modelo_up = str(familia_nombre or "").strip().upper()
+
+    for f in familias_existentes:
+        if (
+            str(f.get("marca") or "").strip().upper() == marca_up
+            and str(f.get("modelo") or "").strip().upper() == modelo_up
+        ):
+            return f
+
+    codigo = _extraer_codigo_canonico_lio(familia_nombre) or _extraer_codigo_canonico_lio(texto_referencia)
+    if not codigo:
+        return None
+
+    preferido_up = str(_MODELO_CANONICO_PREFERIDO_POR_CODIGO.get(codigo) or "").strip().upper()
+    candidatos = [
+        f for f in familias_existentes
+        if (not marca_up or str(f.get("marca") or "").strip().upper() == marca_up)
+        and _extraer_codigo_canonico_lio(f.get("modelo")) == codigo
+    ]
+    if not candidatos:
+        return None
+
+    def _rank(f: Dict[str, Any]):
+        mod_up = str(f.get("modelo") or "").strip().upper()
+        return (
+            1 if (preferido_up and mod_up == preferido_up) else 0,
+            1 if f.get("activo", True) else 0,
+            int(f.get("items_count") or 0),
+        )
+
+    candidatos.sort(key=_rank, reverse=True)
+    return candidatos[0]
+
+
+def normalizar_familias_modelos_lio() -> Dict[str, Any]:
+    """
+    Consolida familias clínicas duplicadas en `modelos_lio` que comparten código canónico
+    (ej. 'Alcon SA60AT' -> 'Natural SA60AT'), re-vincula `modelos_lio_items` y `catalogo_maestro_gtin`
+    huérfanos o con familia duplicada, y repara `admite_toricos = True` cuando existan ítems tóricos.
+    """
+    resumen = {
+        "familias_consolidadas": 0,
+        "items_migrados": 0,
+        "items_duplicados_eliminados": 0,
+        "catalogo_maestro_vinculados": 0,
+        "familias_toricos_reparadas": 0,
+    }
+    if not supabase:
+        return resumen
+    try:
+        familias = get_modelos_lio(solo_activos=False)
+        if not familias:
+            return resumen
+
+        por_grupo: Dict[tuple, List[Dict[str, Any]]] = {}
+        for fam in familias:
+            cod = _extraer_codigo_canonico_lio(fam.get("modelo"))
+            if not cod:
+                continue
+            marca_up = str(fam.get("marca") or "").strip().upper()
+            por_grupo.setdefault((marca_up, cod), []).append(fam)
+
+        sobrevivientes_por_codigo: Dict[str, Dict[str, Any]] = {}
+        reemplazos_id: Dict[str, Dict[str, Any]] = {}
+
+        for (marca_up, cod), grupo in por_grupo.items():
+            preferido_up = str(_MODELO_CANONICO_PREFERIDO_POR_CODIGO.get(cod) or "").strip().upper()
+            grupo.sort(
+                key=lambda f: (
+                    1 if (preferido_up and str(f.get("modelo") or "").strip().upper() == preferido_up) else 0,
+                    1 if f.get("activo", True) else 0,
+                    int(f.get("items_count") or 0),
+                ),
+                reverse=True,
+            )
+            survivor = grupo[0]
+            sobrevivientes_por_codigo[cod] = survivor
+            if len(grupo) > 1:
+                for dup in grupo[1:]:
+                    reemplazos_id[dup["id"]] = survivor
+
+        # 1. Migrar modelos_lio_items de duplicados al sobreviviente respetando constraint único
+        for dup_id, survivor in reemplazos_id.items():
+            surv_id = survivor["id"]
+            surv_items = (
+                supabase.table("modelos_lio_items")
+                .select("id, dioptria, torico_valor")
+                .eq("modelo_lio_id", surv_id)
+                .execute()
+                .data
+                or []
+            )
+            surv_keys = {(row.get("dioptria"), row.get("torico_valor")) for row in surv_items}
+            dup_items = (
+                supabase.table("modelos_lio_items")
+                .select("id, dioptria, torico_valor")
+                .eq("modelo_lio_id", dup_id)
+                .execute()
+                .data
+                or []
+            )
+            for it in dup_items:
+                k = (it.get("dioptria"), it.get("torico_valor"))
+                if k in surv_keys:
+                    supabase.table("modelos_lio_items").delete().eq("id", it["id"]).execute()
+                    resumen["items_duplicados_eliminados"] += 1
+                else:
+                    supabase.table("modelos_lio_items").update({
+                        "modelo_lio_id": surv_id,
+                        "updated_at": "now()",
+                    }).eq("id", it["id"]).execute()
+                    surv_keys.add(k)
+                    resumen["items_migrados"] += 1
+
+            supabase.table("modelos_lio").update({"activo": False, "updated_at": "now()"}).eq("id", dup_id).execute()
+            resumen["familias_consolidadas"] += 1
+
+        # 2. Vincular / re-apuntar catalogo_maestro_gtin huérfanos o con alias/duplicados
+        cat_rows = (
+            supabase.table("catalogo_maestro_gtin")
+            .select("id, modelo_lio_id, familia_nombre, nombre_producto, ref_fabricante, marca, es_torico")
+            .execute()
+            .data
+            or []
+        )
+        toricos_detectados_por_fam: set = set()
+        for row in cat_rows:
+            mid = row.get("modelo_lio_id")
+            if mid and mid in reemplazos_id:
+                surv = reemplazos_id[mid]
+                supabase.table("catalogo_maestro_gtin").update({
+                    "modelo_lio_id": surv["id"],
+                    "familia_nombre": surv["modelo"],
+                    "updated_at": "now()",
+                }).eq("id", row["id"]).execute()
+                resumen["catalogo_maestro_vinculados"] += 1
+                mid = surv["id"]
+            elif not mid or str(row.get("familia_nombre") or "").strip().lower() == "alcon sa60at":
+                cod = (
+                    _extraer_codigo_canonico_lio(row.get("familia_nombre"))
+                    or _extraer_codigo_canonico_lio(row.get("nombre_producto"))
+                    or _extraer_codigo_canonico_lio(row.get("ref_fabricante"))
+                )
+                surv = sobrevivientes_por_codigo.get(cod) if cod else None
+                if surv and (mid != surv["id"] or row.get("familia_nombre") != surv["modelo"]):
+                    supabase.table("catalogo_maestro_gtin").update({
+                        "modelo_lio_id": surv["id"],
+                        "familia_nombre": surv["modelo"],
+                        "updated_at": "now()",
+                    }).eq("id", row["id"]).execute()
+                    resumen["catalogo_maestro_vinculados"] += 1
+                    mid = surv["id"]
+            if mid and row.get("es_torico"):
+                toricos_detectados_por_fam.add(mid)
+
+        # 3. Reparar admite_toricos = True para familias que ya tienen ítems tóricos registrados
+        items_toricos = (
+            supabase.table("modelos_lio_items")
+            .select("modelo_lio_id")
+            .eq("es_torico", True)
+            .execute()
+            .data
+            or []
+        )
+        for it in items_toricos:
+            if it.get("modelo_lio_id"):
+                toricos_detectados_por_fam.add(it["modelo_lio_id"])
+
+        for fam in familias:
+            if fam["id"] in toricos_detectados_por_fam and not fam.get("admite_toricos"):
+                supabase.table("modelos_lio").update({
+                    "admite_toricos": True,
+                    "updated_at": "now()",
+                }).eq("id", fam["id"]).execute()
+                resumen["familias_toricos_reparadas"] += 1
+
+        return resumen
+    except Exception as e:
+        logger.error(f"Error al normalizar familias modelos_lio: {e}")
+        return resumen
+
+
 def get_modelos_lio(solo_activos: bool = False) -> List[Dict[str, Any]]:
     if not supabase:
         return []
@@ -9330,12 +10829,13 @@ def sincronizar_lentes_masivos(items_coincidentes: List[Dict[str, Any]]) -> Dict
         }
 
     try:
-        # 1. Obtener todas las familias existentes para no duplicar
-        fam_resp = supabase.table("modelos_lio").select("*").execute()
-        familias_existentes = fam_resp.data or []
+        # 1. Obtener todas las familias existentes para no duplicar (match exacto + código canónico)
+        familias_existentes = get_modelos_lio(solo_activos=False)
         fam_map = {}
+        fam_by_id = {}
         for f in familias_existentes:
-            key = f"{f['marca'].strip().upper()}__{f['modelo'].strip().upper()}"
+            fam_by_id[f["id"]] = f
+            key = f"{str(f.get('marca') or '').strip().upper()}__{str(f.get('modelo') or '').strip().upper()}"
             fam_map[key] = f["id"]
 
         # 2. Obtener todos los GTINs existentes para no duplicar
@@ -9346,21 +10846,44 @@ def sincronizar_lentes_masivos(items_coincidentes: List[Dict[str, Any]]) -> Dict
         nuevos_items_count = 0
         preexistentes_count = 0
         resultado_items = []
+        familias_con_torico_pendiente: set = set()
 
         for item in items_coincidentes:
             marca = str(item.get("marca", "Alcon")).strip()
             familia_nombre = str(item.get("familia_nombre", "Alcon LIO")).strip()
+            codigo_canon = (
+                _extraer_codigo_canonico_lio(familia_nombre)
+                or _extraer_codigo_canonico_lio(item.get("geclisa_nombre"))
+            )
             fam_key = f"{marca.upper()}__{familia_nombre.upper()}"
 
-            # Asegurar que la familia exista
-            if fam_key not in fam_map:
+            # Asegurar que la familia exista sin crear alias duplicados (ej. Alcon SA60AT -> Natural SA60AT)
+            fam_id = fam_map.get(fam_key)
+            fam_match = fam_by_id.get(fam_id) if fam_id else None
+            if not fam_id:
+                fam_match = _buscar_familia_existente_por_nombre_o_codigo(
+                    familias_existentes,
+                    marca,
+                    familia_nombre,
+                    item.get("geclisa_nombre"),
+                )
+                if fam_match:
+                    fam_id = fam_match["id"]
+                    fam_map[fam_key] = fam_id
+
+            if not fam_id:
+                modelo_a_crear = (
+                    _MODELO_CANONICO_PREFERIDO_POR_CODIGO.get(codigo_canon, familia_nombre)
+                    if codigo_canon
+                    else familia_nombre
+                )
                 nueva_fam_payload = {
                     "marca": marca,
-                    "modelo": familia_nombre,
+                    "modelo": modelo_a_crear,
                     "tipo_optica": item.get("tipo_optica", "Monofocal Asférico"),
                     "constante_a": item.get("constante_a", 118.9),
                     "acd_estimado": item.get("acd_estimado", 5.0),
-                    "admite_toricos": item.get("admite_toricos", False),
+                    "admite_toricos": bool(item.get("admite_toricos", False) or item.get("es_torico", False)),
                     "apto_sulcus": item.get("apto_sulcus", False),
                     "activo": True,
                     "created_at": "now()",
@@ -9368,13 +10891,17 @@ def sincronizar_lentes_masivos(items_coincidentes: List[Dict[str, Any]]) -> Dict
                 }
                 crear_res = supabase.table("modelos_lio").insert(nueva_fam_payload).execute()
                 if crear_res.data:
-                    fam_id = crear_res.data[0]["id"]
+                    fam_nueva = crear_res.data[0]
+                    fam_id = fam_nueva["id"]
+                    familias_existentes.append(fam_nueva)
+                    fam_by_id[fam_id] = fam_nueva
                     fam_map[fam_key] = fam_id
+                    fam_map[f"{marca.upper()}__{modelo_a_crear.upper()}"] = fam_id
                     nuevas_familias_count += 1
                 else:
                     continue
-            else:
-                fam_id = fam_map[fam_key]
+            elif item.get("es_torico") and fam_match and not fam_match.get("admite_toricos"):
+                familias_con_torico_pendiente.add(fam_id)
 
             # Verificar si el GTIN ya está registrado
             gtin_cod = str(item.get("geclisa_ele_cod", "")).strip()
@@ -9404,6 +10931,15 @@ def sincronizar_lentes_masivos(items_coincidentes: List[Dict[str, Any]]) -> Dict
                     resultado_items.append({**item, "estado": "SINCRONIZADO", "modelo_lio_id": fam_id, "id": res_item["id"]})
             except Exception as e_s:
                 logger.warning(f"Aviso sync item {gtin_cod}: {e_s}")
+
+        for fid in familias_con_torico_pendiente:
+            try:
+                supabase.table("modelos_lio").update({
+                    "admite_toricos": True,
+                    "updated_at": "now()"
+                }).eq("id", fid).execute()
+            except Exception as e_tor:
+                logger.warning(f"Aviso actualización admite_toricos familia {fid}: {e_tor}")
 
         return {
             "total_analizados": len(items_coincidentes),
@@ -10385,6 +11921,24 @@ def crear_item_catalogo_maestro(datos: Dict[str, Any]) -> Dict[str, Any]:
             "updated_at": "now()"
         }
 
+        if payload.get("categoria") == "LIO" and (
+            not payload.get("modelo_lio_id")
+            or str(payload.get("familia_nombre") or "").strip().lower() == "alcon sa60at"
+        ):
+            try:
+                familias_act = get_modelos_lio(solo_activos=False)
+                fam_resuelta = _buscar_familia_existente_por_nombre_o_codigo(
+                    familias_act,
+                    payload.get("marca") or "",
+                    payload.get("familia_nombre") or "",
+                    f"{payload.get('nombre_producto') or ''} {datos.get('ref_fabricante') or ''}",
+                )
+                if fam_resuelta:
+                    payload["modelo_lio_id"] = fam_resuelta["id"]
+                    payload["familia_nombre"] = fam_resuelta.get("modelo") or payload.get("familia_nombre")
+            except Exception as e_fam:
+                logger.debug(f"Aviso resolución familia canónica en catalogo maestro: {e_fam}")
+
         res = supabase.table("catalogo_maestro_gtin").upsert(payload, on_conflict="gtin_14").execute()
         item_creado = res.data[0] if res.data else {}
 
@@ -10400,6 +11954,11 @@ def crear_item_catalogo_maestro(datos: Dict[str, Any]) -> Dict[str, Any]:
                     "es_torico": payload.get("es_torico", False),
                     "torico_valor": payload.get("torico_valor")
                 })
+                if payload.get("es_torico"):
+                    supabase.table("modelos_lio").update({
+                        "admite_toricos": True,
+                        "updated_at": "now()"
+                    }).eq("id", payload["modelo_lio_id"]).execute()
             except Exception as e_m:
                 logger.debug(f"Aviso sync modelos_lio_items en crear catalogo maestro: {e_m}")
 
@@ -11189,6 +12748,7 @@ def registrar_quick_recontacto_asesoria(asesoria_id: str, payload: Dict[str, Any
             datos_upd["estado"] = "confirmado"
             datos_upd["proxima_accion_fecha"] = None
             datos_upd["proxima_accion_texto"] = None
+            _validar_lio_definido_para_confirmacion({**caso, **datos_upd})
             evolucion_texto = f"🎉 [Recontacto Exitoso] El paciente confirmó su decisión quirúrgica. Avanza a etapa 'Confirmados'."
             if nota:
                 evolucion_texto += f" Detalle: {nota}"
