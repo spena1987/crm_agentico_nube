@@ -7728,7 +7728,7 @@ COLUMN_KEYS_TURNOS_QUIROFANO = {
     "practica_codigo", "practica_nombre", "codigo_obra_social", "obra_social", "plan_obra_social",
     "token_autorizacion", "lente_tipo", "lente_dioptria", "lente_lote", "lente_serie", "lente_vencimiento", "lente_foto_url",
     "checklist_seguridad_quirurgica", "parte_quirurgico_pdf_url", "tipo_anestesia",
-    "checks_adicionales", "estado", "consentimiento_estado", "consentimiento_token",
+    "checks_adicionales", "estado", "motivo_cancelacion", "consentimiento_estado", "consentimiento_token",
     "consentimiento_pdf_url", "consentimiento_enviado_at", "consentimiento_firmado_at",
     "consentimiento_firma_ip", "consentimiento_firma_img", "observaciones", "usuario_alta",
     "lio_calculado", "lio_calculado_at", "lio_calculado_por", "lio_calculo_opciones",
@@ -8067,7 +8067,10 @@ def evaluar_y_sincronizar_estado_caso_quirurgico(asesoria_id: str, turno_origen:
         ojo_caso = (asesoria.get("ojo") or "OD").upper()
         checklist = asesoria.get("checklist_prequirurgico") or {}
         meta_bilateral = checklist.get("_meta_bilateral") or {}
-        es_bilateral = (ojo_caso == "AO") or bool(meta_bilateral) or (asesoria.get("modalidad_bilateral") in ["escalonada", "simultanea"])
+        tiene_meta_bilateral_real = isinstance(meta_bilateral, dict) and (
+            meta_bilateral.get("modalidad") in ["escalonada", "simultanea"]
+        )
+        es_bilateral = (ojo_caso == "AO") or tiene_meta_bilateral_real or (asesoria.get("modalidad_bilateral") in ["escalonada", "simultanea"])
         
         # 2. Obtener todos los turnos no cancelados de esta asesoría (y del paciente como fallback)
         res_turnos = supabase.table("turnos_quirofano").select("*").eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
