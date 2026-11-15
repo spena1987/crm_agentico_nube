@@ -393,17 +393,19 @@ export default function EstudiosTecnicosPage() {
 
     fetchHistorial()
 
-    // Si el usuario no tiene geclisa_pre_id en su perfil, cargar lista de prestadores para selección rápida
+    // Si el usuario no tiene geclisa_pre_id en su perfil, cargar lista de prestadores activos del catálogo
     if (!profile?.geclisa_pre_id) {
-      apiFetch('/api/geclisa/prestadores')
+      apiFetch('/api/prestadores?solo_activos=true&roles=Cirujano,Otro')
         .then(r => (r.ok ? r.json() : null))
         .then(d => {
           if (d?.prestadores) {
             setPrestadoresGeclisa(
-              d.prestadores.map((p: any) => ({
-                id: p.PreId || p.id,
-                nombre: p.NombreCompleto || p.nombre || `Prestador #${p.PreId}`
-              }))
+              d.prestadores
+                .filter((p: any) => p.geclisa_pre_id != null)
+                .map((p: any) => ({
+                  id: p.geclisa_pre_id,
+                  nombre: p.nombre_apellido || `Prestador #${p.geclisa_pre_id}`
+                }))
             )
           }
         })

@@ -7002,9 +7002,14 @@ def verificar_consentimiento_endpoint(token: str):
 # ====================================================================
 
 @app.get("/api/prestadores")
-def listar_prestadores_endpoint(rol: Optional[str] = None, solo_activos: bool = False):
+def listar_prestadores_endpoint(
+    rol: Optional[str] = None,
+    solo_activos: bool = False,
+    roles: Optional[str] = None,
+):
     try:
-        items = get_prestadores(rol=rol, solo_activos=solo_activos)
+        roles_list = [r.strip() for r in roles.split(",") if r.strip()] if roles else None
+        items = get_prestadores(rol=rol, solo_activos=solo_activos, roles=roles_list)
         return {"success": True, "prestadores": items}
     except Exception as e:
         logger.error(f"Error listando prestadores: {e}")
@@ -7020,12 +7025,51 @@ def crear_prestador_endpoint(payload: Dict[str, Any] = Body(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/prestadores/{prestador_id}")
-def actualizar_prestador_endpoint(prestador_id: str, payload: Dict[str, Any] = Body(...)):
+def actualizar_prestador_endpoint(
+    prestador_id: str,
+    payload: Dict[str, Any] = Body(...),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
     try:
         act = actualizar_prestador(prestador_id, payload)
         return {"success": True, "prestador": act}
     except Exception as e:
         logger.error(f"Error actualizando prestador {prestador_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class LimpiarPrestadoresPayload(BaseModel):
+    dry_run: bool = True
+    ids_a_deshabilitar: Optional[List[str]] = None
+
+
+@app.post("/api/prestadores/limpiar-no-usados")
+def limpiar_prestadores_no_usados_endpoint(
+    payload: LimpiarPrestadoresPayload = Body(default_factory=LimpiarPrestadoresPayload),
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    try:
+        from app.db import limpiar_prestadores_no_usados
+        from app.services.logger_service import log_event
+
+        resultado = limpiar_prestadores_no_usados(
+            dry_run=payload.dry_run,
+            ids_a_deshabilitar=payload.ids_a_deshabilitar,
+        )
+        if not payload.dry_run and resultado.get("actualizados", 0) > 0:
+            log_event(
+                nivel="INFO",
+                modulo="SISTEMA",
+                accion="LIMPIEZA_PRESTADORES",
+                mensaje=(
+                    f"Limpieza de prestadores no utilizados: {resultado['actualizados']} "
+                    f"deshabilitado(s) por {current_user.get('email', 'usuario')}."
+                ),
+                detalles={"ids_deshabilitados": resultado.get("ids_deshabilitados", [])},
+            )
+        return resultado
+    except Exception as e:
+        logger.error(f"Error en limpieza de prestadores no utilizados: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/prestadores/{prestador_id}")
@@ -7135,7 +7179,12 @@ def sincronizar_prestadores_geclisa_endpoint():
     """
     try:
         from app.services.geclisa_client import geclisa_client
-        from app.db import get_prestadores, crear_prestador, actualizar_prestador
+        from app.db import (
+            get_prestadores,
+            crear_prestador,
+            actualizar_prestador,
+            _normalizar_tokens_prestador,
+        )
 
         geclisa_list = geclisa_client.buscar_prestadores("")
         if not geclisa_list:
@@ -7144,6 +7193,11 @@ def sincronizar_prestadores_geclisa_endpoint():
         crm_prestadores = get_prestadores()
         por_pre_id = {p.get("geclisa_pre_id"): p for p in crm_prestadores if p.get("geclisa_pre_id")}
         por_nombre = {p.get("nombre_apellido", "").strip().lower(): p for p in crm_prestadores if p.get("nombre_apellido")}
+        por_tokens = {}
+        for p in crm_prestadores:
+            tk = _normalizar_tokens_prestador(p.get("nombre_apellido") or "")
+            if len(tk) >= 2 and tk not in por_tokens:
+                por_tokens[tk] = p
 
         creados = 0
         actualizados = 0
@@ -7157,12 +7211,17 @@ def sincronizar_prestadores_geclisa_endpoint():
             if not pre_id or not nombre:
                 continue
 
-            # Buscar si ya existe
-            existente = por_pre_id.get(pre_id) or por_nombre.get(nombre.lower())
+            # Buscar si ya existe (preservando activo y rol existentes)
+            tk_g = _normalizar_tokens_prestador(nombre)
+            existente = (
+                por_pre_id.get(pre_id)
+                or por_nombre.get(nombre.lower())
+                or (por_tokens.get(tk_g) if len(tk_g) >= 2 else None)
+            )
 
             if existente:
                 upd = {}
-                if not existente.get("geclisa_pre_id"):
+                if not existente.get("geclisa_pre_id") and pre_id not in por_pre_id:
                     upd["geclisa_pre_id"] = pre_id
                 if matricula and (not existente.get("matricula") or existente.get("matricula") != matricula):
                     upd["matricula"] = matricula
@@ -7170,14 +7229,20 @@ def sincronizar_prestadores_geclisa_endpoint():
                     actualizar_prestador(existente["id"], upd)
                     actualizados += 1
             else:
-                rol = "Cirujano"
+                esp_upper = especialidad.upper()
+                nom_upper = nombre.upper()
+                rol = "Anestesista" if "ANEST" in esp_upper else "Cirujano"
+                es_ruido_admin = any(
+                    kw in nom_upper or kw in esp_upper
+                    for kw in ("RECEPCION", "ASESORAMIENTO", "PEDIDOS MEDICOS", "TECNICO")
+                )
                 payload = {
                     "nombre_apellido": nombre,
                     "matricula": matricula,
                     "rol": rol,
                     "geclisa_pre_id": pre_id,
-                    "especialidad": "Médico Oftalmólogo" if "MEDICO" in especialidad.upper() or "OFTALMO" in especialidad.upper() else especialidad,
-                    "activo": True
+                    "especialidad": "Médico Oftalmólogo" if "MEDICO" in esp_upper or "OFTALMO" in esp_upper else especialidad,
+                    "activo": not es_ruido_admin,
                 }
                 crear_prestador(payload)
                 creados += 1

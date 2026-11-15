@@ -21,9 +21,36 @@ import {
   FileSignature,
   Building2,
   Sparkles,
-  Search
+  Search,
+  Filter,
+  X
 } from 'lucide-react'
-import { BACKEND_URL } from '@/lib/api'
+import { apiFetch, BACKEND_URL } from '@/lib/api'
+
+interface CandidatoLimpieza {
+  id: string
+  nombre_apellido: string
+  rol: string
+  matricula?: string | null
+  especialidad?: string | null
+  geclisa_pre_id?: number | null
+  tiene_firma?: boolean
+  posible_duplicado?: boolean
+}
+
+interface ResumenLimpieza {
+  total_evaluados: number
+  usados_count: number
+  excluidos_instrumentador_count: number
+  candidatos_deshabilitar: CandidatoLimpieza[]
+}
+
+const normalizarTexto = (s?: string | null) =>
+  (s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
 
 interface Prestador {
   id?: string
@@ -55,6 +82,14 @@ export default function PrestadoresSettingsCard() {
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
 
   const [filtroRol, setFiltroRol] = useState<string>('todos')
+  const [busquedaTexto, setBusquedaTexto] = useState<string>('')
+  const [filtroEstado, setFiltroEstado] = useState<'todos' | 'activos' | 'deshabilitados'>('todos')
+  const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [cargandoLimpieza, setCargandoLimpieza] = useState(false)
+  const [ejecutandoLimpieza, setEjecutandoLimpieza] = useState(false)
+  const [modalLimpiezaAbierto, setModalLimpiezaAbierto] = useState(false)
+  const [resumenLimpieza, setResumenLimpieza] = useState<ResumenLimpieza | null>(null)
+  const [seleccionadosLimpieza, setSeleccionadosLimpieza] = useState<Set<string>>(new Set())
   const [prestadorEnEdicion, setPrestadorEnEdicion] = useState<Prestador | null>(null)
   const [mostrandoFormulario, setMostrandoFormulario] = useState(false)
 
@@ -72,7 +107,7 @@ export default function PrestadoresSettingsCard() {
     try {
       setCargando(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/prestadores`)
+      const res = await apiFetch('/api/prestadores')
       const data = await res.json()
       if (data.success && data.prestadores) {
         setPrestadores(data.prestadores)
@@ -138,7 +173,7 @@ export default function PrestadoresSettingsCard() {
     try {
       setSincronizandoGeclisa(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/prestadores/sincronizar-geclisa`, {
+      const res = await apiFetch('/api/prestadores/sincronizar-geclisa', {
         method: 'POST'
       })
       const data = await res.json()
@@ -168,14 +203,13 @@ export default function PrestadoresSettingsCard() {
       setGuardando(true)
       setError(null)
       const esEdicion = !!prestadorEnEdicion.id
-      const url = esEdicion
-        ? `${BACKEND_URL}/api/prestadores/${prestadorEnEdicion.id}`
-        : `${BACKEND_URL}/api/prestadores`
+      const path = esEdicion
+        ? `/api/prestadores/${prestadorEnEdicion.id}`
+        : `/api/prestadores`
       const method = esEdicion ? 'PUT' : 'POST'
 
-      const res = await fetch(url, {
+      const res = await apiFetch(path, {
         method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(prestadorEnEdicion)
       })
 
@@ -272,11 +306,83 @@ export default function PrestadoresSettingsCard() {
     }
   }
 
+  const handleToggleActivo = async (p: Prestador) => {
+    if (!p.id) return
+    const nuevoEstado = !p.activo
+    setTogglingId(p.id)
+    setError(null)
+    setPrestadores((prev) => prev.map((item) => (item.id === p.id ? { ...item, activo: nuevoEstado } : item)))
+    try {
+      const res = await apiFetch(`/api/prestadores/${p.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ activo: nuevoEstado }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || 'No se pudo actualizar el estado del prestador.')
+      }
+      if (data.prestador) {
+        setPrestadores((prev) => prev.map((item) => (item.id === p.id ? data.prestador : item)))
+      }
+    } catch (err: any) {
+      setPrestadores((prev) => prev.map((item) => (item.id === p.id ? { ...item, activo: p.activo } : item)))
+      setError(err.message || 'Error al cambiar visibilidad del prestador.')
+    } finally {
+      setTogglingId(null)
+    }
+  }
+
+  const handleAbrirLimpieza = async () => {
+    try {
+      setCargandoLimpieza(true)
+      setError(null)
+      const res = await apiFetch('/api/prestadores/limpiar-no-usados', {
+        method: 'POST',
+        body: JSON.stringify({ dry_run: true }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || 'No se pudo analizar el uso de prestadores.')
+      }
+      setResumenLimpieza(data)
+      setSeleccionadosLimpieza(new Set((data.candidatos_deshabilitar || []).map((c: CandidatoLimpieza) => c.id)))
+      setModalLimpiezaAbierto(true)
+    } catch (err: any) {
+      setError(err.message || 'Error al previsualizar limpieza de prestadores.')
+    } finally {
+      setCargandoLimpieza(false)
+    }
+  }
+
+  const handleConfirmarLimpieza = async () => {
+    try {
+      setEjecutandoLimpieza(true)
+      setError(null)
+      const ids = Array.from(seleccionadosLimpieza)
+      const res = await apiFetch('/api/prestadores/limpiar-no-usados', {
+        method: 'POST',
+        body: JSON.stringify({ dry_run: false, ids_a_deshabilitar: ids }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || 'No se pudo ejecutar la limpieza.')
+      }
+      setModalLimpiezaAbierto(false)
+      setMensajeExito(`✔ Limpieza completada: ${data.actualizados || 0} prestadores deshabilitados.`)
+      await fetchPrestadores()
+      setTimeout(() => setMensajeExito(null), 5000)
+    } catch (err: any) {
+      setError(err.message || 'Error al deshabilitar prestadores.')
+    } finally {
+      setEjecutandoLimpieza(false)
+    }
+  }
+
   const handleEliminarPrestador = async (id?: string) => {
     if (!id) return
     if (!confirm('¿Desea eliminar este prestador?')) return
     try {
-      const res = await fetch(`${BACKEND_URL}/api/prestadores/${id}`, { method: 'DELETE' })
+      const res = await apiFetch(`/api/prestadores/${id}`, { method: 'DELETE' })
       if (res.ok) {
         setPrestadores((prev) => prev.filter((p) => p.id !== id))
         setMensajeExito('✔ Prestador eliminado.')
@@ -288,8 +394,19 @@ export default function PrestadoresSettingsCard() {
   }
 
   const prestadoresFiltrados = prestadores.filter((p) => {
-    if (filtroRol === 'todos') return true
-    return p.rol === filtroRol
+    if (filtroRol !== 'todos' && p.rol !== filtroRol) return false
+    if (filtroEstado === 'activos' && !p.activo) return false
+    if (filtroEstado === 'deshabilitados' && p.activo) return false
+    const q = normalizarTexto(busquedaTexto)
+    if (q) {
+      const coincide =
+        normalizarTexto(p.nombre_apellido).includes(q) ||
+        normalizarTexto(p.matricula).includes(q) ||
+        normalizarTexto(p.especialidad).includes(q) ||
+        (p.geclisa_pre_id != null && String(p.geclisa_pre_id).includes(q))
+      if (!coincide) return false
+    }
+    return true
   })
 
   return (
@@ -310,7 +427,18 @@ export default function PrestadoresSettingsCard() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleAbrirLimpieza}
+            disabled={cargandoLimpieza}
+            className="inline-flex items-center justify-center gap-2 px-3.5 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 text-xs font-bold rounded-xl border border-amber-500/30 shadow-sm transition-all"
+            title="Detectar y deshabilitar prestadores sin uso en expedientes o turnos"
+          >
+            {cargandoLimpieza ? <Loader2 size={14} className="animate-spin" /> : <Filter size={14} />}
+            <span>{cargandoLimpieza ? 'Analizando...' : 'Limpiar no utilizados'}</span>
+          </button>
+
           <button
             type="button"
             onClick={handleSincronizarGeclisa}
@@ -601,32 +729,79 @@ export default function PrestadoresSettingsCard() {
         </form>
       )}
 
-      {/* Filtros de Rol */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-[var(--border)] text-xs font-bold">
-          {[
-            { id: 'todos', label: 'Todos los Prestadores' },
-            { id: 'Cirujano', label: 'Cirujanos' },
-            { id: 'Anestesista', label: 'Anestesistas' },
-            { id: 'Instrumentador', label: 'Instrumentadores' }
-          ].map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setFiltroRol(item.id)}
-              className={`px-3 py-1 rounded-lg transition-all ${
-                filtroRol === item.id
-                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
-                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+      {/* Buscador y Filtros de Rol / Estado */}
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+          <div className="relative flex-1">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--secondary)]" />
+            <input
+              type="text"
+              value={busquedaTexto}
+              onChange={(e) => setBusquedaTexto(e.target.value)}
+              placeholder="Buscar por nombre, matrícula, especialidad o Geclisa ID..."
+              className="w-full pl-9 pr-8 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-[var(--border)] text-xs text-[var(--foreground)] focus:outline-none focus:border-blue-500"
+            />
+            {busquedaTexto && (
+              <button
+                type="button"
+                onClick={() => setBusquedaTexto('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--secondary)] hover:text-[var(--foreground)]"
+                title="Limpiar búsqueda"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-[var(--border)] text-xs font-bold shrink-0">
+            {[
+              { id: 'todos', label: 'Todos' },
+              { id: 'activos', label: 'Activos' },
+              { id: 'deshabilitados', label: 'Deshabilitados' },
+            ].map((est) => (
+              <button
+                key={est.id}
+                type="button"
+                onClick={() => setFiltroEstado(est.id as any)}
+                className={`px-2.5 py-1 rounded-lg transition-all ${
+                  filtroEstado === est.id
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
+                    : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+                }`}
+              >
+                {est.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <span className="text-xs text-[var(--secondary)] font-mono font-bold">
-          Total: {prestadoresFiltrados.length}
-        </span>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-[var(--border)] text-xs font-bold">
+            {[
+              { id: 'todos', label: 'Todos los Prestadores' },
+              { id: 'Cirujano', label: 'Cirujanos' },
+              { id: 'Otro', label: 'Otros' },
+              { id: 'Anestesista', label: 'Anestesistas' },
+              { id: 'Instrumentador', label: 'Instrumentadores' },
+            ].map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setFiltroRol(item.id)}
+                className={`px-3 py-1 rounded-lg transition-all ${
+                  filtroRol === item.id
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
+                    : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <span className="text-xs text-[var(--secondary)] font-mono font-bold">
+            Total: {prestadoresFiltrados.length}
+          </span>
+        </div>
       </div>
 
       {cargando ? (
@@ -650,29 +825,35 @@ export default function PrestadoresSettingsCard() {
           {prestadoresFiltrados.map((p) => {
             const isCirujano = p.rol === 'Cirujano'
             const isAnest = p.rol === 'Anestesista'
-            const isInst = p.rol === 'Instrumentador'
+            const isOtro = p.rol === 'Otro'
 
             const badgeBg = isCirujano
               ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-900'
               : isAnest
               ? 'bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-900'
+              : isOtro
+              ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-900'
               : 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-900'
 
             const iconBg = isCirujano
               ? 'bg-blue-500/10 text-blue-600 border-blue-500/20'
               : isAnest
               ? 'bg-teal-500/10 text-teal-600 border-teal-500/20'
+              : isOtro
+              ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
               : 'bg-purple-500/10 text-purple-600 border-purple-500/20'
 
             return (
               <div
                 key={p.id}
-                className="p-4 rounded-2xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 flex flex-col justify-between gap-3 hover:border-blue-500/50 transition-all shadow-sm"
+                className={`p-4 rounded-2xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 flex flex-col justify-between gap-3 hover:border-blue-500/50 transition-all shadow-sm ${
+                  !p.activo ? 'opacity-65' : ''
+                }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3">
                     <div className={`p-2.5 rounded-xl border shrink-0 ${iconBg}`}>
-                      {isCirujano ? <Stethoscope size={18} /> : isAnest ? <Syringe size={18} /> : <Scissors size={18} />}
+                      {isCirujano || isOtro ? <Stethoscope size={18} /> : isAnest ? <Syringe size={18} /> : <Scissors size={18} />}
                     </div>
 
                     <div className="space-y-1">
@@ -681,6 +862,11 @@ export default function PrestadoresSettingsCard() {
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeBg}`}>
                           {p.rol}
                         </span>
+                        {!p.activo && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600">
+                            Deshabilitado
+                          </span>
+                        )}
                       </div>
 
                       <p className="text-[11px] text-[var(--secondary)] font-mono flex items-center gap-1">
@@ -707,7 +893,24 @@ export default function PrestadoresSettingsCard() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={p.activo}
+                      disabled={togglingId === p.id}
+                      onClick={() => handleToggleActivo(p)}
+                      title={p.activo ? 'Visible en búsquedas (clic para deshabilitar)' : 'Oculto en búsquedas (clic para habilitar)'}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                        p.activo ? 'bg-emerald-500' : 'bg-slate-400 dark:bg-slate-600'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                          p.activo ? 'translate-x-4' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -773,6 +976,123 @@ export default function PrestadoresSettingsCard() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Modal de vista previa para Limpieza de Prestadores No Utilizados */}
+      {modalLimpiezaAbierto && resumenLimpieza && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="p-4 border-b border-[var(--border)] flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-[var(--foreground)]">
+                  Limpieza de Prestadores No Utilizados (Vista Previa)
+                </h3>
+                <p className="text-[11px] text-[var(--secondary)]">
+                  Evaluados: <strong>{resumenLimpieza.total_evaluados}</strong> • Con uso real: <strong>{resumenLimpieza.usados_count}</strong> • Instrumentadores protegidos: <strong>{resumenLimpieza.excluidos_instrumentador_count}</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalLimpiezaAbierto(false)}
+                className="p-1.5 text-[var(--secondary)] hover:text-[var(--foreground)] rounded-lg"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-3 border-b border-[var(--border)] bg-slate-50 dark:bg-slate-900/40 flex items-center justify-between gap-2 text-xs">
+              <span className="text-[var(--secondary)]">
+                Candidatos a deshabilitar: <strong className="text-[var(--foreground)]">{resumenLimpieza.candidatos_deshabilitar.length}</strong> (seleccionados: <strong>{seleccionadosLimpieza.size}</strong>)
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSeleccionadosLimpieza(new Set(resumenLimpieza.candidatos_deshabilitar.map((c) => c.id)))}
+                  className="px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold hover:bg-blue-500/20"
+                >
+                  Seleccionar todos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSeleccionadosLimpieza(new Set())}
+                  className="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-[var(--foreground)] font-bold hover:bg-slate-300 dark:hover:bg-slate-700"
+                >
+                  Deseleccionar todos
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+              {resumenLimpieza.candidatos_deshabilitar.length === 0 ? (
+                <div className="p-6 text-center text-xs text-[var(--secondary)]">
+                  No se detectaron prestadores sin uso pendientes de deshabilitar.
+                </div>
+              ) : (
+                resumenLimpieza.candidatos_deshabilitar.map((c) => {
+                  const checked = seleccionadosLimpieza.has(c.id)
+                  return (
+                    <label
+                      key={c.id}
+                      className="flex items-center justify-between gap-3 p-2.5 rounded-xl border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-slate-800/40 cursor-pointer text-xs"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const next = new Set(seleccionadosLimpieza)
+                            if (e.target.checked) next.add(c.id)
+                            else next.delete(c.id)
+                            setSeleccionadosLimpieza(next)
+                          }}
+                          className="rounded border-slate-400 text-blue-600 focus:ring-blue-500"
+                        />
+                        <div className="min-w-0">
+                          <p className="font-bold text-[var(--foreground)] truncate">{c.nombre_apellido}</p>
+                          <p className="text-[10px] text-[var(--secondary)] font-mono">
+                            {c.rol} • Mat: {c.matricula || 'S/D'} {c.geclisa_pre_id ? `• Geclisa #${c.geclisa_pre_id}` : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {c.posible_duplicado && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+                            Posible duplicado
+                          </span>
+                        )}
+                        {c.tiene_firma && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/15 text-blue-600 dark:text-blue-300 border border-blue-500/30">
+                            Tiene firma
+                          </span>
+                        )}
+                      </div>
+                    </label>
+                  )
+                })
+              )}
+            </div>
+
+            <div className="p-4 border-t border-[var(--border)] flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setModalLimpiezaAbierto(false)}
+                disabled={ejecutandoLimpieza}
+                className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmarLimpieza}
+                disabled={ejecutandoLimpieza || seleccionadosLimpieza.size === 0}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5"
+              >
+                {ejecutandoLimpieza && <Loader2 size={14} className="animate-spin" />}
+                <span>Deshabilitar ({seleccionadosLimpieza.size})</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

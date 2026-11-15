@@ -152,7 +152,8 @@ export default function FichaTurnoModal({
   }
 
 
-  // Prestadores cargados desde Ajustes (Instrumentadores y Anestesistas)
+  // Prestadores cargados desde Ajustes (Cirujanos/Otro, Instrumentadores y Anestesistas)
+  const [cirujanosActivos, setCirujanosActivos] = useState<any[]>([])
   const [instrumentadores, setInstrumentadores] = useState<any[]>([])
   const [anestesistas, setAnestesistas] = useState<any[]>([])
 
@@ -179,8 +180,8 @@ export default function FichaTurnoModal({
     duracion_minutos: turno?.duracion_minutos || 20,
     ojo: turno?.ojo || casoConfirmadoInicial?.sub_ojo || casoConfirmadoInicial?.ojo || 'OD',
     es_bilateral_escalonada: turno?.es_bilateral_escalonada || false,
-    cirujano_id: turno?.cirujano_id || casoConfirmadoInicial?.medico_cirujano_id || casoConfirmadoInicial?.cirujano_id || 1067,
-    cirujano_nombre: turno?.cirujano_nombre || casoConfirmadoInicial?.medico_cirujano_nombre || casoConfirmadoInicial?.cirujano_nombre || 'ABRAHAM, IRINA',
+    cirujano_id: turno?.cirujano_id ?? casoConfirmadoInicial?.medico_cirujano_id ?? casoConfirmadoInicial?.cirujano_id ?? null,
+    cirujano_nombre: turno?.cirujano_nombre || casoConfirmadoInicial?.medico_cirujano_nombre || casoConfirmadoInicial?.cirujano_nombre || '',
     medico_derivador_nombre: turno?.medico_derivador_nombre || turno?.asesorias_quirurgicas?.medico_derivador_nombre || casoConfirmadoInicial?.medico_derivador_nombre || '',
     instrumentador_nombre: turno?.instrumentador_nombre || '',
     anestesiologo_nombre: turno?.anestesiologo_nombre || '',
@@ -404,6 +405,7 @@ export default function FichaTurnoModal({
         }
         if (dataPrestadores.success && dataPrestadores.prestadores) {
           const allPrestadores = dataPrestadores.prestadores
+          setCirujanosActivos(allPrestadores.filter((p: any) => p.rol === 'Cirujano' || p.rol === 'Otro'))
           setInstrumentadores(allPrestadores.filter((p: any) => p.rol === 'Instrumentador'))
           setAnestesistas(allPrestadores.filter((p: any) => p.rol === 'Anestesista'))
         }
@@ -1694,26 +1696,50 @@ export default function FichaTurnoModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
               <div>
                 <label className="text-[11px] font-semibold text-[var(--secondary)]">Cirujano Principal *</label>
-                <input
-                  type="text"
+                <select
                   value={formData.cirujano_nombre}
-                  onChange={(e) => setFormData({ ...formData, cirujano_nombre: e.target.value })}
-                  placeholder="Ej: ABRAHAM, IRINA"
+                  onChange={(e) => {
+                    const nombreSel = e.target.value
+                    const encontrado = cirujanosActivos.find((c) => c.nombre_apellido === nombreSel)
+                    setFormData({
+                      ...formData,
+                      cirujano_nombre: nombreSel,
+                      cirujano_id: encontrado ? (encontrado.geclisa_pre_id ?? null) : (nombreSel ? formData.cirujano_id : null),
+                    })
+                  }}
                   className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold outline-none focus:border-blue-500"
                   required
-                />
+                >
+                  <option value="">-- Seleccionar Cirujano --</option>
+                  {cirujanosActivos.map((cir) => (
+                    <option key={cir.id || cir.matricula} value={cir.nombre_apellido}>
+                      {cir.nombre_apellido} {cir.matricula ? `(Mat. ${cir.matricula})` : ''}
+                    </option>
+                  ))}
+                  {formData.cirujano_nombre && !cirujanosActivos.some((c) => c.nombre_apellido === formData.cirujano_nombre) && (
+                    <option value={formData.cirujano_nombre}>{formData.cirujano_nombre} (Inactivo / Histórico)</option>
+                  )}
+                </select>
               </div>
 
               {/* MÉDICO DERIVADOR (TRAÍDO DE ASESORAMIENTO) */}
               <div>
                 <label className="text-[11px] font-semibold text-[var(--secondary)]">Médico Derivador (Asesoramiento)</label>
-                <input
-                  type="text"
+                <select
                   value={formData.medico_derivador_nombre}
                   onChange={(e) => setFormData({ ...formData, medico_derivador_nombre: e.target.value })}
-                  placeholder="Ej: ABRAHAM, IRINA"
                   className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500 font-medium"
-                />
+                >
+                  <option value="">-- Seleccionar Derivador --</option>
+                  {cirujanosActivos.map((cir) => (
+                    <option key={cir.id || cir.matricula} value={cir.nombre_apellido}>
+                      {cir.nombre_apellido} {cir.matricula ? `(Mat. ${cir.matricula})` : ''}
+                    </option>
+                  ))}
+                  {formData.medico_derivador_nombre && !cirujanosActivos.some((c) => c.nombre_apellido === formData.medico_derivador_nombre) && (
+                    <option value={formData.medico_derivador_nombre}>{formData.medico_derivador_nombre} (Inactivo / Histórico)</option>
+                  )}
+                </select>
               </div>
 
               {/* INSTRUMENTADOR (DESPLEGABLE DE PRESTADORES) */}
@@ -1733,7 +1759,7 @@ export default function FichaTurnoModal({
                     </option>
                   ))}
                   {formData.instrumentador_nombre && !instrumentadores.some((i) => i.nombre_apellido === formData.instrumentador_nombre) && (
-                    <option value={formData.instrumentador_nombre}>{formData.instrumentador_nombre}</option>
+                    <option value={formData.instrumentador_nombre}>{formData.instrumentador_nombre} (Inactivo / Histórico)</option>
                   )}
                 </select>
               </div>
@@ -1755,7 +1781,7 @@ export default function FichaTurnoModal({
                     </option>
                   ))}
                   {formData.anestesiologo_nombre && !anestesistas.some((a) => a.nombre_apellido === formData.anestesiologo_nombre) && (
-                    <option value={formData.anestesiologo_nombre}>{formData.anestesiologo_nombre}</option>
+                    <option value={formData.anestesiologo_nombre}>{formData.anestesiologo_nombre} (Inactivo / Histórico)</option>
                   )}
                 </select>
               </div>

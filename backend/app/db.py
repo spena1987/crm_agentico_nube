@@ -8750,12 +8750,18 @@ def generar_pdf_consentimiento_papel(turno_o_asesoria: Dict[str, Any]) -> str:
 # PRESTADORES DEL EQUIPO QUIRÚRGICO (INSTRUMENTADORES, ANESTESISTAS, ETC.)
 # ====================================================================
 
-def get_prestadores(rol: Optional[str] = None, solo_activos: bool = False) -> List[Dict[str, Any]]:
+def get_prestadores(
+    rol: Optional[str] = None,
+    solo_activos: bool = False,
+    roles: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
     if not supabase:
         return []
     try:
         q = supabase.table("prestadores").select("*")
-        if rol:
+        if roles:
+            q = q.in_("rol", roles)
+        elif rol:
             q = q.eq("rol", rol)
         if solo_activos:
             q = q.eq("activo", True)
@@ -8796,6 +8802,172 @@ def eliminar_prestador(prestador_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error al eliminar prestador {prestador_id}: {e}")
         return False
+
+
+_PRESTADOR_HONORIFICOS = {"dr", "dra", "lic", "prof", "med", "ing"}
+_ROLES_LIMPIABLES_PRESTADOR = ("Cirujano", "Otro", "Anestesista")
+
+
+def _normalizar_tokens_prestador(nombre: str) -> frozenset:
+    """Normaliza un nombre de prestador a un conjunto de tokens sin tildes ni honoríficos."""
+    if not nombre:
+        return frozenset()
+    import unicodedata
+    texto = unicodedata.normalize("NFKD", str(nombre))
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch)).lower()
+    texto = re.sub(r"\([^)]*\)", " ", texto)
+    texto = re.sub(r"[^a-z0-9\s]", " ", texto)
+    tokens = [t for t in texto.split() if t and t not in _PRESTADOR_HONORIFICOS]
+    return frozenset(tokens)
+
+
+def _fetch_all_rows(table: str, columns: str, page_size: int = 1000) -> List[Dict[str, Any]]:
+    """Lee todas las filas de una tabla en bloques para evitar el truncamiento a 1000 filas de PostgREST."""
+    if not supabase:
+        return []
+    rows: List[Dict[str, Any]] = []
+    offset = 0
+    while True:
+        resp = supabase.table(table).select(columns).range(offset, offset + page_size - 1).execute()
+        batch = resp.data or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+    return rows
+
+
+def limpiar_prestadores_no_usados(
+    dry_run: bool = True,
+    ids_a_deshabilitar: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Evalúa prestadores activos (Cirujano, Otro, Anestesista) contra asesorias_quirurgicas
+    y turnos_quirofano, excluyendo estrictamente Instrumentador.
+    """
+    if not supabase:
+        return {
+            "success": False,
+            "total_evaluados": 0,
+            "usados_count": 0,
+            "excluidos_instrumentador_count": 0,
+            "candidatos_deshabilitar": [],
+            "actualizados": 0,
+            "ids_deshabilitados": [],
+        }
+
+    activos = get_prestadores(solo_activos=True)
+    excluidos_instrumentador_count = sum(1 for p in activos if p.get("rol") == "Instrumentador")
+    evaluados = [p for p in activos if p.get("rol") in _ROLES_LIMPIABLES_PRESTADOR]
+
+    asesorias = _fetch_all_rows(
+        "asesorias_quirurgicas",
+        "medico_derivador_id, medico_cirujano_id, medico_derivador_nombre, medico_cirujano_nombre",
+    )
+    turnos = _fetch_all_rows(
+        "turnos_quirofano",
+        "cirujano_id, cirujano_nombre, medico_derivador_nombre, anestesiologo_nombre",
+    )
+
+    ids_usados: set = set()
+    nombres_tokens_usados: set = set()
+
+    for row in asesorias:
+        for col_id in ("medico_derivador_id", "medico_cirujano_id"):
+            val = row.get(col_id)
+            if val is not None:
+                try:
+                    ids_usados.add(int(val))
+                except (TypeError, ValueError):
+                    pass
+        for col_nom in ("medico_derivador_nombre", "medico_cirujano_nombre"):
+            tokens = _normalizar_tokens_prestador(row.get(col_nom) or "")
+            if len(tokens) >= 2:
+                nombres_tokens_usados.add(tokens)
+
+    for row in turnos:
+        val = row.get("cirujano_id")
+        if val is not None:
+            try:
+                ids_usados.add(int(val))
+            except (TypeError, ValueError):
+                pass
+        for col_nom in ("cirujano_nombre", "medico_derivador_nombre", "anestesiologo_nombre"):
+            tokens = _normalizar_tokens_prestador(row.get(col_nom) or "")
+            if len(tokens) >= 2:
+                nombres_tokens_usados.add(tokens)
+
+    nombres_tokens_con_id_usado: set = set()
+    for p in evaluados:
+        pid = p.get("geclisa_pre_id")
+        if pid is not None and pid in ids_usados:
+            tokens = _normalizar_tokens_prestador(p.get("nombre_apellido") or "")
+            if len(tokens) >= 2:
+                nombres_tokens_con_id_usado.add(tokens)
+
+    usados_count = 0
+    candidatos_deshabilitar: List[Dict[str, Any]] = []
+
+    for p in evaluados:
+        pid = p.get("geclisa_pre_id")
+        tokens = _normalizar_tokens_prestador(p.get("nombre_apellido") or "")
+        usado_por_id = pid is not None and pid in ids_usados
+        usado_por_nombre = (
+            len(tokens) >= 2
+            and tokens in nombres_tokens_usados
+            and tokens not in nombres_tokens_con_id_usado
+        )
+        posible_duplicado = (
+            not usado_por_id
+            and len(tokens) >= 2
+            and tokens in nombres_tokens_con_id_usado
+        )
+
+        if usado_por_id or usado_por_nombre:
+            usados_count += 1
+        else:
+            candidatos_deshabilitar.append(
+                {
+                    "id": p.get("id"),
+                    "nombre_apellido": p.get("nombre_apellido"),
+                    "rol": p.get("rol"),
+                    "matricula": p.get("matricula"),
+                    "especialidad": p.get("especialidad"),
+                    "geclisa_pre_id": pid,
+                    "tiene_firma": bool(p.get("firma_url")),
+                    "posible_duplicado": posible_duplicado,
+                }
+            )
+
+    if dry_run:
+        return {
+            "success": True,
+            "total_evaluados": len(evaluados),
+            "usados_count": usados_count,
+            "excluidos_instrumentador_count": excluidos_instrumentador_count,
+            "candidatos_deshabilitar": candidatos_deshabilitar,
+        }
+
+    evaluados_ids = {p.get("id") for p in evaluados if p.get("id")}
+    if ids_a_deshabilitar is not None:
+        if len(ids_a_deshabilitar) == 0:
+            return {"success": True, "actualizados": 0, "ids_deshabilitados": []}
+        target_ids = [pid for pid in ids_a_deshabilitar if pid in evaluados_ids]
+    else:
+        target_ids = [c["id"] for c in candidatos_deshabilitar if c.get("id")]
+
+    if not target_ids:
+        return {"success": True, "actualizados": 0, "ids_deshabilitados": []}
+
+    supabase.table("prestadores").update(
+        {"activo": False, "updated_at": "now()"}
+    ).in_("id", target_ids).in_("rol", list(_ROLES_LIMPIABLES_PRESTADOR)).execute()
+
+    return {
+        "success": True,
+        "actualizados": len(target_ids),
+        "ids_deshabilitados": target_ids,
+    }
 
 
 def _seleccionar_mejor_prestador_candidato(candidatos: List[Dict[str, Any]], clean_nom: str) -> Optional[Dict[str, Any]]:

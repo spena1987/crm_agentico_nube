@@ -50,12 +50,21 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import { formatDateArg } from '@/lib/dateUtils'
 
-interface PrestadorGeclisa {
-  pre_id: number
-  nombre: string
-  matricula: string
-  especialidad?: string
+interface PrestadorCatalogo {
+  id: string
+  geclisa_pre_id: number | null
+  nombre_apellido: string
+  matricula?: string | null
+  especialidad?: string | null
+  rol?: string
 }
+
+const normalizarTextoBusqueda = (s: string) =>
+  (s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
 
 interface PracticaNomenclador {
   codigo: string
@@ -163,7 +172,7 @@ export default function CasoFormularioActivo({
     matricula: caso.medico_derivador_matricula
   })
   const [busquedaDerivador, setBusquedaDerivador] = useState(caso.medico_derivador_nombre || '')
-  const [prestadoresDerivador, setPrestadoresDerivador] = useState<PrestadorGeclisa[]>([])
+  const [prestadoresDerivador, setPrestadoresDerivador] = useState<PrestadorCatalogo[]>([])
   const [buscandoDerivador, setBuscandoDerivador] = useState(false)
   const [mostrarDropdownDerivador, setMostrarDropdownDerivador] = useState(false)
 
@@ -173,7 +182,7 @@ export default function CasoFormularioActivo({
     matricula: caso.medico_cirujano_matricula
   })
   const [busquedaCirujano, setBusquedaCirujano] = useState(caso.medico_cirujano_nombre || '')
-  const [prestadoresCirujano, setPrestadoresCirujano] = useState<PrestadorGeclisa[]>([])
+  const [prestadoresCirujano, setPrestadoresCirujano] = useState<PrestadorCatalogo[]>([])
   const [buscandoCirujano, setBuscandoCirujano] = useState(false)
   const [mostrarDropdownCirujano, setMostrarDropdownCirujano] = useState(false)
 
@@ -955,45 +964,48 @@ export default function CasoFormularioActivo({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [hasUnsavedChanges])
 
-  // Filtrado reactivo en memoria para médicos Geclisa
+  // Filtrado reactivo en memoria (sin tildes) sobre el catálogo curado
   const derivadoresFiltrados = useMemo(() => {
-    const q = (busquedaDerivador || '').trim().toLowerCase()
+    const q = normalizarTextoBusqueda(busquedaDerivador)
     if (!q) return prestadoresDerivador
     return prestadoresDerivador.filter(
       (p) =>
-        (p.nombre && p.nombre.toLowerCase().includes(q)) ||
-        (p.matricula && String(p.matricula).toLowerCase().includes(q)) ||
-        (p.especialidad && p.especialidad.toLowerCase().includes(q))
+        normalizarTextoBusqueda(p.nombre_apellido).includes(q) ||
+        (p.matricula && normalizarTextoBusqueda(String(p.matricula)).includes(q)) ||
+        (p.especialidad && normalizarTextoBusqueda(p.especialidad).includes(q))
     )
   }, [prestadoresDerivador, busquedaDerivador])
 
   const cirujanosFiltrados = useMemo(() => {
-    const q = (busquedaCirujano || '').trim().toLowerCase()
+    const q = normalizarTextoBusqueda(busquedaCirujano)
     if (!q) return prestadoresCirujano
     return prestadoresCirujano.filter(
       (p) =>
-        (p.nombre && p.nombre.toLowerCase().includes(q)) ||
-        (p.matricula && String(p.matricula).toLowerCase().includes(q)) ||
-        (p.especialidad && p.especialidad.toLowerCase().includes(q))
+        normalizarTextoBusqueda(p.nombre_apellido).includes(q) ||
+        (p.matricula && normalizarTextoBusqueda(String(p.matricula)).includes(q)) ||
+        (p.especialidad && normalizarTextoBusqueda(p.especialidad).includes(q))
     )
   }, [prestadoresCirujano, busquedaCirujano])
 
-  // Buscar prestadores en Geclisa
-  const buscarPrestador = async (tipo: 'derivador' | 'cirujano', query: string) => {
-    const qClean = (query || '').trim()
+  // Cargar prestadores activos (Cirujano + Otro) desde el catálogo local de Supabase
+  const buscarPrestador = async (tipo: 'derivador' | 'cirujano', _query?: string) => {
+    const yaCargado =
+      tipo === 'derivador' ? prestadoresDerivador.length > 0 : prestadoresCirujano.length > 0
+    if (yaCargado) return
+
     if (tipo === 'derivador') setBuscandoDerivador(true)
     if (tipo === 'cirujano') setBuscandoCirujano(true)
 
     try {
-      const res = await fetch(`/api/geclisa/prestadores/buscar?query=${encodeURIComponent(qClean)}&q=${encodeURIComponent(qClean)}`)
+      const res = await apiFetch('/api/prestadores?solo_activos=true&roles=Cirujano,Otro')
       const data = await res.json()
       if (res.ok && data.success) {
-        const lista = data.prestadores || []
-        if (tipo === 'derivador') setPrestadoresDerivador(lista)
-        if (tipo === 'cirujano') setPrestadoresCirujano(lista)
+        const lista: PrestadorCatalogo[] = data.prestadores || []
+        setPrestadoresDerivador(lista)
+        setPrestadoresCirujano(lista)
       }
     } catch (err) {
-      console.error('Error buscando prestador en Geclisa:', err)
+      console.error('Error cargando prestadores del catálogo:', err)
     } finally {
       if (tipo === 'derivador') setBuscandoDerivador(false)
       if (tipo === 'cirujano') setBuscandoCirujano(false)
@@ -1867,7 +1879,7 @@ export default function CasoFormularioActivo({
                   ref={derivadorInputRef}
                   type="text"
                   disabled={guardando}
-                  placeholder={esDerivadorInvalido ? "⚠️ Buscar Médico Derivador en Geclisa..." : "Buscar en Geclisa..."}
+                  placeholder={esDerivadorInvalido ? "⚠️ Buscar Médico Derivador en el catálogo..." : "Buscar en el catálogo..."}
                   value={busquedaDerivador}
                   onChange={(e) => {
                     setBusquedaDerivador(e.target.value)
@@ -1894,17 +1906,21 @@ export default function CasoFormularioActivo({
                     {derivadoresFiltrados.length > 0 ? (
                       derivadoresFiltrados.map((p) => (
                         <button
-                          key={p.pre_id}
+                          key={p.id}
                           type="button"
                           onClick={() => {
-                            setMedicoDerivador({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
-                            setBusquedaDerivador(p.nombre)
+                            setMedicoDerivador({
+                              id: p.geclisa_pre_id ?? undefined,
+                              nombre: p.nombre_apellido,
+                              matricula: p.matricula || undefined,
+                            })
+                            setBusquedaDerivador(p.nombre_apellido)
                             setMostrarDropdownDerivador(false)
                           }}
                           className="w-full text-left p-2.5 hover:bg-blue-600/15 text-xs transition-colors group flex items-center justify-between"
                         >
                           <div className="flex flex-col">
-                            <span className="font-bold text-white group-hover:text-blue-300">{p.nombre}</span>
+                            <span className="font-bold text-white group-hover:text-blue-300">{p.nombre_apellido}</span>
                             {p.especialidad && <span className="text-[10px] text-gray-500">{p.especialidad}</span>}
                           </div>
                           <span className="text-[10px] text-gray-400 font-mono shrink-0">Mat: {p.matricula || 'S/M'}</span>
@@ -1912,7 +1928,7 @@ export default function CasoFormularioActivo({
                       ))
                     ) : (
                       <div className="p-3 text-center text-xs text-gray-400 space-y-1.5">
-                        <p className="text-[11px]">No se encontró &quot;{busquedaDerivador}&quot; en Geclisa.</p>
+                        <p className="text-[11px]">No se encontró &quot;{busquedaDerivador}&quot; en el catálogo.</p>
                         <button
                           type="button"
                           onClick={() => {
@@ -1972,7 +1988,7 @@ export default function CasoFormularioActivo({
                   ref={cirujanoInputRef}
                   type="text"
                   disabled={guardando}
-                  placeholder={esCirujanoInvalido ? "⚠️ Buscar Médico Cirujano en Geclisa..." : "Buscar en Geclisa..."}
+                  placeholder={esCirujanoInvalido ? "⚠️ Buscar Médico Cirujano en el catálogo..." : "Buscar en el catálogo..."}
                   value={busquedaCirujano}
                   onChange={(e) => {
                     setBusquedaCirujano(e.target.value)
@@ -1999,17 +2015,21 @@ export default function CasoFormularioActivo({
                     {cirujanosFiltrados.length > 0 ? (
                       cirujanosFiltrados.map((p) => (
                         <button
-                          key={p.pre_id}
+                          key={p.id}
                           type="button"
                           onClick={() => {
-                            setMedicoCirujano({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
-                            setBusquedaCirujano(p.nombre)
+                            setMedicoCirujano({
+                              id: p.geclisa_pre_id ?? undefined,
+                              nombre: p.nombre_apellido,
+                              matricula: p.matricula || undefined,
+                            })
+                            setBusquedaCirujano(p.nombre_apellido)
                             setMostrarDropdownCirujano(false)
                           }}
                           className="w-full text-left p-2.5 hover:bg-emerald-600/15 text-xs transition-colors group flex items-center justify-between"
                         >
                           <div className="flex flex-col">
-                            <span className="font-bold text-white group-hover:text-emerald-300">{p.nombre}</span>
+                            <span className="font-bold text-white group-hover:text-emerald-300">{p.nombre_apellido}</span>
                             {p.especialidad && <span className="text-[10px] text-gray-500">{p.especialidad}</span>}
                           </div>
                           <span className="text-[10px] text-gray-400 font-mono shrink-0">Mat: {p.matricula || 'S/M'}</span>
@@ -2017,7 +2037,7 @@ export default function CasoFormularioActivo({
                       ))
                     ) : (
                       <div className="p-3 text-center text-xs text-gray-400 space-y-1.5">
-                        <p className="text-[11px]">No se encontró &quot;{busquedaCirujano}&quot; en Geclisa.</p>
+                        <p className="text-[11px]">No se encontró &quot;{busquedaCirujano}&quot; en el catálogo.</p>
                         <button
                           type="button"
                           onClick={() => {

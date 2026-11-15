@@ -37,7 +37,7 @@ interface ModalAsignarMedicoProps {
   } | null
   onMedicoAsignado: (pacienteActualizado: any) => void
 }
-import { BACKEND_URL } from '@/lib/api'
+import { apiFetch, BACKEND_URL } from '@/lib/api'
 
 export default function ModalAsignarMedico({
   isOpen,
@@ -77,25 +77,37 @@ export default function ModalAsignarMedico({
     setBusquedaRealizada(true)
 
     try {
-      const endpoint = `${BACKEND_URL}/api/geclisa/prestadores/buscar?query=${encodeURIComponent(query)}`
-      const res = await fetch(endpoint, {
-        headers: { 'Accept': 'application/json' }
-      })
-
+      const res = await apiFetch('/api/prestadores?solo_activos=true&roles=Cirujano,Otro')
       if (!res.ok) {
         const errorText = await res.text()
-        throw new Error(`Error en la consulta a Geclisa (${res.status}): ${errorText}`)
+        throw new Error(`Error al consultar el catálogo (${res.status}): ${errorText}`)
       }
 
       const data = await res.json()
       if (data && data.success && Array.isArray(data.prestadores)) {
-        setResultados(data.prestadores)
+        const norm = (s: string) =>
+          (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+        const qNorm = norm(query)
+        const filtrados: PrestadorGeclisa[] = data.prestadores
+          .filter((p: any) =>
+            !qNorm ||
+            norm(p.nombre_apellido).includes(qNorm) ||
+            norm(String(p.matricula || '')).includes(qNorm) ||
+            norm(p.especialidad || '').includes(qNorm)
+          )
+          .map((p: any) => ({
+            pre_id: p.geclisa_pre_id ?? 0,
+            nombre: p.nombre_apellido,
+            matricula: p.matricula || null,
+            especialidad: p.especialidad || 'Médico Oftalmólogo',
+          }))
+        setResultados(filtrados)
       } else {
         setResultados([])
       }
     } catch (err: any) {
       console.error('Error buscando prestadores:', err)
-      setErrorBusqueda(err.message || 'No se pudo consultar el catálogo de prestadores en Geclisa.')
+      setErrorBusqueda(err.message || 'No se pudo consultar el catálogo de prestadores.')
       setResultados([])
     } finally {
       setLoading(false)
@@ -253,7 +265,7 @@ export default function ModalAsignarMedico({
           {/* Formulario de Búsqueda Estrictamente Bajo Demanda */}
           <form onSubmit={handleBuscar} className="space-y-3">
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-              Buscar en Geclisa (Nombre, Apellido o Matrícula)
+              Buscar en el catálogo (Nombre, Apellido o Matrícula)
             </label>
             <div className="flex gap-2">
               <div className="relative flex-1">
