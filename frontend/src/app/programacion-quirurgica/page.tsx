@@ -49,6 +49,7 @@ function ProgramacionQuirurgicaContent() {
 
   const [vistaPrincipal, setVistaPrincipal] = useState<'agenda' | 'en_vivo'>('agenda')
   const [modoVista, setModoVista] = useState<'dia' | 'semana'>('semana')
+  const [preferenciasListas, setPreferenciasListas] = useState(false)
   const [fechaSeleccionada, setFechaSeleccionada] = useState(new Date().toISOString().slice(0, 10))
   const [quirofanoSeleccionadoId, setQuirofanoSeleccionadoId] = useState<string>('')
   const [cirujanoFiltro, setCirujanoFiltro] = useState<string>('todos')
@@ -64,6 +65,8 @@ function ProgramacionQuirurgicaContent() {
       if (sCir) setCirujanoFiltro(sCir)
     } catch (e) {
       console.warn('Error cargando preferencias de agenda:', e)
+    } finally {
+      setPreferenciasListas(true)
     }
   }, [])
 
@@ -294,7 +297,7 @@ function ProgramacionQuirurgicaContent() {
 
       let listaConfirmados: any[] = (dataCasos.success && Array.isArray(dataCasos.casos)) ? dataCasos.casos : []
 
-      if (listaConfirmados.length === 0) {
+      if (!dataCasos.success) {
         try {
           const resPipe = await apiFetch('/api/pipeline-quirurgico')
           const dataPipe = await resPipe.json()
@@ -333,33 +336,49 @@ function ProgramacionQuirurgicaContent() {
     cargarCasosConfirmados()
   }, [])
 
-  // Carga de turnos según navegación de fecha o modo (sin re-ejecutar por cambio de sala)
+  // Carga de turnos según navegación de fecha o modo (sin re-ejecutar por cambio de sala ni doble disparo inicial)
   useEffect(() => {
+    if (!preferenciasListas) return
     cargarTurnosYBloqueos(cargandoInicial)
-  }, [fechaSeleccionada, modoVista])
+  }, [fechaSeleccionada, modoVista, preferenciasListas])
 
-  // Suscripción Realtime a Supabase desacoplada
+  // Suscripción Realtime a Supabase desacoplada con debounce para evitar ráfagas de recarga
   useEffect(() => {
+    let timerCasos: ReturnType<typeof setTimeout> | null = null
+    let timerTurnos: ReturnType<typeof setTimeout> | null = null
+
+    const scheduleCasos = () => {
+      if (timerCasos) clearTimeout(timerCasos)
+      timerCasos = setTimeout(() => {
+        cargarCasosConfirmados()
+      }, 500)
+    }
+
+    const scheduleTurnos = () => {
+      if (timerTurnos) clearTimeout(timerTurnos)
+      timerTurnos = setTimeout(() => {
+        cargarTurnosYBloqueos(false)
+        cargarCasosConfirmados()
+      }, 500)
+    }
+
     const channel = supabase
       .channel('programacion-quirurgica-realtime')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
-        () => {
-          cargarCasosConfirmados()
-        }
+        scheduleCasos
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'turnos_quirofano' },
-        () => {
-          cargarTurnosYBloqueos(false)
-          cargarCasosConfirmados()
-        }
+        scheduleTurnos
       )
       .subscribe()
 
     return () => {
+      if (timerCasos) clearTimeout(timerCasos)
+      if (timerTurnos) clearTimeout(timerTurnos)
       supabase.removeChannel(channel)
     }
   }, [fechaSeleccionada, modoVista])

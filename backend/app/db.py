@@ -3281,6 +3281,16 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
         return None
 
 
+_LIOS_COMERCIALES_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None, "client_id": None}
+_LIOS_COMERCIALES_CACHE_TTL_SEC = 30.0
+
+
+def _invalidar_cache_lios_comerciales() -> None:
+    _LIOS_COMERCIALES_CACHE["ts"] = 0.0
+    _LIOS_COMERCIALES_CACHE["data"] = None
+    _LIOS_COMERCIALES_CACHE["client_id"] = None
+
+
 def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: Optional[str] = None, solo_habilitados: bool = False) -> List[Dict[str, Any]]:
     """
     Retorna el catálogo de Lentes Intraoculares (LIO) comerciales/genéricos
@@ -3291,6 +3301,19 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
     """
     if not supabase:
         return []
+
+    import time as _time
+    usar_cache_global = (fecha_consulta is None and practica_id is None and not solo_habilitados)
+    sb_id = id(supabase)
+    if usar_cache_global:
+        ahora = _time.monotonic()
+        cached = _LIOS_COMERCIALES_CACHE.get("data")
+        if (
+            cached is not None
+            and _LIOS_COMERCIALES_CACHE.get("client_id") == sb_id
+            and (ahora - float(_LIOS_COMERCIALES_CACHE.get("ts") or 0.0)) < _LIOS_COMERCIALES_CACHE_TTL_SEC
+        ):
+            return [dict(item) for item in cached]
         
     from datetime import date
     fecha_ref = fecha_consulta or date.today().isoformat()
@@ -3464,6 +3487,11 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
                 "habilitado_en_practica": habilitado_en_practica
             })
             
+        if usar_cache_global:
+            _LIOS_COMERCIALES_CACHE["ts"] = _time.monotonic()
+            _LIOS_COMERCIALES_CACHE["data"] = [dict(item) for item in resultados]
+            _LIOS_COMERCIALES_CACHE["client_id"] = sb_id
+
         return resultados
     except Exception as e:
         logger.error(f"Error en obtener_lios_comerciales: {e}")
@@ -8325,6 +8353,24 @@ def _hidratar_lio_metadata_turno(
 
 
 # Turnos Quirúrgicos
+_TURNOS_QUIROFANO_LIST_COLS = (
+    "id, asesoria_id, paciente_id, quirofano_id, fecha_cirugia, hora_inicio, hora_citacion_paciente, "
+    "duracion_minutos, ojo, es_bilateral_escalonada, turno_par_id, secuencia_ojo, "
+    "cirujano_id, cirujano_nombre, ayudante_nombre, anestesiologo_nombre, medico_derivador_nombre, instrumentador_nombre, "
+    "practica_codigo, practica_nombre, codigo_obra_social, obra_social, plan_obra_social, token_autorizacion, "
+    "lleva_lente, lente_tipo, lente_dioptria, lente_lote, lente_serie, lente_vencimiento, lente_foto_url, "
+    "es_torico, lente_torico_valor, lente_torico_eje, lente_incision_grados, "
+    "tipo_anestesia, checks_adicionales, checklist_seguridad_quirurgica, estado, motivo_cancelacion, "
+    "observaciones, observaciones_quirofano, observaciones_intraoperatorias, usuario_alta, created_at, updated_at, "
+    "llegada_at, ingreso_pre_quirofano_at, inicio_cirugia_at, fin_cirugia_at, "
+    "consentimiento_estado, consentimiento_token, consentimiento_pdf_url, consentimiento_enviado_at, consentimiento_firmado_at, "
+    "parte_quirurgico_pdf_url, indicaciones_postqx_enviadas, indicaciones_postqx_enviadas_at, indicaciones_postqx_pdf_url, "
+    "lio_calculado, lio_calculado_at, lio_calculado_por, lio_calculo_opciones, "
+    "lio_stock_reservado, lio_stock_reservado_at, lio_stock_observaciones, lio_opcion_implantada_id, codigo_turno"
+)
+_PACIENTES_RESUMEN_COLS = "id, nombre, dni, telefono, email, obra_social, plan_obra_social, geclisa_ficha_id, fecha_nacimiento"
+
+
 def get_turnos_quirofano(
     fecha_desde: Optional[str] = None, 
     fecha_hasta: Optional[str] = None,
@@ -8336,7 +8382,13 @@ def get_turnos_quirofano(
     if not supabase:
         return []
     try:
-        q = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala, permite_simultaneos, capacidad_simultanea), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo, ojo, checklist_prequirurgico)")
+        select_expr = (
+            f"{_TURNOS_QUIROFANO_LIST_COLS}, "
+            f"pacientes({_PACIENTES_RESUMEN_COLS}), "
+            "quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala, permite_simultaneos, capacidad_simultanea), "
+            "asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo, ojo, checklist_prequirurgico)"
+        )
+        q = supabase.table("turnos_quirofano").select(select_expr)
         if fecha_desde:
             q = q.gte("fecha_cirugia", fecha_desde)
         if fecha_hasta:
@@ -8352,7 +8404,11 @@ def get_turnos_quirofano(
         
         resp = q.order("fecha_cirugia").order("hora_inicio").execute()
         rows = resp.data or []
-        lios_cache = obtener_lios_comerciales() if rows else []
+        necesita_lios = any(
+            r.get("lio_propuesto") is None and (r.get("asesorias_quirurgicas") or r.get("checklist_prequirurgico"))
+            for r in rows
+        )
+        lios_cache = obtener_lios_comerciales() if necesita_lios else []
         return [_hidratar_lio_metadata_turno(r, lios_cache=lios_cache) for r in rows]
     except Exception as e:
         logger.error(f"Error al obtener turnos de quirófano: {e}")
@@ -8527,7 +8583,7 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
     if not supabase:
         return []
     try:
-        resp = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").in_("estado", ["confirmado", "programado"]).order("created_at", desc=True).execute()
+        resp = supabase.table("asesorias_quirurgicas").select(f"*, pacientes({_PACIENTES_RESUMEN_COLS})").in_("estado", ["confirmado", "programado"]).order("created_at", desc=True).execute()
         casos = resp.data or []
         
         # Optimización: Obtener turnos existentes de todas las asesorías en una sola consulta por lotes (evita N+1)
