@@ -93,8 +93,14 @@ export default function TurneroGrid({
   // Generar eje horario dinámico desde la configuración real de los quirófanos
   const slotMinSet = new Set<number>()
   if (modo === 'semana') {
-    const { ini, fin, paso } = getRangoQuirofano(quirofanoActual)
-    for (let m = ini; m < fin; m += paso) {
+    const { ini: qIni, fin: qFin, paso } = getRangoQuirofano(quirofanoActual)
+    const iniGlobal = quirofanos.length > 0
+      ? Math.min(...quirofanos.map((q) => getRangoQuirofano(q).ini))
+      : qIni
+    const finGlobal = quirofanos.length > 0
+      ? Math.max(...quirofanos.map((q) => getRangoQuirofano(q).fin))
+      : qFin
+    for (let m = iniGlobal; m < finGlobal; m += paso) {
       slotMinSet.add(m)
     }
     const fechasSemana = new Set(diasSemana.map((d) => d.fecha))
@@ -610,17 +616,22 @@ export default function TurneroGrid({
                         slotMin < horaAMinutos(b.hora_hasta)
                     )
 
-                    // Si este día no es operativo habitual y no hay turno ni bloqueo en este slot:
-                    if (!estaOperativoEsteDia && turnosInicio.length === 0 && turnosCubriendo.length === 0 && !bloqueo) {
+                    const { ini: qIni, fin: qFin } = getRangoQuirofano(quirofanoActual)
+                    const estaEnHorarioSala = slotMin >= qIni && slotMin < qFin
+
+                    // Si este día u horario no es operativo habitual y no hay turno ni bloqueo en este slot:
+                    if ((!estaOperativoEsteDia || !estaEnHorarioSala) && turnosInicio.length === 0 && turnosCubriendo.length === 0 && !bloqueo) {
                       return (
                         <td
                           key={d.fecha}
                           onClick={() => onSlotClick(qId, horaSlot, d.fecha)}
                           className="p-1 border-r border-[var(--border)] last:border-0 bg-slate-100/50 dark:bg-slate-900/20 select-none opacity-40 hover:opacity-100 hover:bg-blue-500/10 transition-all text-center cursor-pointer group"
-                          title="Día no operativo habitual. Clic para agendar guardia o jornada extraordinaria."
+                          title={!estaOperativoEsteDia
+                            ? 'Día no operativo habitual. Clic para agendar guardia o jornada extraordinaria.'
+                            : 'Fuera del horario habitual de esta sala. Clic para agendar turno extraordinario.'}
                         >
                           <span className="text-[9px] text-slate-400 group-hover:text-blue-600 italic font-medium">
-                            Cerrado (+ Agendar)
+                            {!estaOperativoEsteDia ? 'Cerrado (+ Agendar)' : 'Fuera de horario (+ Agendar)'}
                           </span>
                         </td>
                       )

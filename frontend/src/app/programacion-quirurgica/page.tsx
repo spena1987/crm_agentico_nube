@@ -586,6 +586,9 @@ function ProgramacionQuirurgicaContent() {
                 <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: q.color }} />
                 <span>{q.nombre}</span>
                 <span className="text-[10px] font-mono opacity-80 font-normal">({q.duracion_slot_minutos || 15}m)</span>
+                <span className="text-[9.5px] font-mono opacity-75 font-normal">
+                  {(q.hora_inicio || '08:00').slice(0, 5)}-{(q.hora_fin || '19:00').slice(0, 5)}
+                </span>
                 
                 {/* Badge con conteo de cirugías en esta semana */}
                 <span
