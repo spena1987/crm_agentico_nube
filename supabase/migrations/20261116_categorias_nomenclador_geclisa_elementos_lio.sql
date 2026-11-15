@@ -210,8 +210,7 @@ AS $$
 BEGIN
     IF NEW.nombre IS DISTINCT FROM OLD.nombre THEN
         UPDATE public.nomenclador_practicas
-        SET categoria = NEW.nombre,
-            updated_at = now()
+        SET categoria = NEW.nombre
         WHERE categoria_id = NEW.id
           AND categoria IS DISTINCT FROM NEW.nombre;
     END IF;
@@ -227,8 +226,7 @@ CREATE TRIGGER trg_propagar_nombre_categoria
 
 -- Backfill completo de TODAS las filas (activas e inactivas) en nomenclador_practicas
 UPDATE public.nomenclador_practicas p
-SET categoria_id = public._resolver_categoria_id_nomenclador(p.categoria),
-    updated_at = now()
+SET categoria_id = public._resolver_categoria_id_nomenclador(p.categoria)
 WHERE p.categoria_id IS NULL
    OR p.categoria IS DISTINCT FROM (
        SELECT c.nombre FROM public.nomenclador_categorias c WHERE c.id = p.categoria_id
@@ -251,8 +249,7 @@ SET lios_habilitados = COALESCE(
             )
         ),
         ARRAY[]::TEXT[]
-    ),
-    updated_at = now()
+    )
 WHERE p.lios_habilitados IS NOT NULL
   AND EXISTS (
       SELECT 1
@@ -265,8 +262,7 @@ WHERE p.lios_habilitados IS NOT NULL
 -- Garantizar lios_habilitados = '{}' y requiere_lente = FALSE en prácticas LIO comerciales
 UPDATE public.nomenclador_practicas p
 SET requiere_lente = FALSE,
-    lios_habilitados = ARRAY[]::TEXT[],
-    updated_at = now()
+    lios_habilitados = ARRAY[]::TEXT[]
 FROM public.nomenclador_categorias c
 WHERE p.categoria_id = c.id
   AND c.es_lio_comercial = TRUE
@@ -476,14 +472,12 @@ BEGIN
 
     -- 5.6 Merge idempotente de familias_lio_ids en ICL, ICLT, ICLHE, ICLHT y EXPAND
     UPDATE public.nomenclador_practicas
-    SET familias_lio_ids = COALESCE(familias_lio_ids, '[]'::jsonb) || to_jsonb(v_icl_miopico_id::text),
-        updated_at = now()
+    SET familias_lio_ids = COALESCE(familias_lio_ids, '[]'::jsonb) || to_jsonb(v_icl_miopico_id::text)
     WHERE codigo IN ('ICL', 'ICLT')
       AND NOT COALESCE(familias_lio_ids, '[]'::jsonb) @> to_jsonb(ARRAY[v_icl_miopico_id::text]);
 
     UPDATE public.nomenclador_practicas
-    SET familias_lio_ids = COALESCE(familias_lio_ids, '[]'::jsonb) || to_jsonb(v_icl_hiper_id::text),
-        updated_at = now()
+    SET familias_lio_ids = COALESCE(familias_lio_ids, '[]'::jsonb) || to_jsonb(v_icl_hiper_id::text)
     WHERE codigo IN ('ICLHE', 'ICLHT')
       AND NOT COALESCE(familias_lio_ids, '[]'::jsonb) @> to_jsonb(ARRAY[v_icl_hiper_id::text]);
 
@@ -493,8 +487,7 @@ BEGIN
                 THEN COALESCE(familias_lio_ids, '[]'::jsonb) || to_jsonb(v_expand_id::text)
             ELSE familias_lio_ids
         END,
-        condicion_toricidad = 'esferico',
-        updated_at = now()
+        condicion_toricidad = 'esferico'
     WHERE codigo = 'EXPAND';
 END $$;
 

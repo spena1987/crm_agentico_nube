@@ -2173,7 +2173,6 @@ def listar_catalogo_completo_crm(
         fam_map = _cargar_mapa_modelos_lio_activos()
         cats_map = _cargar_mapa_categorias_nomenclador()
                 
-        cats_map = _cargar_mapa_categorias_nomenclador()
         resultados = []
         for p in practicas:
             cat_info = cats_map.get(str(p.get("categoria_id") or "")) or {}
@@ -3389,7 +3388,6 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
                 return ids_m
             return []
                 
-        cats_map = _cargar_mapa_categorias_nomenclador()
         resultados = []
         for p in practicas:
             cat_info = cats_map.get(str(p.get("categoria_id") or "")) or {}
@@ -4194,10 +4192,14 @@ def _validar_campos_obligatorios_asesoria(
             raise ValueError("El Médico Cirujano (Qx) es obligatorio para guardar el caso quirúrgico.")
 
 
-def _caso_requiere_lente(datos: Dict[str, Any]) -> bool:
+def _caso_requiere_lente(
+    datos: Dict[str, Any],
+    nomenclador_cache: Optional[Dict[str, Dict[str, bool]]] = None,
+) -> bool:
     """
     Determina si un caso quirúrgico requiere LIO Comercial/Propuesto según su práctica en el Nomenclador
     (con respaldo heurístico si la práctica aún no existe en nomenclador_practicas).
+    Si se provee `nomenclador_cache` (`{"by_codigo": ..., "by_nombre": ...}`), evita roundtrips N+1.
     """
     if not isinstance(datos, dict):
         return False
@@ -4207,7 +4209,14 @@ def _caso_requiere_lente(datos: Dict[str, Any]) -> bool:
     cod = str(datos.get("practica_codigo") or "").strip()
     nom = str(datos.get("practica_nombre") or "").strip()
 
-    if supabase and (cod or nom):
+    if nomenclador_cache is not None:
+        by_cod = nomenclador_cache.get("by_codigo") or {}
+        by_nom = nomenclador_cache.get("by_nombre") or {}
+        if cod and cod.upper() in by_cod:
+            return bool(by_cod[cod.upper()])
+        if nom and nom.lower() in by_nom:
+            return bool(by_nom[nom.lower()])
+    elif supabase and (cod or nom):
         try:
             row = None
             if cod:

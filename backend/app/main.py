@@ -9178,14 +9178,35 @@ def cambiar_estado_turno_geclisa_endpoint(turno_id: int, payload: CambiarEstadoT
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _cargar_codigos_requiere_lente() -> set:
+def _cargar_indice_requiere_lente() -> tuple:
+    """
+    Carga en 1 sola consulta el índice de `requiere_lente` por código y nombre para evitar
+    consultas N+1 en `_caso_requiere_lente` y `requiere_calculo_lio`.
+    """
+    codigos_activos: set = set()
+    cache = {"by_codigo": {}, "by_nombre": {}}
     if not supabase:
-        return set()
+        return codigos_activos, cache
     try:
-        resp = supabase.table("nomenclador_practicas").select("codigo").eq("requiere_lente", True).eq("activo", True).execute()
-        return {str(r.get("codigo") or "").strip().upper() for r in (resp.data or []) if r.get("codigo")}
+        resp = supabase.table("nomenclador_practicas").select("codigo, nombre, requiere_lente, activo").execute()
+        for r in (resp.data or []):
+            req = bool(r.get("requiere_lente"))
+            cod = str(r.get("codigo") or "").strip().upper()
+            nom = str(r.get("nombre") or "").strip().lower()
+            if cod:
+                cache["by_codigo"][cod] = req
+                if req and r.get("activo", True) is not False:
+                    codigos_activos.add(cod)
+            if nom:
+                cache["by_nombre"][nom] = req
     except Exception:
-        return set()
+        pass
+    return codigos_activos, cache
+
+
+def _cargar_codigos_requiere_lente() -> set:
+    codigos_activos, _ = _cargar_indice_requiere_lente()
+    return codigos_activos
 
 
 def requiere_calculo_lio(
@@ -9241,12 +9262,17 @@ def listar_pacientes_calculo_lio(
         items = []
         turnos_ojos_vistos = set() # Set of (asesoria_id, ojo)
         lios_cache = obtener_lios_comerciales()
-        codigos_requiere_lente = _cargar_codigos_requiere_lente()
+        codigos_requiere_lente, nomenclador_req_cache = _cargar_indice_requiere_lente()
 
-        # 1. Consultar turnos de quirófano programados / activos
+        # 1. Consultar turnos de quirófano activos (o ya calculados); si hay búsqueda textual, incluir historial no cancelado
         q_turnos = supabase.table("turnos_quirofano").select(
             "*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(*)"
-        ).neq("estado", "cancelado").order("fecha_cirugia", desc=False)
+        )
+        if busqueda and busqueda.strip():
+            q_turnos = q_turnos.neq("estado", "cancelado")
+        else:
+            q_turnos = q_turnos.or_("estado.not.in.(cancelado,operado,realizado),lio_calculado.eq.true")
+        q_turnos = q_turnos.order("fecha_cirugia", desc=False)
 
         res_turnos = q_turnos.execute()
         turnos_data = res_turnos.data or []
@@ -9286,7 +9312,7 @@ def listar_pacientes_calculo_lio(
                 est_as = str(as_rel.get("estado") or "").strip().lower()
                 if est_as not in ("confirmado", "programado"):
                     continue
-                if _caso_requiere_lente(as_rel):
+                if _caso_requiere_lente(as_rel, nomenclador_cache=nomenclador_req_cache):
                     if not lio_propuesto or str(lio_propuesto.get("estado") or "a_definir").strip().lower() == "a_definir":
                         continue
 
@@ -9407,7 +9433,7 @@ def listar_pacientes_calculo_lio(
                 )
                 lio_prop, huella_oj = _resolver_lio_propuesto_ojo(a, ojo_target, lios_cache=lios_cache)
 
-                if not es_calc and _caso_requiere_lente(a):
+                if not es_calc and _caso_requiere_lente(a, nomenclador_cache=nomenclador_req_cache):
                     if not lio_prop or str(lio_prop.get("estado") or "a_definir").strip().lower() == "a_definir":
                         return None
 
