@@ -313,7 +313,7 @@ export default function ItemCasoQuirurgicoAcordeon({
   }, [isExpanded, pacienteId, caso.id, caso.esBorrador])
 
   // Guardar Cambios en Backend (o promover borrador inicial mediante POST)
-  const handleGuardarCambios = async (datosActualizados: Partial<AsesoriaQuirurgica>) => {
+  const handleGuardarCambios = async (datosActualizados: Partial<AsesoriaQuirurgica>): Promise<AsesoriaQuirurgica | null> => {
     setGuardando(true)
     setErrorAccion(null)
     setMensajeGuardado(null)
@@ -356,9 +356,11 @@ export default function ItemCasoQuirurgicoAcordeon({
           : '✔ Caso quirúrgico actualizado correctamente.'
       )
       setTimeout(() => setMensajeGuardado(null), 3000)
+      return casoGuardado
     } catch (err: any) {
       console.error('Error guardando caso:', err)
       setErrorAccion(err.message || 'Error al guardar modificaciones.')
+      return null
     } finally {
       setGuardando(false)
     }

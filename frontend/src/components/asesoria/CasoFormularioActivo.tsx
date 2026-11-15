@@ -95,7 +95,7 @@ interface CasoFormularioActivoProps {
     headerBorder: string
     desc: string
   }>
-  onGuardar: (datosActualizados: Partial<AsesoriaQuirurgica>) => Promise<void>
+  onGuardar: (datosActualizados: Partial<AsesoriaQuirurgica>) => Promise<AsesoriaQuirurgica | null | void>
   onAbrirModalPresupuesto: (datosPractica?: { codigo: string; nombre: string; precio: number; moneda: string }) => void
   onAbrirModalWhatsApp: () => void
   onAbrirRecordatorioQx?: (ojo?: string) => void
@@ -844,13 +844,27 @@ export default function CasoFormularioActivo({
     }
   }
 
-  // Datos biométricos de LIO calculados
+  // Datos biométricos de LIO calculados y trazabilidad G4/G5
   const chkData = checklist || {}
   const lioOD = chkData._lio_calculo_OD
   const lioOI = chkData._lio_calculo_OI
   const esCalcOD = Boolean(lioOD?.lio_calculado)
   const esCalcOI = Boolean(lioOI?.lio_calculado)
   const tieneLioCalculado = Boolean(caso.lio_calculado || esCalcOD || esCalcOI || chkData._lio_calculado)
+  const origenCalculoLio =
+    chkData._origen_calculo ||
+    (esCalcOD ? lioOD?.origen_calculo : undefined) ||
+    (esCalcOI ? lioOI?.origen_calculo : undefined) ||
+    (caso as any).origen_calculo
+  const overrideQuirofanoInfo =
+    chkData._override_quirofano ||
+    (lioOD?.override_quirofano?.activo ? lioOD.override_quirofano : undefined) ||
+    (lioOI?.override_quirofano?.activo ? lioOI.override_quirofano : undefined)
+  const discrepanciaLioInfo =
+    chkData._discrepancia_comercial_clinica ||
+    (lioOD?.discrepancia_comercial_clinica?.hay_discrepancia ? lioOD.discrepancia_comercial_clinica : undefined) ||
+    (lioOI?.discrepancia_comercial_clinica?.hay_discrepancia ? lioOI.discrepancia_comercial_clinica : undefined) ||
+    (caso as any).discrepancia_comercial_clinica
 
   // Validación asistida al hacer clic en las etapas del stepper
   const handleCambiarEstadoStepper = (nuevoEstado: AsesoriaQuirurgica['estado']) => {
@@ -876,6 +890,9 @@ export default function CasoFormularioActivo({
       }
       if (!cirujNombre) {
         faltantes.push('Médico Cirujano')
+      }
+      if (practicaRequiereLente && (lioSeleccion.estado || 'a_definir') === 'a_definir') {
+        faltantes.push('Selección de Lente Intraocular (no puede quedar en "A Definir")')
       }
 
       if (faltantes.length > 0) {
@@ -1308,9 +1325,101 @@ export default function CasoFormularioActivo({
     }
   }
 
+  const buildChecklistPayload = (lioSelOverride: any = lioSeleccion) => ({
+    ...checklist,
+    _pagos: {
+      sena_ars: senaArs,
+      sena_usd: senaUsd,
+      total_ars: calcTotalArs,
+      total_usd: calcTotalUsd
+    },
+    _meta_bilateral: {
+      modalidad: ojo === 'AO' ? modalidadBilateral : null,
+      orden: ojo === 'AO' && modalidadBilateral === 'escalonada' ? ordenOjos : null,
+      fecha_probable_2do_ojo: ojo === 'AO' ? fechaProbable2doOjo || null : null,
+      fecha_definitiva_2do_ojo: ojo === 'AO' ? fechaDefinitiva2doOjo || null : null
+    },
+    _lio_seleccion: {
+      estado: lioSelOverride.estado || 'a_definir',
+      lente_id: lioSelOverride.lente_id || null,
+      lente_nombre:
+        ojo === 'AO' && lioSelOverride.modalidad_bilateral === 'diferenciado'
+          ? `OD: ${lioSelOverride.lente_od || '—'} | OI: ${lioSelOverride.lente_oi || '—'}`
+          : lioSelOverride.lente_nombre || null,
+      lente_codigo: lioSelOverride.lente_codigo || null,
+      precio: lioSelOverride.precio || null,
+      moneda: lioSelOverride.moneda || null,
+      modalidad_bilateral: ojo === 'AO' ? lioSelOverride.modalidad_bilateral || 'mismo_lente' : 'mismo_lente',
+      lente_od: lioSelOverride.lente_od || lioSelOverride.lente_nombre || null,
+      lente_od_id: lioSelOverride.lente_od_id || lioSelOverride.lente_id || null,
+      lente_od_codigo: lioSelOverride.lente_od_codigo || lioSelOverride.lente_codigo || null,
+      lente_od_precio: lioSelOverride.lente_od_precio ?? lioSelOverride.precio ?? null,
+      lente_od_moneda: lioSelOverride.lente_od_moneda || lioSelOverride.moneda || null,
+      lente_oi: lioSelOverride.lente_oi || lioSelOverride.lente_nombre || null,
+      lente_oi_id: lioSelOverride.lente_oi_id || lioSelOverride.lente_id || null,
+      lente_oi_codigo: lioSelOverride.lente_oi_codigo || lioSelOverride.lente_codigo || null,
+      lente_oi_precio: lioSelOverride.lente_oi_precio ?? lioSelOverride.precio ?? null,
+      lente_oi_moneda: lioSelOverride.lente_oi_moneda || lioSelOverride.moneda || null,
+      observaciones: lioSelOverride.observaciones || null
+    },
+    lente_tipo:
+      ojo === 'AO' && lioSelOverride.modalidad_bilateral === 'diferenciado'
+        ? `OD: ${lioSelOverride.lente_od || '—'} | OI: ${lioSelOverride.lente_oi || '—'}`
+        : lioSelOverride.lente_nombre || null
+  })
+
+  const handleActualizarLioComercialSugerido = async (sugerido: any) => {
+    if (!sugerido) return
+    const lioEncontrado = catalogoLios.find(
+      (l) =>
+        (sugerido.lente_id && l.id === sugerido.lente_id) ||
+        (sugerido.lente_codigo && l.codigo === sugerido.lente_codigo) ||
+        l.nombre === sugerido.lente_nombre
+    )
+    const nombreFinal = lioEncontrado?.nombre || sugerido.lente_nombre
+    const idFinal = lioEncontrado?.id || sugerido.lente_id || null
+    const codigoFinal = lioEncontrado?.codigo || sugerido.lente_codigo || null
+    const precioFinal = lioEncontrado?.precio ?? sugerido.precio ?? null
+    const monedaFinal = lioEncontrado?.moneda || sugerido.moneda || 'USD'
+
+    const nextLio = {
+      ...lioSeleccion,
+      estado: lioSeleccion.estado === 'a_definir' ? 'confirmado' : lioSeleccion.estado || 'confirmado',
+      lente_id: idFinal,
+      lente_codigo: codigoFinal,
+      lente_nombre: nombreFinal,
+      precio: precioFinal,
+      moneda: monedaFinal,
+      ...(ojo !== 'OI'
+        ? {
+            lente_od: nombreFinal,
+            lente_od_id: idFinal,
+            lente_od_codigo: codigoFinal,
+            lente_od_precio: precioFinal,
+            lente_od_moneda: monedaFinal
+          }
+        : {}),
+      ...(ojo !== 'OD'
+        ? {
+            lente_oi: nombreFinal,
+            lente_oi_id: idFinal,
+            lente_oi_codigo: codigoFinal,
+            lente_oi_precio: precioFinal,
+            lente_oi_moneda: monedaFinal
+          }
+        : {})
+    }
+    setLioSeleccion(nextLio)
+    await onGuardar({
+      checklist_prequirurgico: buildChecklistPayload(nextLio)
+    })
+    setAvisoValidacion(`✓ LIO Comercial actualizado a "${nombreFinal}" y sincronizado con el cálculo biométrico.`)
+    setTimeout(() => setAvisoValidacion(null), 5000)
+  }
+
   // Guardar Cambios
   // Handler para emitir presupuesto guardando automáticamente el formulario previo
-  const handleEmitirPresupuesto = () => {
+  const handleEmitirPresupuesto = async () => {
     let cleanPracticaNombre = (practicaNombre || '').trim()
     if (!cleanPracticaNombre && busquedaPractica) {
       cleanPracticaNombre = busquedaPractica.replace(/^\[.*?\]\s*/, '').trim()
@@ -1365,52 +1474,17 @@ export default function CasoFormularioActivo({
       fecha_probable_cirugia: fechaProbable || null,
       fecha_definitiva_cirugia: fechaDefinitiva || null,
       ojo: ojo,
-      checklist_prequirurgico: {
-        ...checklist,
-        _pagos: {
-          sena_ars: senaArs,
-          sena_usd: senaUsd,
-          total_ars: calcTotalArs,
-          total_usd: calcTotalUsd
-        },
-        _meta_bilateral: {
-          modalidad: ojo === 'AO' ? modalidadBilateral : null,
-          orden: ojo === 'AO' && modalidadBilateral === 'escalonada' ? ordenOjos : null,
-          fecha_probable_2do_ojo: ojo === 'AO' ? fechaProbable2doOjo || null : null,
-          fecha_definitiva_2do_ojo: ojo === 'AO' ? fechaDefinitiva2doOjo || null : null
-        },
-        _lio_seleccion: {
-          estado: lioSeleccion.estado || 'a_definir',
-          lente_id: lioSeleccion.lente_id || null,
-          lente_nombre: (ojo === 'AO' && lioSeleccion.modalidad_bilateral === 'diferenciado')
-            ? `OD: ${lioSeleccion.lente_od || '—'} | OI: ${lioSeleccion.lente_oi || '—'}`
-            : (lioSeleccion.lente_nombre || null),
-          lente_codigo: lioSeleccion.lente_codigo || null,
-          precio: lioSeleccion.precio || null,
-          moneda: lioSeleccion.moneda || null,
-          modalidad_bilateral: ojo === 'AO' ? lioSeleccion.modalidad_bilateral || 'mismo_lente' : 'mismo_lente',
-          lente_od: lioSeleccion.lente_od || lioSeleccion.lente_nombre || null,
-          lente_od_id: lioSeleccion.lente_od_id || lioSeleccion.lente_id || null,
-          lente_od_codigo: lioSeleccion.lente_od_codigo || lioSeleccion.lente_codigo || null,
-          lente_od_precio: lioSeleccion.lente_od_precio ?? lioSeleccion.precio ?? null,
-          lente_od_moneda: lioSeleccion.lente_od_moneda || lioSeleccion.moneda || null,
-          lente_oi: lioSeleccion.lente_oi || lioSeleccion.lente_nombre || null,
-          lente_oi_id: lioSeleccion.lente_oi_id || lioSeleccion.lente_id || null,
-          lente_oi_codigo: lioSeleccion.lente_oi_codigo || lioSeleccion.lente_codigo || null,
-          lente_oi_precio: lioSeleccion.lente_oi_precio ?? lioSeleccion.precio ?? null,
-          lente_oi_moneda: lioSeleccion.lente_oi_moneda || lioSeleccion.moneda || null,
-          observaciones: lioSeleccion.observaciones || null
-        },
-        lente_tipo: (ojo === 'AO' && lioSeleccion.modalidad_bilateral === 'diferenciado')
-          ? `OD: ${lioSeleccion.lente_od || '—'} | OI: ${lioSeleccion.lente_oi || '—'}`
-          : (lioSeleccion.lente_nombre || null)
-      },
+      checklist_prequirurgico: buildChecklistPayload(),
       proxima_accion_fecha: proximaAccionFecha || null,
       proxima_accion_texto: proximaAccionTexto || null,
       situacion_paciente: situacionPaciente || ''
     }
 
-    onGuardar(payload)
+    const casoPersistido = await onGuardar(payload)
+    const idResultante = casoPersistido?.id || caso.id
+    if (!casoPersistido || String(idResultante).startsWith('draft-')) {
+      return
+    }
 
     onAbrirModalPresupuesto({
       codigo: practicaCodigo || '',
@@ -1457,6 +1531,18 @@ export default function CasoFormularioActivo({
     const etapasPreviasAProgramado = ['derivado', 'en_asesoramiento', 'en_analisis', 'presupuesto_enviado', 'confirmado']
     const estadoEfectivo = (fechaDefinitiva && etapasPreviasAProgramado.includes(estado)) ? 'programado' : estado
 
+    if (
+      ['confirmado', 'programado'].includes(estadoEfectivo) &&
+      practicaRequiereLente &&
+      (lioSeleccion.estado || 'a_definir') === 'a_definir'
+    ) {
+      setAvisoValidacion(
+        `⛔ Gate LIO (G3): No puedes guardar el expediente en estado "${estadoEfectivo.toUpperCase()}" con Lente Intraocular en "A Definir". Selecciona Tentativo o Confirmado con un lente comercial.`
+      )
+      setTimeout(() => setAvisoValidacion(null), 7000)
+      return
+    }
+
     const payload: Partial<AsesoriaQuirurgica> & Record<string, any> = {
       estado: estadoEfectivo,
       cobertura_obra_social: (cobertura || '').trim() || null,
@@ -1477,46 +1563,7 @@ export default function CasoFormularioActivo({
       fecha_probable_cirugia: fechaProbable || null,
       fecha_definitiva_cirugia: fechaDefinitiva || null,
       ojo: ojo,
-      checklist_prequirurgico: {
-        ...checklist,
-        _pagos: {
-          sena_ars: senaArs,
-          sena_usd: senaUsd,
-          total_ars: calcTotalArs,
-          total_usd: calcTotalUsd
-        },
-        _meta_bilateral: {
-          modalidad: ojo === 'AO' ? modalidadBilateral : null,
-          orden: ojo === 'AO' && modalidadBilateral === 'escalonada' ? ordenOjos : null,
-          fecha_probable_2do_ojo: ojo === 'AO' ? fechaProbable2doOjo || null : null,
-          fecha_definitiva_2do_ojo: ojo === 'AO' ? fechaDefinitiva2doOjo || null : null
-        },
-        _lio_seleccion: {
-          estado: lioSeleccion.estado || 'a_definir',
-          lente_id: lioSeleccion.lente_id || null,
-          lente_nombre: (ojo === 'AO' && lioSeleccion.modalidad_bilateral === 'diferenciado')
-            ? `OD: ${lioSeleccion.lente_od || '—'} | OI: ${lioSeleccion.lente_oi || '—'}`
-            : (lioSeleccion.lente_nombre || null),
-          lente_codigo: lioSeleccion.lente_codigo || null,
-          precio: lioSeleccion.precio || null,
-          moneda: lioSeleccion.moneda || null,
-          modalidad_bilateral: ojo === 'AO' ? lioSeleccion.modalidad_bilateral || 'mismo_lente' : 'mismo_lente',
-          lente_od: lioSeleccion.lente_od || lioSeleccion.lente_nombre || null,
-          lente_od_id: lioSeleccion.lente_od_id || lioSeleccion.lente_id || null,
-          lente_od_codigo: lioSeleccion.lente_od_codigo || lioSeleccion.lente_codigo || null,
-          lente_od_precio: lioSeleccion.lente_od_precio ?? lioSeleccion.precio ?? null,
-          lente_od_moneda: lioSeleccion.lente_od_moneda || lioSeleccion.moneda || null,
-          lente_oi: lioSeleccion.lente_oi || lioSeleccion.lente_nombre || null,
-          lente_oi_id: lioSeleccion.lente_oi_id || lioSeleccion.lente_id || null,
-          lente_oi_codigo: lioSeleccion.lente_oi_codigo || lioSeleccion.lente_codigo || null,
-          lente_oi_precio: lioSeleccion.lente_oi_precio ?? lioSeleccion.precio ?? null,
-          lente_oi_moneda: lioSeleccion.lente_oi_moneda || lioSeleccion.moneda || null,
-          observaciones: lioSeleccion.observaciones || null
-        },
-        lente_tipo: (ojo === 'AO' && lioSeleccion.modalidad_bilateral === 'diferenciado')
-          ? `OD: ${lioSeleccion.lente_od || '—'} | OI: ${lioSeleccion.lente_oi || '—'}`
-          : (lioSeleccion.lente_nombre || null)
-      },
+      checklist_prequirurgico: buildChecklistPayload(),
       proxima_accion_fecha: proximaAccionFecha || null,
       proxima_accion_texto: proximaAccionTexto || null,
       situacion_paciente: situacionPaciente || ''
@@ -2519,6 +2566,14 @@ export default function CasoFormularioActivo({
                         <span className="text-[9px] opacity-75">Sin elección aún</span>
                       </button>
                     </div>
+                    {practicaRequiereLente && (lioSeleccion.estado || 'a_definir') === 'a_definir' && (
+                      <div className="p-2 rounded-lg bg-amber-950/50 border border-amber-500/40 text-[10.5px] text-amber-200 flex items-center gap-1.5">
+                        <AlertCircle size={13} className="text-amber-400 shrink-0" />
+                        <span>
+                          Bloqueo operativo (G3): mientras el LIO comercial siga en &quot;A Definir&quot;, no podrás confirmar/programar el caso ni aparecerá en Cálculo de LIO.
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Selector del Lente según Lateralidad */}
@@ -2792,17 +2847,32 @@ export default function CasoFormularioActivo({
             </div>
 
           {/* 3. Tarjeta de Cálculo Biométrico de LIO & Acceso Directo (Módulo Técnico Desacoplado) */}
-          <div className={`p-3.5 rounded-xl border space-y-2 transition-all ${
+          <div className={`p-3.5 rounded-xl border space-y-2.5 transition-all ${
             tieneLioCalculado
               ? 'bg-emerald-950/40 border-emerald-500/40 shadow-sm'
               : 'bg-neutral-950/60 border-[var(--border)] shadow-sm'
           }`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs font-bold">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
                 <Sparkles size={14} className={tieneLioCalculado ? 'text-emerald-400' : 'text-blue-400'} />
                 <span className={tieneLioCalculado ? 'text-emerald-300' : 'text-gray-300'}>
                   {tieneLioCalculado ? 'Cálculo Biométrico de LIO Sellado' : 'Mesa Biométrica & Cálculo de LIO'}
                 </span>
+                {origenCalculoLio === 'quirofano' && (
+                  <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-cyan-500/20 text-cyan-200 border border-cyan-500/40">
+                    🏥 Cargado en Quirófano
+                  </span>
+                )}
+                {overrideQuirofanoInfo?.activo && (
+                  <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/20 text-amber-200 border border-amber-500/40">
+                    ⚠️ Cambio en Quirófano
+                  </span>
+                )}
+                {discrepanciaLioInfo?.hay_discrepancia && (
+                  <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-rose-500/20 text-rose-200 border border-rose-500/40">
+                    ⚠️ Discrepancia Comercial
+                  </span>
+                )}
               </div>
               <a
                 href="/calculo-lio"
@@ -2822,20 +2892,24 @@ export default function CasoFormularioActivo({
             {tieneLioCalculado ? (
               <div className="space-y-1 text-xs text-gray-300 font-mono">
                 {lioOD && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="px-1.5 py-0.2 rounded bg-blue-900/60 text-blue-300 text-[10px] font-bold">OD</span>
                     <span className="text-white font-bold">{lioOD.opciones?.[0]?.modelo || 'Lente OD'}</span>
-                    <span className="text-cyan-400 font-extrabold">+{lioOD.opciones?.[0]?.dioptria || '20.00'} D</span>
+                    <span className="text-cyan-400 font-extrabold">
+                      {lioOD.opciones?.[0]?.dioptria ? `+${lioOD.opciones[0].dioptria} D` : 'Sin dioptría'}
+                    </span>
                     {lioOD.opciones?.[0]?.es_torico && (
                       <span className="text-[10px] text-purple-300">T{lioOD.opciones?.[0]?.torico_valor} @ {lioOD.opciones?.[0]?.torico_eje}°</span>
                     )}
                   </div>
                 )}
                 {lioOI && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-300 text-[10px] font-bold">OI</span>
                     <span className="text-white font-bold">{lioOI.opciones?.[0]?.modelo || 'Lente OI'}</span>
-                    <span className="text-cyan-400 font-extrabold">+{lioOI.opciones?.[0]?.dioptria || '20.00'} D</span>
+                    <span className="text-cyan-400 font-extrabold">
+                      {lioOI.opciones?.[0]?.dioptria ? `+${lioOI.opciones[0].dioptria} D` : 'Sin dioptría'}
+                    </span>
                     {lioOI.opciones?.[0]?.es_torico && (
                       <span className="text-[10px] text-purple-300">T{lioOI.opciones?.[0]?.torico_valor} @ {lioOI.opciones?.[0]?.torico_eje}°</span>
                     )}
@@ -2843,7 +2917,7 @@ export default function CasoFormularioActivo({
                 )}
                 {(!lioOD && !lioOI && caso.lente_tipo) && (
                   <div className="text-white font-bold">
-                    {caso.lente_tipo} (+{caso.lente_dioptria || '21.50'} D)
+                    {caso.lente_tipo} {caso.lente_dioptria ? `(+${caso.lente_dioptria} D)` : ''}
                   </div>
                 )}
               </div>
@@ -2851,6 +2925,65 @@ export default function CasoFormularioActivo({
               <p className="text-[11px] text-gray-400">
                 Define la biometría y selección de lente intraocular para esta práctica en la mesa de cálculo.
               </p>
+            )}
+
+            {overrideQuirofanoInfo?.activo && (
+              <div className="p-2.5 rounded-lg bg-amber-950/50 border border-amber-500/40 space-y-1.5 text-[11px]">
+                <div className="font-bold text-amber-200 flex items-center justify-between gap-2">
+                  <span>Auditoría de Cambio en Quirófano</span>
+                  {overrideQuirofanoInfo.modificado_por && (
+                    <span className="text-[10px] font-normal text-amber-300/80">
+                      por {overrideQuirofanoInfo.modificado_por}
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10.5px]">
+                  <div className="p-1.5 rounded bg-neutral-900/80 border border-neutral-800">
+                    <span className="text-gray-400 block">Cálculo Médico Original:</span>
+                    <strong className="text-gray-200">
+                      {overrideQuirofanoInfo.calculo_medico_original?.modelo || '—'}{' '}
+                      {overrideQuirofanoInfo.calculo_medico_original?.dioptria ? `(${overrideQuirofanoInfo.calculo_medico_original.dioptria} D)` : ''}
+                    </strong>
+                  </div>
+                  <div className="p-1.5 rounded bg-amber-900/30 border border-amber-500/30">
+                    <span className="text-amber-300 block">Aplicado en Quirófano:</span>
+                    <strong className="text-amber-100">
+                      {overrideQuirofanoInfo.lente_aplicado_quirofano?.modelo || '—'}{' '}
+                      {overrideQuirofanoInfo.lente_aplicado_quirofano?.dioptria ? `(${overrideQuirofanoInfo.lente_aplicado_quirofano.dioptria} D)` : ''}
+                    </strong>
+                  </div>
+                </div>
+                {overrideQuirofanoInfo.motivo && (
+                  <p className="text-[10px] text-amber-200/80 italic">Motivo: {overrideQuirofanoInfo.motivo}</p>
+                )}
+              </div>
+            )}
+
+            {discrepanciaLioInfo?.hay_discrepancia && (
+              <div className="p-2.5 rounded-lg bg-rose-950/50 border border-rose-500/40 space-y-2 text-[11px] text-rose-200">
+                <div className="flex items-start gap-2">
+                  <AlertCircle size={14} className="text-rose-400 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-rose-100 block">
+                      Discrepancia entre LIO Comercial y Cálculo Clínico
+                    </span>
+                    <p className="text-[10.5px] text-rose-200/90 leading-relaxed">
+                      {discrepanciaLioInfo.detalle}
+                    </p>
+                  </div>
+                </div>
+                {discrepanciaLioInfo.comercial_sugerido && (
+                  <button
+                    type="button"
+                    onClick={() => handleActualizarLioComercialSugerido(discrepanciaLioInfo.comercial_sugerido)}
+                    disabled={guardando}
+                    className="w-full sm:w-auto px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+                  >
+                    <Sparkles size={12} />
+                    <span>Actualizar LIO Comercial a {discrepanciaLioInfo.comercial_sugerido.lente_nombre}</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
