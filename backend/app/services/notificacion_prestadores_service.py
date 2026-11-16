@@ -152,6 +152,57 @@ class NotificacionPrestadoresService:
         Excluye expresamente turnos asignados a anestesistas o instrumentadores.
         """
         prestadores_map: Dict[str, Dict[str, Any]] = {}
+        resolved_cache: Dict[tuple, Any] = {}
+
+        # Precargar catálogo de prestadores en 1 sola consulta para evitar N+1 (5s -> <400ms)
+        prestadores_catalogo: List[Dict[str, Any]] = []
+        if supabase:
+            try:
+                p_all = supabase.table("prestadores").select("id, nombre_apellido, telefono, geclisa_pre_id, activo").execute()
+                prestadores_catalogo = p_all.data or []
+            except Exception as e_p:
+                logger.warning(f"[NotificacionPrestadores] No se pudo precargar catálogo prestadores: {e_p}")
+
+        def _get_prestador_cached(p_id: Any, p_nom: Optional[str]) -> Any:
+            nom_norm = (p_nom or "").strip().lower()
+            if not p_id and nom_norm in ("", "a designar", "sin asignar"):
+                return None
+            cache_key = (str(p_id or ""), nom_norm)
+            if cache_key in resolved_cache:
+                return resolved_cache[cache_key]
+
+            match = None
+            if prestadores_catalogo:
+                if p_id is not None:
+                    p_id_str = str(p_id).strip()
+                    match = next(
+                        (
+                            p for p in prestadores_catalogo
+                            if str(p.get("id") or "") == p_id_str
+                            or (p.get("geclisa_pre_id") is not None and str(p.get("geclisa_pre_id")) == p_id_str)
+                        ),
+                        None
+                    )
+                if not match and nom_norm:
+                    match = next(
+                        (
+                            p for p in prestadores_catalogo
+                            if (p.get("nombre_apellido") or "").strip().lower() == nom_norm
+                        ),
+                        None
+                    )
+                    if not match:
+                        match = next(
+                            (
+                                p for p in prestadores_catalogo
+                                if nom_norm in (p.get("nombre_apellido") or "").strip().lower()
+                            ),
+                            None
+                        )
+            if not match and not prestadores_catalogo:
+                match = obtener_prestador_por_cirujano(p_id, p_nom)
+            resolved_cache[cache_key] = match
+            return match
 
         for t in turnos:
             cirujano_id = t.get("cirujano_id")
@@ -160,7 +211,7 @@ class NotificacionPrestadoresService:
 
             # 1. Procesar rol de Cirujano Principal
             if cirujano_id or cirujano_nom:
-                p_cir = obtener_prestador_por_cirujano(cirujano_id, cirujano_nom)
+                p_cir = _get_prestador_cached(cirujano_id, cirujano_nom)
                 p_key = str(p_cir.get("id") or p_cir.get("geclisa_pre_id") or cirujano_id or cirujano_nom) if p_cir else (str(cirujano_id) if cirujano_id else cirujano_nom)
                 p_nombre = p_cir.get("nombre_apellido") if p_cir else (cirujano_nom or "Médico Cirujano")
                 p_tel = p_cir.get("telefono") if p_cir else None
@@ -186,7 +237,7 @@ class NotificacionPrestadoresService:
 
             # 2. Procesar rol de Médico Derivador
             if derivador_nom:
-                p_der = obtener_prestador_por_cirujano(None, derivador_nom)
+                p_der = _get_prestador_cached(None, derivador_nom)
                 if p_der:
                     d_key = str(p_der.get("id") or p_der.get("geclisa_pre_id") or derivador_nom)
                     d_nombre = p_der.get("nombre_apellido", derivador_nom)

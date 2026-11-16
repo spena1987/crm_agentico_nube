@@ -52,7 +52,7 @@ class ConfiguracionNotificacionesPayload(BaseModel):
 # ------------------------------------------------------------------------------
 
 @router.get("/destinatarios-status")
-async def get_destinatarios_status(fecha: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")):
+def get_destinatarios_status(fecha: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")):
     """
     Diagnóstico pre-vuelo: analiza los turnos de la fecha y clasifica a los prestadores
     entre listos para envío, sin teléfono registrado y derivadores no resolubles.

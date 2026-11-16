@@ -227,6 +227,7 @@ export default function ModalEnviarIndicacionesQuirofano({
 
       const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/enviar-indicaciones-postqx`, {
         method: 'POST',
+        timeoutMs: 60000,
         body: JSON.stringify({
           telefono_override: telefono.trim(),
           texto_indicaciones: textoIndicaciones,

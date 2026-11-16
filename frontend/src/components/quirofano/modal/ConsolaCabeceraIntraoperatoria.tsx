@@ -17,7 +17,7 @@ import {
   Sparkles,
   Undo2
 } from 'lucide-react'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
 import ModalPausaQuirurgicaOms from './ModalPausaQuirurgicaOms'
 import ModalCartelesPechoA4 from './ModalCartelesPechoA4'
@@ -58,15 +58,18 @@ export default function ConsolaCabeceraIntraoperatoria({
   const handleDescargarParteQx = async () => {
     try {
       setDescargandoPdf(true)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/parte-quirurgico`)
-      const data = await res.json()
+      const res = await apiFetch(`/api/turnos-quirofano/${turno.id}/parte-quirurgico`, {
+        timeoutMs: 25000
+      })
+      const data = await res.json().catch(() => ({}))
       if (res.ok && data.pdf_url) {
         window.open(`${BACKEND_URL}${data.pdf_url}`, '_blank')
       } else {
-        alert('No se pudo generar el Parte Quirúrgico.')
+        alert(data?.detail || data?.error || 'No se pudo generar el Parte Quirúrgico.')
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Error al descargar Parte Quirúrgico:', e)
+      alert(e?.message || 'Error de conexión al generar el Parte Quirúrgico.')
     } finally {
       setDescargandoPdf(false)
     }
@@ -75,10 +78,11 @@ export default function ConsolaCabeceraIntraoperatoria({
   const handleSubirGeclisa = async () => {
     try {
       setSubiendoGeclisa(true)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/subir-parte-quirurgico-geclisa`, {
-        method: 'POST'
+      const res = await apiFetch(`/api/turnos-quirofano/${turno.id}/subir-parte-quirurgico-geclisa`, {
+        method: 'POST',
+        timeoutMs: 65000
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (res.ok && data.success) {
         if (onTurnoActualizado) {
           onTurnoActualizado({
@@ -105,10 +109,11 @@ export default function ConsolaCabeceraIntraoperatoria({
     }
     try {
       setDesvinculandoGeclisa(true)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/desvincular-documento-geclisa/parte_quirurgico`, {
-        method: 'DELETE'
+      const res = await apiFetch(`/api/turnos-quirofano/${turno.id}/desvincular-documento-geclisa/parte_quirurgico`, {
+        method: 'DELETE',
+        timeoutMs: 25000
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (res.ok && data.success) {
         if (onTurnoActualizado) {
           onTurnoActualizado({
@@ -236,7 +241,15 @@ export default function ConsolaCabeceraIntraoperatoria({
               <button
                 type="button"
                 disabled={procesandoEstado}
-                onClick={() => onCambiarEstado('pre_quirofano')}
+                onClick={() => {
+                  const firmado = turno.consentimiento_estado === 'firmado_digital' || turno.consentimiento_estado === 'firmado_papel'
+                  if (!firmado) {
+                    if (!window.confirm('Atención: El paciente no registra Consentimiento Informado firmado. ¿Confirma su ingreso excepcional a Pre-Quirófano?')) {
+                      return
+                    }
+                  }
+                  onCambiarEstado('pre_quirofano')
+                }}
                 className="px-4 py-2.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-cyan-500/30 transition disabled:opacity-50"
               >
                 {procesandoEstado ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
@@ -372,30 +385,12 @@ export default function ConsolaCabeceraIntraoperatoria({
                     <>
                       <Loader2 size={14} className="animate-spin" />
                       <span>Subiendo a Geclisa...</span>
-                      {/* Modal Carteles de Pecho A4 */}
-      {mostrarCartelPecho && (
-        <ModalCartelesPechoA4
-          isOpen={mostrarCartelPecho}
-          onClose={() => setMostrarCartelPecho(false)}
-          turnos={[turno]}
-          initialTurnoId={turno.id}
-        />
-      )}
-    </>
+                    </>
                   ) : (
                     <>
                       <UploadCloud size={14} />
                       <span>📤 Subir a Geclisa</span>
-                      {/* Modal Carteles de Pecho A4 */}
-      {mostrarCartelPecho && (
-        <ModalCartelesPechoA4
-          isOpen={mostrarCartelPecho}
-          onClose={() => setMostrarCartelPecho(false)}
-          turnos={[turno]}
-          initialTurnoId={turno.id}
-        />
-      )}
-    </>
+                    </>
                   )}
                 </button>
               )}

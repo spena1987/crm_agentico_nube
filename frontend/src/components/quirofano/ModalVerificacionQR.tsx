@@ -19,7 +19,7 @@ import {
   Check,
   ExternalLink
 } from 'lucide-react'
-import { BACKEND_URL } from '@/lib/api'
+import { apiFetch } from '@/lib/api'
 import { reproducirBeepExito, reproducirBeepAlerta } from '@/lib/audioFeedback'
 import { normalizarDistorsionTecladoEscaner } from '@/lib/gs1Parser'
 
@@ -57,9 +57,9 @@ export default function ModalVerificacionQR({
       const codigoRawOriginal = codigoParam !== undefined ? codigoParam : (rawQR || `MEDCRM:QX:${turnoId}`)
       const codigoNormalizado = normalizarDistorsionTecladoEscaner(codigoRawOriginal)
 
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/escanear-qr`, {
+      const res = await apiFetch('/api/turnos-quirofano/escanear-qr', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        timeoutMs: 25000,
         body: JSON.stringify({
           codigo_qr: codigoNormalizado,
           estacion: estacion,
@@ -93,16 +93,22 @@ export default function ModalVerificacionQR({
     ejecutarEscaneo()
   }, [isOpen, turnoId, rawQR, estacion])
 
-  // Forzar cambio a un estado específico
+  // Forzar cambio a un estado específico (bloquea bypass de Pausa OMS hacia en_operacion)
   const handleForzarEstado = async (nuevoEstado: string) => {
+    if (nuevoEstado === 'en_operacion') {
+      setError('Para pasar a En Quirófano debe completar la Pausa Quirúrgica OMS desde el botón "Iniciar Cirugía" en la pizarra.')
+      reproducirBeepAlerta()
+      return
+    }
     try {
       setEjecutandoAccion(true)
+      setError(null)
       const codigoRawOriginal = rawQR || `MEDCRM:QX:${turnoId}`
       const codigoNormalizado = normalizarDistorsionTecladoEscaner(codigoRawOriginal)
 
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/escanear-qr`, {
+      const res = await apiFetch('/api/turnos-quirofano/escanear-qr', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        timeoutMs: 25000,
         body: JSON.stringify({
           codigo_qr: codigoNormalizado,
           estacion: estacion,
@@ -111,16 +117,21 @@ export default function ModalVerificacionQR({
         })
       })
 
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (res.ok && data.success) {
         setResultado(data)
         reproducirBeepExito()
         if (onEstadoActualizado && data.turno) {
           onEstadoActualizado(data.turno)
         }
+      } else {
+        setError(data?.detail || data?.error || `Error al actualizar estado (HTTP ${res.status})`)
+        reproducirBeepAlerta()
       }
     } catch (err: any) {
       console.error('Error forzando estado:', err)
+      setError(err?.message || 'Error de conexión al forzar estado.')
+      reproducirBeepAlerta()
     } finally {
       setEjecutandoAccion(false)
     }

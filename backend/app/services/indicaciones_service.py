@@ -1,6 +1,7 @@
 import os
 import logging
 import uuid
+import time
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 import unicodedata
@@ -19,6 +20,23 @@ from app.whatsapp import whatsapp_manager
 from app.services.phone_normalizer import normalize_phone_number
 
 logger = logging.getLogger("indicaciones_service")
+
+_PLANTILLAS_GECLISA_CACHE: Dict[str, Any] = {"data": None, "expires_at": 0.0}
+
+
+def _get_plantillas_geclisa_cached(ttl_seconds: int = 900) -> List[Dict[str, Any]]:
+    """Obtiene el catálogo de plantillas de Geclisa con caché en memoria (TTL 15 min) para evitar bloqueos de red."""
+    now = time.monotonic()
+    if _PLANTILLAS_GECLISA_CACHE["data"] is not None and now < _PLANTILLAS_GECLISA_CACHE["expires_at"]:
+        return _PLANTILLAS_GECLISA_CACHE["data"]
+    try:
+        data = geclisa_client.listar_plantillas_indicaciones_geclisa() or []
+        _PLANTILLAS_GECLISA_CACHE["data"] = data
+        _PLANTILLAS_GECLISA_CACHE["expires_at"] = now + ttl_seconds
+        return data
+    except Exception as e:
+        logger.warning(f"No se pudo consultar catálogo de plantillas Geclisa: {e}")
+        return _PLANTILLAS_GECLISA_CACHE["data"] or []
 
 
 def normalizar_texto(texto: str) -> str:
@@ -177,8 +195,14 @@ def resolver_plantilla_sugerida(
                 "mensaje": f"La práctica '{p_db.get('nombre')}' tiene desactivado el protocolo de indicaciones médicas en el Nomenclador."
             }
 
-    # Obtener catálogo de Geclisa si se requiere buscar plantilla
-    plantillas_geclisa = geclisa_client.listar_plantillas_indicaciones_geclisa()
+    # Carga perezosa (lazy) del catálogo de Geclisa: solo se consulta si Supabase no resuelve la plantilla
+    plantillas_geclisa: Optional[List[Dict[str, Any]]] = None
+
+    def _get_geclisa_plantillas() -> List[Dict[str, Any]]:
+        nonlocal plantillas_geclisa
+        if plantillas_geclisa is None:
+            plantillas_geclisa = _get_plantillas_geclisa_cached()
+        return plantillas_geclisa
 
     # Si la práctica tiene indicaciones HABILITADAS en el Nomenclador:
     if p_db is not None and bool(p_db.get("habilitar_indicaciones", False)):
@@ -354,7 +378,7 @@ def resolver_plantilla_sugerida(
                     if tok in reglas_cirujano:
                         target = reglas_cirujano[tok]
                         if isinstance(target, int):
-                            for p in plantillas_geclisa:
+                            for p in _get_geclisa_plantillas():
                                 if p.get("pimId") == target:
                                     plantilla_seleccionada = {
                                         "geclisa_pim_id": p.get("pimId"),
@@ -384,7 +408,7 @@ def resolver_plantilla_sugerida(
         # c) Plantilla Geclisa por defecto asociada a la práctica
         if not plantilla_seleccionada and p_db.get("geclisa_pim_id_default"):
             pim_target = p_db.get("geclisa_pim_id_default")
-            for p in plantillas_geclisa:
+            for p in _get_geclisa_plantillas():
                 if p.get("pimId") == pim_target:
                     plantilla_seleccionada = {
                         "geclisa_pim_id": p.get("pimId"),
@@ -397,7 +421,7 @@ def resolver_plantilla_sugerida(
 
     # Si aún no hay plantilla o la práctica no estaba en BD, verificar si Geclisa tiene una para este cirujano y técnica
     if not plantilla_seleccionada and cirujano_tokens and prac_norm:
-        for p in plantillas_geclisa:
+        for p in _get_geclisa_plantillas():
             nom_p_norm = normalizar_texto(p.get("pimNombre") or "")
             tiene_medico = any(t in nom_p_norm for t in cirujano_tokens)
             if tiene_medico:
@@ -429,7 +453,7 @@ def resolver_plantilla_sugerida(
             "prestador_resuelto": cirujano_obj,
             "fase_solicitada": fase_norm,
             "mensaje": "Esta práctica no cuenta con un protocolo de indicaciones médicas preconfigurado para esta fase/cirujano. Seleccione una plantilla del catálogo si el cirujano lo solicita.",
-            "total_plantillas_geclisa": len(plantillas_geclisa)
+            "total_plantillas_geclisa": len(plantillas_geclisa) if plantillas_geclisa is not None else 0
         }
 
     return {
@@ -440,7 +464,7 @@ def resolver_plantilla_sugerida(
         "origen_resolucion": origen,
         "prestador_resuelto": cirujano_obj,
         "fase_solicitada": fase_norm,
-        "total_plantillas_geclisa": len(plantillas_geclisa)
+        "total_plantillas_geclisa": len(plantillas_geclisa) if plantillas_geclisa is not None else 0
     }
 
 

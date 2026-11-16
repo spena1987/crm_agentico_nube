@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import PizarraQuirofanoEnVivo from '@/components/quirofano/PizarraQuirofanoEnVivo'
 import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
 import { Activity, CalendarDays } from 'lucide-react'
@@ -55,12 +55,15 @@ export default function QuirofanoEnVivoPage() {
 
       {/* Componente Pizarra en Vivo */}
       <PizarraQuirofanoEnVivo
-        quirofanosIniciales={quirofanos.filter((q) => q.mostrar_en_pizarra !== false)}
+        quirofanosIniciales={useMemo(
+          () => quirofanos.filter((q) => q.mostrar_en_pizarra !== false),
+          [quirofanos]
+        )}
         refreshSignal={refreshTick}
-        onEditarTurno={(t) => {
+        onEditarTurno={useCallback((t: any) => {
           setTurnoSeleccionado(t)
           setModalAbierto(true)
-        }}
+        }, [])}
       />
 
       {/* Modal Ficha de Turno */}

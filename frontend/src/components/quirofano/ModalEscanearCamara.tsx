@@ -36,6 +36,7 @@ export default function ModalEscanearCamara({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const animFrameRef = useRef<number | null>(null)
+  const scanLockRef = useRef<boolean>(false)
 
   useEffect(() => {
     if (!isOpen) {
@@ -105,8 +106,10 @@ export default function ModalEscanearCamara({
   }
 
   const procesarLecturaExitosa = (rawVal: string) => {
+    if (scanLockRef.current) return
     const turnoId = extraerTurnoIdDeQRString(rawVal)
     if (turnoId) {
+      scanLockRef.current = true
       setEscaneadoExito(true)
       detenerCamara()
       setTimeout(() => {
@@ -132,7 +135,7 @@ export default function ModalEscanearCamara({
 
     const detectLoop = async () => {
       const video = videoRef.current
-      if (video && video.readyState >= 2 && !escaneadoExito) {
+      if (video && video.readyState >= 2 && !scanLockRef.current) {
         // Opción A: BarcodeDetector nativo
         if (barcodeDetector) {
           try {

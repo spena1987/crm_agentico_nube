@@ -280,6 +280,7 @@ export default function ModalPausaQuirurgicaOms({
 
       const res = await apiFetch(`/api/turnos-quirofano/${turno.id}/confirmar-pausa-oms`, {
         method: 'POST',
+        timeoutMs: 25000,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })

@@ -309,8 +309,9 @@ export default function ModalDetalleCirugiaEnVivo({
       } else {
         alert(data.detail || data.error || 'Error al actualizar estado')
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error al actualizar estado:', err)
+      alert(err?.message || 'Error de conexión al actualizar estado.')
     } finally {
       setProcesandoEstado(false)
     }
@@ -341,8 +342,9 @@ export default function ModalDetalleCirugiaEnVivo({
       } else {
         alert(data.detail || 'Error al guardar cambios de programación')
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error guardando programación:', err)
+      alert(err?.message || 'Error de conexión al guardar programación.')
     } finally {
       setGuardandoProg(false)
     }
@@ -376,8 +378,9 @@ export default function ModalDetalleCirugiaEnVivo({
         alert(data.detail || data.error || 'Error al guardar notas intraoperatorias')
         return false
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error al guardar notas intraoperatorias:', err)
+      alert(err?.message || 'Error de conexión al guardar notas intraoperatorias.')
       return false
     } finally {
       setGuardandoNotasIntra(false)

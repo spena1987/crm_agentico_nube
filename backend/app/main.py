@@ -7780,7 +7780,7 @@ def obtener_o_generar_parte_quirurgico(turno_id: str):
     """
     try:
         from app.db import supabase
-        from app.services.pdf_service import generar_pdf_parte_quirurgico
+        from app.services.pdf_service import generar_pdf_parte_quirurgico, PDF_DIR
         if not supabase:
             raise HTTPException(status_code=500, detail="Sin conexión a BD")
             
@@ -7789,6 +7789,17 @@ def obtener_o_generar_parte_quirurgico(turno_id: str):
             raise HTTPException(status_code=404, detail="Turno no encontrado")
             
         turno_item = t_resp.data[0]
+        existing_url = turno_item.get("parte_quirurgico_pdf_url") or ""
+        if existing_url.startswith("/static/"):
+            existing_name = existing_url.replace("/static/", "", 1)
+            if os.path.exists(os.path.join(PDF_DIR, existing_name)):
+                return {
+                    "success": True,
+                    "pdf_url": existing_url,
+                    "filename": existing_name,
+                    "turno_id": turno_id
+                }
+
         paciente_data = turno_item.get("pacientes") or {}
         
         pdf_filename = generar_pdf_parte_quirurgico(turno_item, paciente_data)

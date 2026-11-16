@@ -12421,17 +12421,29 @@ def _resolver_ficha_geclisa_paciente(paciente: Dict[str, Any]) -> Optional[int]:
             logger.warning(f"No se pudo resolver Ficha Geclisa por DNI {dni}: {e}")
     return None
 
+_GECLISA_PRESTADORES_CACHE: Dict[str, Any] = {}
+
+
 def _resolver_pre_id_geclisa(cirujano_nombre: Optional[str], cirujano_id: Optional[Any] = None) -> Optional[int]:
     """
     Resuelve el ID de Prestador (PreId) en Geclisa para asociar el archivo en la historia clínica.
-    Busca por nombre en el catálogo de prestadores de Geclisa para máxima precisión.
+    Busca por nombre en el catálogo de prestadores de Geclisa (con caché TTL 15 min) para máxima precisión.
     """
     if cirujano_nombre:
         try:
+            import time
             from app.services.geclisa_client import geclisa_client
             partes = cirujano_nombre.replace("Dr.", "").replace("Dra.", "").replace("Dr", "").replace("Dra", "").strip().split()
             query = partes[0].rstrip(",") if partes else cirujano_nombre
-            matches = geclisa_client.buscar_prestadores(query)
+            cache_key = query.lower().strip()
+            now_m = time.monotonic()
+            cached = _GECLISA_PRESTADORES_CACHE.get(cache_key)
+            if cached and now_m < cached["expires_at"]:
+                matches = cached["data"]
+            else:
+                matches = geclisa_client.buscar_prestadores(query)
+                if matches:
+                    _GECLISA_PRESTADORES_CACHE[cache_key] = {"data": matches, "expires_at": now_m + 900}
             if matches:
                 # 1. Priorizar coincidencia completa de todos los nombres/apellidos
                 for m in matches:

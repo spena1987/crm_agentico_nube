@@ -146,7 +146,7 @@ export default function PizarraQuirofanoEnVivo({
   quirofanosIniciales,
   refreshSignal = 0,
 }: PizarraQuirofanoEnVivoProps) {
-  const [fecha, setFecha] = useState<string>(new Date().toISOString().slice(0, 10))
+  const [fecha, setFecha] = useState<string>(() => getFechaHoyLocal())
   const { user } = useAuth()
   const currentUserName = (user?.user_metadata?.nombre || user?.user_metadata?.full_name || '').trim()
 
@@ -268,7 +268,11 @@ export default function PizarraQuirofanoEnVivo({
     mostrarModalGuiaS224 ||
     alertaConsentimiento ||
     mostrarModalCartelesA4 ||
-    consentimientoModalTurno
+    consentimientoModalTurno ||
+    indicacionesModalTurno ||
+    mostrarModalAgendasWA ||
+    mostrarModalPlanillaA4 ||
+    turnoParaReprogramar
   )
 
   // Motor inteligente de escáner universal (ProSoft S224 / USB HID / Bluetooth)
@@ -606,11 +610,10 @@ export default function PizarraQuirofanoEnVivo({
         )
       )
 
-      // 2. Persistencia asíncrona en backend con reintento ante micro-cortes de red
+      // 2. Persistencia asíncrona en backend (sin reintento automático en mutación para evitar dobles efectos)
       const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/cambiar-estado`, {
         method: 'PUT',
         timeoutMs: 25000,
-        retryOnNetworkError: true,
         body: JSON.stringify({ estado: nuevoEstado, ...(extras || {}) })
       })
       const data = await res.json().catch(() => ({}))
@@ -666,7 +669,8 @@ export default function PizarraQuirofanoEnVivo({
     try {
       setSubiendoGeclisaId(turnoId)
       const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/subir-parte-quirurgico-geclisa`, {
-        method: 'POST'
+        method: 'POST',
+        timeoutMs: 65000
       })
       const data = await res.json()
       if (res.ok && data.success) {
@@ -735,7 +739,8 @@ export default function PizarraQuirofanoEnVivo({
     try {
       setSubiendoConsentimientoId(turnoId)
       const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/subir-consentimiento-geclisa`, {
-        method: 'POST'
+        method: 'POST',
+        timeoutMs: 65000
       })
       const data = await res.json()
       if (res.ok && data.success) {
@@ -798,11 +803,14 @@ export default function PizarraQuirofanoEnVivo({
     }
   }
 
-  // Navegación de fechas
+  // Navegación de fechas en hora local (evita desfase UTC después de las 21:00 ART)
   const cambiarDia = (diasDelta: number) => {
     const d = new Date(fecha + 'T12:00:00')
     d.setDate(d.getDate() + diasDelta)
-    setFecha(d.toISOString().slice(0, 10))
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    setFecha(`${y}-${m}-${day}`)
   }
 
   // Base por sala seleccionada (0 ms en memoria)
@@ -895,9 +903,9 @@ export default function PizarraQuirofanoEnVivo({
               <ChevronLeft size={16} />
             </button>
             <button
-              onClick={() => setFecha(new Date().toISOString().slice(0, 10))}
+              onClick={() => setFecha(getFechaHoyLocal())}
               className={`px-3 py-1 text-xs font-bold rounded-lg transition ${
-                fecha === new Date().toISOString().slice(0, 10)
+                fecha === getFechaHoyLocal()
                   ? 'bg-blue-600 text-white shadow-sm'
                   : 'hover:bg-white dark:hover:bg-slate-700 text-[var(--secondary)]'
               }`}
@@ -1933,13 +1941,18 @@ export default function PizarraQuirofanoEnVivo({
                           onClick={async (e) => {
                             e.stopPropagation()
                             try {
-                              const res = await apiFetch(`/api/turnos-quirofano/${t.id}/parte-quirurgico`)
-                              const data = await res.json()
+                              const res = await apiFetch(`/api/turnos-quirofano/${t.id}/parte-quirurgico`, {
+                                timeoutMs: 25000
+                              })
+                              const data = await res.json().catch(() => ({}))
                               if (res.ok && data.pdf_url) {
                                 window.open(`${BACKEND_URL}${data.pdf_url}`, '_blank')
+                              } else {
+                                alert(data?.detail || data?.error || 'No se pudo generar el Protocolo Quirúrgico.')
                               }
-                            } catch (err) {
+                            } catch (err: any) {
                               console.error('Error abriendo parte Qx:', err)
+                              alert(err?.message || 'Error de conexión al generar el Protocolo Quirúrgico.')
                             }
                           }}
                           className="px-2.5 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 text-[11px] font-bold flex items-center gap-1 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition"
@@ -2087,7 +2100,13 @@ export default function PizarraQuirofanoEnVivo({
             if (turnoActualizado) {
               setTurnos((prev) => prev.map((t) => (t.id === turnoActualizado.id ? { ...t, ...turnoActualizado } : t)))
               if (turnoModalDetalle?.id === turnoActualizado.id) {
-                setTurnoModalDetalle(turnoActualizado)
+                setTurnoModalDetalle((prev: any) => prev ? ({
+                  ...prev,
+                  ...turnoActualizado,
+                  pacientes: turnoActualizado.pacientes || prev.pacientes,
+                  quirofanos: turnoActualizado.quirofanos || prev.quirofanos,
+                  asesorias_quirurgicas: turnoActualizado.asesorias_quirurgicas || prev.asesorias_quirurgicas,
+                }) : turnoActualizado)
               }
             } else {
               await handleCambiarEstado(tId, 'en_operacion')
