@@ -5,17 +5,18 @@ import PizarraQuirofanoEnVivo from '@/components/quirofano/PizarraQuirofanoEnViv
 import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
 import { Activity, CalendarDays } from 'lucide-react'
 import Link from 'next/link'
-import { BACKEND_URL } from '@/lib/api'
+import { apiFetch } from '@/lib/api'
 
 export default function QuirofanoEnVivoPage() {
   const [modalAbierto, setModalAbierto] = useState(false)
   const [turnoSeleccionado, setTurnoSeleccionado] = useState<any | null>(null)
   const [quirofanos, setQuirofanos] = useState<any[]>([])
+  const [refreshTick, setRefreshTick] = useState(0)
 
   useEffect(() => {
     const fetchQ = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/quirofanos?solo_activos=true`)
+        const res = await apiFetch('/api/quirofanos?solo_activos=true')
         const data = await res.json()
         if (data.success && data.quirofanos) {
           setQuirofanos(data.quirofanos)
@@ -54,6 +55,8 @@ export default function QuirofanoEnVivoPage() {
 
       {/* Componente Pizarra en Vivo */}
       <PizarraQuirofanoEnVivo
+        quirofanosIniciales={quirofanos.filter((q) => q.mostrar_en_pizarra !== false)}
+        refreshSignal={refreshTick}
         onEditarTurno={(t) => {
           setTurnoSeleccionado(t)
           setModalAbierto(true)
@@ -72,6 +75,7 @@ export default function QuirofanoEnVivoPage() {
           onSaved={() => {
             setModalAbierto(false)
             setTurnoSeleccionado(null)
+            setRefreshTick((prev) => prev + 1)
           }}
         />
       )}

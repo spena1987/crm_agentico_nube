@@ -11970,7 +11970,7 @@ def get_turnos_dia_ejecucion(
         return []
     try:
         q = supabase.table("turnos_quirofano") \
-            .select("*, pacientes(*), quirofanos(id, nombre, codigo, color, duracion_slot_minutos, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(*)") \
+            .select("*, pacientes(id, nombre, dni, telefono, obra_social, email, fecha_nacimiento), quirofanos(id, nombre, codigo, color, duracion_slot_minutos, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(id, estado, numero_cirugia, ojo_primero, lio_marca, lio_modelo, lio_dioptria)") \
             .eq("fecha_cirugia", fecha)
             
         if not incluir_cancelados:

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   Pill,
   Activity,
@@ -72,7 +72,62 @@ import ModalSuspenderReprogramarTurno from './ModalSuspenderReprogramarTurno'
 
 interface PizarraQuirofanoEnVivoProps {
   onEditarTurno?: (turno: any) => void
+  quirofanosIniciales?: any[]
+  refreshSignal?: number
 }
+
+const CronometroEnOperacion = React.memo(function CronometroEnOperacion({
+  inicioIso,
+  duracionEstimada = 20,
+}: {
+  inicioIso?: string
+  duracionEstimada?: number
+}) {
+  const [nowMs, setNowMs] = useState<number>(() => Date.now())
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const start = inicioIso ? new Date(inicioIso).getTime() : nowMs
+  const diffSec = Math.max(0, Math.floor((nowMs - start) / 1000))
+  const min = Math.floor(diffSec / 60)
+  const sec = diffSec % 60
+  const esExcedidoModerado = min > duracionEstimada && min <= duracionEstimada * 1.3
+  const esExcedidoCritico = min > duracionEstimada * 1.3
+  const minutosExcedidos = Math.max(0, min - duracionEstimada)
+  const texto = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+
+  return (
+    <div className={`px-3 py-1.5 rounded-xl flex items-center gap-2 shadow-sm font-mono transition-all ${
+      esExcedidoCritico
+        ? 'bg-rose-600 text-white animate-pulse border border-rose-400'
+        : esExcedidoModerado
+        ? 'bg-amber-500 text-slate-950 font-bold border border-amber-300'
+        : 'bg-purple-600 text-white'
+    }`}>
+      {esExcedidoCritico || esExcedidoModerado ? (
+        <AlertTriangle size={15} />
+      ) : (
+        <Timer size={15} className="animate-spin" />
+      )}
+      <div className="text-right">
+        <p className="text-[9px] uppercase tracking-wider font-extrabold opacity-90">
+          {esExcedidoCritico ? 'Sobreduración' : esExcedidoModerado ? 'Tiempo Excedido' : 'En Quirófano'}
+        </p>
+        <p className="text-xs font-extrabold">
+          {texto} <span className="text-[10px] opacity-80">/ {duracionEstimada}m</span>
+          {minutosExcedidos > 0 && (
+            <span className="ml-1 text-[10px] font-black underline">
+              (+{minutosExcedidos}m)
+            </span>
+          )}
+        </p>
+      </div>
+    </div>
+  )
+})
 
 const ESTADOS_ORDEN = ['programado', 'en_espera', 'pre_quirofano', 'en_operacion', 'operado']
 
@@ -86,7 +141,11 @@ const NOMBRES_ESTADOS: Record<string, string> = {
   todos: 'Todos'
 }
 
-export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofanoEnVivoProps) {
+export default function PizarraQuirofanoEnVivo({
+  onEditarTurno,
+  quirofanosIniciales,
+  refreshSignal = 0,
+}: PizarraQuirofanoEnVivoProps) {
   const [fecha, setFecha] = useState<string>(new Date().toISOString().slice(0, 10))
   const { user } = useAuth()
   const currentUserName = (user?.user_metadata?.nombre || user?.user_metadata?.full_name || '').trim()
@@ -105,7 +164,8 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [cargando, setCargando] = useState(true)
   const [sincronizando, setSincronizando] = useState(false)
   const [procesandoId, setProcesandoId] = useState<string | null>(null)
-  const [horaActual, setHoraActual] = useState(new Date())
+  const turnosRef = useRef<any[]>([])
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [turnoModalDetalle, setTurnoModalDetalle] = useState<any | null>(null)
   const [turnoParaPausaOms, setTurnoParaPausaOms] = useState<any | null>(null)
   const [subiendoGeclisaId, setSubiendoGeclisaId] = useState<string | null>(null)
@@ -381,14 +441,18 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     setBusqueda('')
   }
 
-  // Ticker de hora actual para cronómetros cada 1 segundo
   useEffect(() => {
-    const timer = setInterval(() => setHoraActual(new Date()), 1000)
-    return () => clearInterval(timer)
-  }, [])
+    turnosRef.current = turnos
+  }, [turnos])
 
-  // Cargar salas de quirófano
+  // Usar salas provistas por la página padre si existen; si no, cargarlas una vez
   useEffect(() => {
+    if (quirofanosIniciales !== undefined) {
+      if (quirofanosIniciales.length > 0) {
+        setQuirofanos(quirofanosIniciales)
+      }
+      return
+    }
     const loadQuirofanos = async () => {
       try {
         const res = await apiFetch('/api/quirofanos?solo_activos=true&solo_pizarra=true')
@@ -401,20 +465,17 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
       }
     }
     loadQuirofanos()
-  }, [])
+  }, [quirofanosIniciales])
 
-  // Cargar turnos del día con soporte de sincronización silenciosa en segundo plano
-  const fetchTurnosDia = async (silencioso = false) => {
+  // Cargar todos los turnos del día (el filtro de sala se aplica en memoria en 0 ms)
+  const fetchTurnosDia = useCallback(async (silencioso = false) => {
     try {
-      if (!silencioso && turnos.length === 0) {
+      if (!silencioso && turnosRef.current.length === 0) {
         setCargando(true)
       } else {
         setSincronizando(true)
       }
-      let url = `/api/turnos-quirofano-dia?fecha=${fecha}&solo_pizarra=true`
-      if (quirofanoFiltro !== 'todos') {
-        url += `&quirofano_id=${quirofanoFiltro}`
-      }
+      const url = `/api/turnos-quirofano-dia?fecha=${fecha}&solo_pizarra=true`
       const res = await apiFetch(url)
       const data = await res.json()
       if (res.ok && data.success) {
@@ -428,24 +489,39 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
       setCargando(false)
       setSincronizando(false)
     }
-  }
+  }, [fecha])
+
+  const scheduleSilentRefresh = useCallback(() => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    debounceTimerRef.current = setTimeout(() => {
+      fetchTurnosDia(true)
+    }, 450)
+  }, [fetchTurnosDia])
 
   useEffect(() => {
-    // Si cambia de fecha o quirófano, recarga con indicador inicial
     setCargando(true)
     fetchTurnosDia(false)
-  }, [fecha, quirofanoFiltro])
+  }, [fetchTurnosDia])
 
-  // Suscripción Realtime a Supabase con Delta Updates incrementales y sin parpadeo de pantalla
+  useEffect(() => {
+    if (refreshSignal > 0) {
+      fetchTurnosDia(true)
+    }
+  }, [refreshSignal, fetchTurnosDia])
+
+  // Suscripción Realtime acotada a la fecha activa y con debounce para evitar ráfagas de red
   useEffect(() => {
     const channel = supabase
       .channel('realtime-pizarra-quirofano-' + fecha)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'turnos_quirofano' },
+        { event: '*', schema: 'public', table: 'turnos_quirofano', filter: `fecha_cirugia=eq.${fecha}` },
         (payload: any) => {
           if (payload.eventType === 'UPDATE' && payload.new?.id) {
-            // Actualización delta reactiva en memoria preservando joins de pacientes y quirofanos
+            if (payload.new.estado === 'cancelado') {
+              setTurnos((prev) => prev.filter((t) => t.id !== payload.new.id))
+              return
+            }
             setTurnos((prev) =>
               prev.map((t) => (t.id === payload.new.id ? {
                 ...t,
@@ -456,24 +532,29 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               } : t))
             )
           } else {
-            fetchTurnosDia(true)
+            scheduleSilentRefresh()
           }
         }
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
-        () => {
-          // Sincronización silenciosa en segundo plano sin desmontar las tarjetas activas
-          fetchTurnosDia(true)
+        (payload: any) => {
+          const changedId = payload.new?.id || payload.old?.id
+          if (!changedId) return
+          const perteneceAHoy = turnosRef.current.some((t) => t.asesoria_id === changedId)
+          if (perteneceAHoy) {
+            scheduleSilentRefresh()
+          }
         }
       )
       .subscribe()
 
     return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
       supabase.removeChannel(channel)
     }
-  }, [fecha, quirofanoFiltro])
+  }, [fecha, scheduleSilentRefresh])
 
   // Cambiar estado del turno con Optimistic UI (0 ms de latencia en pantalla)
   const handleCambiarEstado = async (turnoId: string, nuevoEstado: string, extras?: any) => {
@@ -716,16 +797,22 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     setFecha(d.toISOString().slice(0, 10))
   }
 
+  // Base por sala seleccionada (0 ms en memoria)
+  const turnosPorSala = useMemo(() => {
+    if (quirofanoFiltro === 'todos') return turnos
+    return turnos.filter((t) => t.quirofano_id === quirofanoFiltro)
+  }, [turnos, quirofanoFiltro])
+
   // Métricas del día (6 KPIs)
   const metricas = useMemo(() => {
-    const total = turnos.length
-    const programados = turnos.filter((t) => t.estado === 'programado').length
-    const enEspera = turnos.filter((t) => t.estado === 'en_espera').length
-    const preQuirofano = turnos.filter((t) => t.estado === 'pre_quirofano').length
-    const enOperacion = turnos.filter((t) => t.estado === 'en_operacion').length
-    const operados = turnos.filter((t) => t.estado === 'operado').length
+    const total = turnosPorSala.length
+    const programados = turnosPorSala.filter((t) => t.estado === 'programado').length
+    const enEspera = turnosPorSala.filter((t) => t.estado === 'en_espera').length
+    const preQuirofano = turnosPorSala.filter((t) => t.estado === 'pre_quirofano').length
+    const enOperacion = turnosPorSala.filter((t) => t.estado === 'en_operacion').length
+    const operados = turnosPorSala.filter((t) => t.estado === 'operado').length
     return { total, programados, enEspera, preQuirofano, enOperacion, operados }
-  }, [turnos])
+  }, [turnosPorSala])
 
   // Lista dinámica de cirujanos activos en los turnos del día
   const cirujanosDisponibles = useMemo(() => {
@@ -752,7 +839,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
 
   // Filtrado reactivo por sala, cirujano, pestaña de estado múltiple y búsqueda en vivo
   const turnosFiltrados = useMemo(() => {
-    return turnos.filter((t) => {
+    return turnosPorSala.filter((t) => {
       const pac = t.pacientes || {}
       const q = busqueda.toLowerCase().trim()
 
@@ -773,29 +860,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
       if (filtrosEstado.includes('todos')) return t.estado !== 'cancelado'
       return filtrosEstado.includes(t.estado)
     })
-  }, [turnos, filtrosEstado, busqueda, cirujanoFiltro])
-
-  // Calcular tiempo transcurrido en quirófano con alertas de sobretiempo
-  const calcularTiempoEnOperacion = (inicioIso?: string, duracionEstimada: number = 20) => {
-    if (!inicioIso) return { minutos: 0, segundos: 0, texto: '00:00', esExcedidoModerado: false, esExcedidoCritico: false, minutosExcedidos: 0 }
-    const start = new Date(inicioIso).getTime()
-    const now = horaActual.getTime()
-    const diffSec = Math.max(0, Math.floor((now - start) / 1000))
-    const min = Math.floor(diffSec / 60)
-    const sec = diffSec % 60
-    const esExcedidoModerado = min > duracionEstimada && min <= duracionEstimada * 1.3
-    const esExcedidoCritico = min > duracionEstimada * 1.3
-    const minutosExcedidos = Math.max(0, min - duracionEstimada)
-
-    return {
-      minutos: min,
-      segundos: sec,
-      texto: `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`,
-      esExcedidoModerado,
-      esExcedidoCritico,
-      minutosExcedidos
-    }
-  }
+  }, [turnosPorSala, filtrosEstado, busqueda, cirujanoFiltro])
 
   const esMultiseleccionActiva = filtrosEstado.length > 1 && !filtrosEstado.includes('todos')
 
@@ -1322,11 +1387,29 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
 
       {/* 3. LISTADO DE CIRUGÍAS FILTRADO EN TIEMPO REAL */}
       {cargando ? (
-        <div className="p-12 text-center text-xs text-[var(--secondary)] flex flex-col items-center justify-center gap-2 bg-[var(--card)] border border-[var(--border)] rounded-2xl">
-          <Loader2 size={24} className="animate-spin text-blue-600" />
-          <span>Cargando pizarra de cirugías del día...</span>
+        <div className="space-y-3.5" aria-label="Cargando pizarra quirúrgica">
+          {[1, 2, 3].map((idx) => (
+            <div
+              key={idx}
+              className="p-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] animate-pulse flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+            >
+              <div className="space-y-2.5 flex-1">
+                <div className="flex items-center gap-2">
+                  <div className="h-5 w-16 rounded-lg bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-5 w-32 rounded-lg bg-slate-200 dark:bg-slate-800" />
+                  <div className="h-5 w-24 rounded-full bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <div className="h-5 w-64 rounded bg-slate-200 dark:bg-slate-800" />
+                <div className="h-4 w-48 rounded bg-slate-200 dark:bg-slate-800" />
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="h-9 w-28 rounded-xl bg-slate-200 dark:bg-slate-800" />
+                <div className="h-9 w-24 rounded-xl bg-slate-200 dark:bg-slate-800" />
+              </div>
+            </div>
+          ))}
         </div>
-      ) : turnos.length === 0 ? (
+      ) : turnosPorSala.length === 0 ? (
         <div className="p-12 text-center text-xs text-[var(--secondary)] bg-[var(--card)] border border-dashed rounded-2xl">
           No hay turnos quirúrgicos programados para la fecha seleccionada ({formatDateArg(fecha)}).
         </div>
@@ -1372,7 +1455,6 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             const pac = t.pacientes || {}
             const q = t.quirofanos || {}
             const duracionEstimada = t.duracion_minutos || 20
-            const tiempoOp = calcularTiempoEnOperacion(t.inicio_cirugia_at, duracionEstimada)
             const esProgramado = t.estado === 'programado'
             const esEnEspera = t.estado === 'en_espera'
             const esPreQuirofano = t.estado === 'pre_quirofano'
@@ -1633,34 +1715,12 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
 
                 {/* Bloque Derecho: Botones de Transición de 1 Clic y Cronómetros */}
                 <div className="flex flex-col sm:flex-row lg:flex-col items-end justify-center gap-2.5 shrink-0">
-                  {/* Cronómetro en Operación */}
+                  {/* Cronómetro en Operación aislado */}
                   {esEnOperacion && (
-                    <div className={`px-3 py-1.5 rounded-xl flex items-center gap-2 shadow-sm font-mono transition-all ${
-                      tiempoOp.esExcedidoCritico
-                        ? 'bg-rose-600 text-white animate-pulse border border-rose-400'
-                        : tiempoOp.esExcedidoModerado
-                        ? 'bg-amber-500 text-slate-950 font-bold border border-amber-300'
-                        : 'bg-purple-600 text-white'
-                    }`}>
-                      {tiempoOp.esExcedidoCritico || tiempoOp.esExcedidoModerado ? (
-                        <AlertTriangle size={15} />
-                      ) : (
-                        <Timer size={15} className="animate-spin" />
-                      )}
-                      <div className="text-right">
-                        <p className="text-[9px] uppercase tracking-wider font-extrabold opacity-90">
-                          {tiempoOp.esExcedidoCritico ? 'Sobreduración' : tiempoOp.esExcedidoModerado ? 'Tiempo Excedido' : 'En Quirófano'}
-                        </p>
-                        <p className="text-xs font-extrabold">
-                          {tiempoOp.texto} <span className="text-[10px] opacity-80">/ {duracionEstimada}m</span>
-                          {tiempoOp.minutosExcedidos > 0 && (
-                            <span className="ml-1 text-[10px] font-black underline">
-                              (+{tiempoOp.minutosExcedidos}m)
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                    </div>
+                    <CronometroEnOperacion
+                      inicioIso={t.inicio_cirugia_at}
+                      duracionEstimada={duracionEstimada}
+                    />
                   )}
 
                   {/* Botonera de Acción Directa */}
