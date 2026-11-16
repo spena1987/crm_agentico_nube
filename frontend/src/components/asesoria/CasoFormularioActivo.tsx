@@ -1223,23 +1223,42 @@ export default function CasoFormularioActivo({
   useEffect(() => {
     const pNom = (practicaNombre || caso.practica_nombre || '').toLowerCase()
     const pCod = (practicaCodigo || caso.practica_codigo || '').toLowerCase()
-    const esCatarata = pNom.includes('catarata') || pNom.includes('faco') || pCod.includes('34031') || pNom.includes('lio')
+    const esCatarata =
+      pNom.includes('catarata') ||
+      pNom.includes('faco') ||
+      pNom.includes('impl. lio') ||
+      pNom.includes('implante lio') ||
+      pNom.includes('lente intraocular') ||
+      pCod.includes('34031')
 
     const targetCod = practicaCodigo || caso.practica_codigo
     if (targetCod) {
-      fetch(`${BACKEND_URL}/api/nomenclador/resumen-operativo/${encodeURIComponent(targetCod)}`)
+      fetch(`${BACKEND_URL}/api/nomenclador/practica/${encodeURIComponent(targetCod)}/resumen-operativo`)
         .then((r) => r.json())
         .then((data) => {
-          if (data.success && data.resumen) {
-            setPracticaRequiereLente(!!data.resumen.requiere_lente)
+          const resumenPractica = data?.practica || data?.resumen
+          if (data?.success && resumenPractica) {
+            setPracticaRequiereLente(!!resumenPractica.requiere_lente)
           } else {
-            setPracticaRequiereLente(false)
+            setPracticaRequiereLente(esCatarata)
           }
         })
-        .catch(() => setPracticaRequiereLente(false))
+        .catch(() => setPracticaRequiereLente(esCatarata))
 
       const liosUrl = `${BACKEND_URL}/api/nomenclador/lios-comerciales?practica_id=${encodeURIComponent(targetCod)}&solo_habilitados=true`
       fetch(liosUrl)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.lios)) {
+            setCatalogoLios(data.lios)
+          } else {
+            setCatalogoLios([])
+          }
+        })
+        .catch((err) => console.error('Error cargando catálogo LIOs:', err))
+    } else if (esCatarata) {
+      setPracticaRequiereLente(true)
+      fetch(`${BACKEND_URL}/api/nomenclador/lios-comerciales`)
         .then((r) => r.json())
         .then((data) => {
           if (data.success && Array.isArray(data.lios)) {
