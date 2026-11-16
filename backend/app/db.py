@@ -11992,7 +11992,11 @@ def get_turnos_dia_ejecucion(
         logger.error(f"Error al obtener turnos del día ({fecha}): {e}")
         raise
 
-def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str, Any]:
+def cambiar_estado_turno_quirofano(
+    turno_id: str,
+    nuevo_estado: str,
+    observaciones_intraoperatorias: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Cambia el estado de un turno quirúrgico ('programado', 'en_espera', 'en_operacion', 'operado', 'cancelado')
     estampando los timestamps correspondientes y sincronizando automáticamente con asesorias_quirurgicas.
@@ -12014,6 +12018,12 @@ def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str
             "estado": nuevo_estado,
             "updated_at": "now()"
         }
+        if observaciones_intraoperatorias and observaciones_intraoperatorias.strip():
+            obs_prev = (turno_actual.get("observaciones_intraoperatorias") or "").strip()
+            obs_nueva = observaciones_intraoperatorias.strip()
+            update_payload["observaciones_intraoperatorias"] = (
+                f"{obs_prev}\n{obs_nueva}" if obs_prev and obs_nueva not in obs_prev else obs_nueva
+            )
         
         from datetime import datetime, timezone
         ahora_iso = datetime.now(timezone.utc).isoformat()

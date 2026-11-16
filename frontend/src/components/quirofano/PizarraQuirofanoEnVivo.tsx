@@ -606,12 +606,14 @@ export default function PizarraQuirofanoEnVivo({
         )
       )
 
-      // 2. Persistencia asíncrona en backend
+      // 2. Persistencia asíncrona en backend con reintento ante micro-cortes de red
       const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/cambiar-estado`, {
         method: 'PUT',
+        timeoutMs: 25000,
+        retryOnNetworkError: true,
         body: JSON.stringify({ estado: nuevoEstado, ...(extras || {}) })
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (res.ok && data.success) {
         setTurnos((prev) =>
           prev.map((t) => (t.id === turnoId ? { ...t, ...data.turno, estado: nuevoEstado } : t))
@@ -621,14 +623,14 @@ export default function PizarraQuirofanoEnVivo({
         if (turnoPrevio) {
           setTurnos((prev) => prev.map((t) => (t.id === turnoId ? turnoPrevio : t)))
         }
-        alert(data.detail || data.error || 'Error al cambiar estado')
+        alert(data?.detail || data?.error || `Error al cambiar estado (HTTP ${res.status})`)
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error actualizando estado:', err)
       if (turnoPrevio) {
         setTurnos((prev) => prev.map((t) => (t.id === turnoId ? turnoPrevio : t)))
       }
-      alert('Error de conexión al actualizar el estado del turno.')
+      alert(err?.message || 'Error de conexión al actualizar el estado del turno.')
     } finally {
       setProcesandoId(null)
     }

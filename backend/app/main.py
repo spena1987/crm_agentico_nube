@@ -8979,13 +8979,18 @@ def suspender_reprogramar_turno_endpoint(turno_id: str, payload: SuspenderReprog
 
 class CambiarEstadoPayload(BaseModel):
     estado: str
+    observaciones_intraoperatorias: Optional[str] = None
 
 @app.put("/api/turnos-quirofano/{turno_id}/estado")
 @app.put("/api/turnos-quirofano/{turno_id}/cambiar-estado")
 @app.post("/api/turnos-quirofano/{turno_id}/cambiar-estado")
 def cambiar_estado_turno_endpoint(turno_id: str, payload: CambiarEstadoPayload):
     try:
-        res = cambiar_estado_turno_quirofano(turno_id=turno_id, nuevo_estado=payload.estado)
+        res = cambiar_estado_turno_quirofano(
+            turno_id=turno_id,
+            nuevo_estado=payload.estado,
+            observaciones_intraoperatorias=payload.observaciones_intraoperatorias,
+        )
         if not res.get("success"):
             raise HTTPException(status_code=400, detail=res.get("error") or "Error al actualizar estado")
         return res
