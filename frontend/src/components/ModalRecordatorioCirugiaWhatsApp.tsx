@@ -180,7 +180,7 @@ export default function ModalRecordatorioCirugiaWhatsApp({
           setDatosOriginales(d)
           setTelefono(d.telefono || pacienteTelefonoDefault || '')
           setPacienteNombre(d.saludo_nombre || d.paciente_nombre || pacienteNombreDefault || '')
-          setPreparacion(d.preparacion || '')
+          setPreparacion('')
           setPlantillasDisponibles(d.plantillas || [])
 
           let targetOjo: 'primer_ojo' | 'segundo_ojo' = 'primer_ojo'
@@ -281,7 +281,7 @@ export default function ModalRecordatorioCirugiaWhatsApp({
     if (!datosOriginales) return
     setTelefono(datosOriginales.telefono || '')
     setPacienteNombre(datosOriginales.saludo_nombre || datosOriginales.paciente_nombre || '')
-    setPreparacion(datosOriginales.preparacion || '')
+    setPreparacion('')
 
     if (datosOriginales.es_bilateral_escalonada) {
       if (ojoSeleccionado === 'segundo_ojo' && datosOriginales.segundo_ojo) {
@@ -344,7 +344,7 @@ export default function ModalRecordatorioCirugiaWhatsApp({
     res = res.replace(/\{\{3\}\}/g, fechaVisual)
     res = res.replace(/\{\{4\}\}/g, hora || '[Horario]')
     if (numVarsTemplate >= 5) {
-      res = res.replace(/\{\{5\}\}/g, preparacion || '[Indicaciones de preparación]')
+      res = res.replace(/\{\{5\}\}/g, preparacion.trim() || 'Sin indicaciones adicionales.')
     }
     return res
   }, [templateActualInfo, pacienteNombre, cirugia, fechaVisual, hora, preparacion, numVarsTemplate])
@@ -357,7 +357,7 @@ export default function ModalRecordatorioCirugiaWhatsApp({
     calc = calc.replace(/\{\{3\}\}/g, sanitizeMetaText(fechaVisual) || 'fecha a confirmar')
     calc = calc.replace(/\{\{4\}\}/g, sanitizeMetaText(hora) || 'horario a confirmar')
     if (numVarsTemplate >= 5) {
-      calc = calc.replace(/\{\{5\}\}/g, sanitizeMetaText(preparacion) || 'Concurrir con DNI y en ayunas.')
+      calc = calc.replace(/\{\{5\}\}/g, sanitizeMetaText(preparacion) || 'Sin indicaciones adicionales.')
     }
     return calc.length
   }, [templateActualInfo, pacienteNombre, cirugia, fechaVisual, hora, preparacion, numVarsTemplate, cuerpoTextoRenderizado])

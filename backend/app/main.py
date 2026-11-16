@@ -5244,7 +5244,7 @@ async def enviar_recordatorio_whatsapp_endpoint(
     p_cirugia = _sanitize_meta_param(variables.get("cirugia"), "Cirugía Oftalmológica")
     p_fecha = _sanitize_meta_param(variables.get("fecha"), "fecha a confirmar")
     p_hora = _sanitize_meta_param(variables.get("hora"), "horario a confirmar")
-    p_prep = _sanitize_meta_param(variables.get("preparacion"), "Concurrir con DNI y en ayunas.")
+    p_prep = _sanitize_meta_param(variables.get("preparacion"), "Sin indicaciones adicionales.")
 
     # Determinar dinámicamente variables posicionales {{n}} esperadas por la plantilla en Meta
     raw_var_matches = re.findall(r"\{\{(\d+)\}\}", body_text_db)
