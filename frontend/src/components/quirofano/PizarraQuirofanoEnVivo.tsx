@@ -163,6 +163,7 @@ export default function PizarraQuirofanoEnVivo({
   const [turnos, setTurnos] = useState<any[]>([])
   const [cargando, setCargando] = useState(true)
   const [sincronizando, setSincronizando] = useState(false)
+  const [errorCarga, setErrorCarga] = useState<string | null>(null)
   const [procesandoId, setProcesandoId] = useState<string | null>(null)
   const turnosRef = useRef<any[]>([])
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -477,14 +478,19 @@ export default function PizarraQuirofanoEnVivo({
       }
       const url = `/api/turnos-quirofano-dia?fecha=${fecha}&solo_pizarra=true`
       const res = await apiFetch(url)
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (res.ok && data.success) {
         setTurnos(data.turnos || [])
+        setErrorCarga(null)
       } else if (!silencioso) {
         setTurnos([])
+        setErrorCarga(data?.detail || data?.error || `Error al cargar turnos (HTTP ${res.status})`)
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error cargando turnos del día:', err)
+      if (!silencioso) {
+        setErrorCarga(err?.message || 'Error de conexión al cargar la pizarra quirúrgica.')
+      }
     } finally {
       setCargando(false)
       setSincronizando(false)
@@ -1408,6 +1414,22 @@ export default function PizarraQuirofanoEnVivo({
               </div>
             </div>
           ))}
+        </div>
+      ) : errorCarga ? (
+        <div className="p-8 text-center bg-rose-50 dark:bg-rose-950/20 border border-rose-300 dark:border-rose-800 rounded-2xl space-y-3">
+          <p className="text-sm font-bold text-rose-700 dark:text-rose-300">
+            No se pudieron cargar los turnos de la pizarra
+          </p>
+          <p className="text-xs text-rose-600/90 dark:text-rose-400 font-mono">
+            {errorCarga}
+          </p>
+          <button
+            type="button"
+            onClick={() => fetchTurnosDia(false)}
+            className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm transition"
+          >
+            Reintentar carga
+          </button>
         </div>
       ) : turnosPorSala.length === 0 ? (
         <div className="p-12 text-center text-xs text-[var(--secondary)] bg-[var(--card)] border border-dashed rounded-2xl">

@@ -11970,7 +11970,7 @@ def get_turnos_dia_ejecucion(
         return []
     try:
         q = supabase.table("turnos_quirofano") \
-            .select("*, pacientes(id, nombre, dni, telefono, obra_social, email, fecha_nacimiento), quirofanos(id, nombre, codigo, color, duracion_slot_minutos, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(id, estado, numero_cirugia, ojo_primero, lio_marca, lio_modelo, lio_dioptria)") \
+            .select("*, pacientes(id, nombre, dni, telefono, obra_social, email, fecha_nacimiento), quirofanos(id, nombre, codigo, color, duracion_slot_minutos, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(id, estado, ojo, codigo_caso, lio_calculado, lio_calculo_opciones, lente_lote, lente_serie, lente_vencimiento, indicaciones_pdf_url, observaciones_intraoperatorias)") \
             .eq("fecha_cirugia", fecha)
             
         if not incluir_cancelados:
@@ -11990,7 +11990,7 @@ def get_turnos_dia_ejecucion(
         return turnos
     except Exception as e:
         logger.error(f"Error al obtener turnos del día ({fecha}): {e}")
-        return []
+        raise
 
 def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str, Any]:
     """
