@@ -8,6 +8,8 @@ import IdleTimeoutManager from '@/components/auth/IdleTimeoutManager'
 import ModuleRouteGuard from '@/components/auth/ModuleRouteGuard'
 import { PermissionsProvider } from '@/context/PermissionsContext'
 import UrgentSurgeryGlobalBanner from '@/components/notifications/UrgentSurgeryGlobalBanner'
+import ClientErrorBoundary from '@/components/common/ClientErrorBoundary'
+import { isChunkLoadError, reportClientError, tryAutoRecoverChunkError } from '@/lib/clientErrorHandler'
 import { Loader2 } from 'lucide-react'
 
 export default function AppLayoutWrapper({
@@ -34,6 +36,37 @@ export default function AppLayoutWrapper({
       router.push('/login')
     }
   }, [user, loading, isPublicOpenPage, router])
+
+  // Recuperación automática ante ChunkLoadError tras despliegues nuevos en Vercel
+  useEffect(() => {
+    const handleWindowError = (event: ErrorEvent) => {
+      const err = event.error || event.message
+      if (isChunkLoadError(err)) {
+        const recargando = tryAutoRecoverChunkError(err)
+        reportClientError(err, {
+          pathname: pathname || undefined,
+          source: recargando ? 'window.error(auto-reload)' : 'window.error',
+          userEmail: user?.email || undefined,
+        })
+      }
+    }
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (isChunkLoadError(event.reason)) {
+        const recargando = tryAutoRecoverChunkError(event.reason)
+        reportClientError(event.reason, {
+          pathname: pathname || undefined,
+          source: recargando ? 'unhandledrejection(auto-reload)' : 'unhandledrejection',
+          userEmail: user?.email || undefined,
+        })
+      }
+    }
+    window.addEventListener('error', handleWindowError)
+    window.addEventListener('unhandledrejection', handleUnhandledRejection)
+    return () => {
+      window.removeEventListener('error', handleWindowError)
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+    }
+  }, [pathname, user?.email])
 
   // Si estamos en una página pública, renderizamos sin navegación de CRM
   if (isPublicOpenPage) {
@@ -68,9 +101,11 @@ export default function AppLayoutWrapper({
           <IdleTimeoutManager />
           <Navigation />
           <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-y-auto overflow-x-hidden relative panel-scroll">
-            <ModuleRouteGuard>
-              {children}
-            </ModuleRouteGuard>
+            <ClientErrorBoundary pathname={pathname} userEmail={user?.email}>
+              <ModuleRouteGuard>
+                {children}
+              </ModuleRouteGuard>
+            </ClientErrorBoundary>
           </main>
         </div>
       </div>
