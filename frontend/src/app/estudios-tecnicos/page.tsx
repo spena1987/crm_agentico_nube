@@ -34,12 +34,14 @@ import {
   Ban,
   Info,
   ClipboardList,
-  Stethoscope
+  Stethoscope,
+  LayoutGrid
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { usePermissions } from '@/hooks/usePermissions'
 import { formatDateArg } from '@/lib/dateUtils'
 import { apiFetch, BACKEND_URL } from '@/lib/api'
+import { optimizeStudyFilesForUpload } from '@/lib/imageOptimizer'
 import { supabase } from '@/lib/supabase'
 import {
   formatPhoneDisplay,
@@ -174,6 +176,8 @@ export default function EstudiosTecnicosPage() {
   // Paso 3: Archivos (Drag & Drop + Ctrl+V)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [unificarEnPdf, setUnificarEnPdf] = useState(true)
+  const [grilla2x2, setGrilla2x2] = useState(false)
+  const [progresoOptimizacion, setProgresoOptimizacion] = useState<string | null>(null)
   const [aplicarCaratula, setAplicarCaratula] = useState(true)
   const [guardarEnGeclisa, setGuardarEnGeclisa] = useState(true)
   const [enviarWhatsapp, setEnviarWhatsapp] = useState(true)
@@ -578,11 +582,31 @@ export default function EstudiosTecnicosPage() {
     }
 
     setEnviandoEstudio(true)
+    setProgresoOptimizacion(null)
     setFeedback(null)
 
     try {
+      const usarGrilla = grilla2x2 && selectedFiles.length > 1 && selectedFiles.every(f => f.type.startsWith('image/') || /\.(jpg|jpeg|png)$/i.test(f.name))
+      const optRes = await optimizeStudyFilesForUpload(selectedFiles, {
+        unificarEnPdf: unificarEnPdf || usarGrilla,
+        grilla2x2: usarGrilla,
+        onProgress: (done, total, phase) => {
+          setProgresoOptimizacion(`${phase} (${done}/${total})...`)
+        }
+      })
+      setProgresoOptimizacion(null)
+
+      if (optRes.exceedsLimit) {
+        setFeedback({
+          type: 'error',
+          title: 'El lote supera el límite de Geclisa (20 MB)',
+          detail: `Incluso tras la optimización (${(optRes.optimizedBytes / (1024 * 1024)).toFixed(1)} MB), el estudio supera el techo seguro de 18,5 MB. ${!usarGrilla && selectedFiles.length > 1 ? 'Activa la opción "Agrupar 4 tomas por página (Grilla 2×2)" o divide' : 'Divide'} el estudio en dos envíos.`
+        })
+        return
+      }
+
       const formData = new FormData()
-      selectedFiles.forEach(f => formData.append('files', f))
+      optRes.files.forEach(f => formData.append('files', f))
       formData.append('dni', paciente.dni)
       formData.append('nombre_paciente', paciente.nombre_completo)
       formData.append('telefono', telefonoDestino.trim())
@@ -599,7 +623,8 @@ export default function EstudiosTecnicosPage() {
       formData.append('tipo_estudio', tipoEstudio.trim())
       formData.append('ojo', ojo)
       formData.append('observaciones', observaciones.trim())
-      formData.append('unificar_en_pdf', String(unificarEnPdf))
+      formData.append('unificar_en_pdf', String(unificarEnPdf || usarGrilla))
+      formData.append('grilla_2x2', String(usarGrilla))
       formData.append('aplicar_caratula', String(aplicarCaratula))
       formData.append('guardar_en_geclisa', String(guardarEnGeclisa))
       formData.append('enviar_whatsapp', String(enviarWhatsapp))
@@ -618,7 +643,7 @@ export default function EstudiosTecnicosPage() {
       const res = await apiFetch('/api/estudios-tecnicos/enviar', {
         method: 'POST',
         body: formData,
-        timeoutMs: 90000,
+        timeoutMs: 120000,
         retryOnNetworkError: false,
         headers: {
           'X-Idempotency-Key': clientRequestId
@@ -1674,20 +1699,51 @@ export default function EstudiosTecnicosPage() {
                     </div>
                   ))}
 
-                  {/* Opción de consolidar imágenes en 1 PDF */}
+                  {/* Opción de consolidar imágenes en 1 PDF y Grilla 2x2 */}
                   {selectedFiles.every(f => f.type.startsWith('image/') || /\.(jpg|jpeg|png)$/i.test(f.name)) && (
-                    <label className="flex items-center gap-2 p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-xs cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={unificarEnPdf}
-                        onChange={(e) => setUnificarEnPdf(e.target.checked)}
-                        className="h-4 w-4 accent-cyan-600 rounded"
-                      />
-                      <Layers size={14} className="text-cyan-600 shrink-0" />
-                      <span className="font-semibold text-[var(--foreground)]">
-                        Convertir y unificar imagen(es) en un documento PDF limpio (Recomendado para OD + OI)
-                      </span>
-                    </label>
+                    <div className="space-y-2">
+                      <div className="text-[11px] text-[var(--secondary)] px-1 flex items-center justify-between">
+                        <span>
+                          {selectedFiles.length} {selectedFiles.length === 1 ? 'imagen' : 'imágenes'} ({(selectedFiles.reduce((a, f) => a + f.size, 0) / (1024 * 1024)).toFixed(2)} MB originales)
+                        </span>
+                        <span className="text-cyan-600 dark:text-cyan-400 font-semibold">
+                          Se optimizarán automáticamente antes de subir
+                        </span>
+                      </div>
+
+                      <label className="flex items-center gap-2 p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-xs cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={unificarEnPdf || (grilla2x2 && selectedFiles.length > 1)}
+                          disabled={grilla2x2 && selectedFiles.length > 1}
+                          onChange={(e) => setUnificarEnPdf(e.target.checked)}
+                          className="h-4 w-4 accent-cyan-600 rounded"
+                        />
+                        <Layers size={14} className="text-cyan-600 shrink-0" />
+                        <span className="font-semibold text-[var(--foreground)]">
+                          Convertir y unificar imagen(es) en un documento PDF limpio (Recomendado para OD + OI)
+                        </span>
+                      </label>
+
+                      {selectedFiles.length > 1 && (
+                        <label className="flex items-center gap-2 p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={grilla2x2}
+                            onChange={(e) => {
+                              const next = e.target.checked
+                              setGrilla2x2(next)
+                              if (next) setUnificarEnPdf(true)
+                            }}
+                            className="h-4 w-4 accent-indigo-600 rounded"
+                          />
+                          <LayoutGrid size={14} className="text-indigo-500 shrink-0" />
+                          <span className="font-semibold text-[var(--foreground)]">
+                            Agrupar 4 tomas por página (Grilla comparativa 2×2 — ideal para RFG largas)
+                          </span>
+                        </label>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -1842,7 +1898,7 @@ export default function EstudiosTecnicosPage() {
                   {enviandoEstudio ? (
                     <>
                       <RefreshCw size={16} className="animate-spin" />
-                      <span>Procesando en paralelo (Geclisa + Meta)...</span>
+                      <span>{progresoOptimizacion || 'Procesando en paralelo (Geclisa + Meta)...'}</span>
                     </>
                   ) : (
                     <>

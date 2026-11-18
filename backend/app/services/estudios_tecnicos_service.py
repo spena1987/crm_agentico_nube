@@ -194,57 +194,20 @@ def _consolidate_or_optimize_files_in_ram(
     # Caso 2: Múltiples imágenes o solicitud expresa de unificar imágenes en un único PDF
     all_images = all(m.startswith("image/") for _, _, m in files_data)
     if all_images and (len(files_data) > 1 or unificar_en_pdf):
-        from PIL import Image, ImageOps
-        pil_pages: List[Image.Image] = []
-        for _, raw_bytes, _ in files_data:
-            img = Image.open(io.BytesIO(raw_bytes))
-            img = ImageOps.exif_transpose(img) or img
-            if img.mode in ("RGBA", "LA", "P"):
-                bg = Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
-                    img = img.convert("RGBA")
-                bg.paste(img, mask=img.split()[-1] if "A" in img.mode else None)
-                img = bg
-            elif img.mode != "RGB":
-                img = img.convert("RGB")
-            # Limitar dimensión máxima a 2400px para mantener el PDF liviano y nítido
-            max_dim = 2400
-            if max(img.size) > max_dim:
-                img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
-            pil_pages.append(img)
-
-        out_pdf = io.BytesIO()
-        first_page = pil_pages[0]
-        rest_pages = pil_pages[1:]
-        first_page.save(
-            out_pdf,
-            format="PDF",
-            resolution=150.0,
-            save_all=True,
-            append_images=rest_pages
-        )
+        from app.services.caratula_estudios_service import build_compact_pdf_from_images
+        pdf_bytes = build_compact_pdf_from_images(files_data, max_dim=2400, jpeg_quality=84)
         safe_pdf_name = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", base_filename)
         if not safe_pdf_name.lower().endswith(".pdf"):
             safe_pdf_name = f"{safe_pdf_name}.pdf"
-        return out_pdf.getvalue(), safe_pdf_name, "application/pdf"
+        return pdf_bytes, safe_pdf_name, "application/pdf"
 
     # Caso 3: Una sola imagen (JPG/PNG)
     fname, fbytes, fmime = files_data[0]
     if fmime.startswith("image/"):
-        # Meta exige < 5 MB para imágenes y no admite ciertos canales alfa corruptos
-        max_meta_img_bytes = int(4.7 * 1024 * 1024)
-        if len(fbytes) > max_meta_img_bytes:
-            from PIL import Image, ImageOps
-            img = Image.open(io.BytesIO(fbytes))
-            img = ImageOps.exif_transpose(img) or img
-            if img.mode != "RGB":
-                img = img.convert("RGB")
-            max_dim = 2200
-            if max(img.size) > max_dim:
-                img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
-            out_jpg = io.BytesIO()
-            img.save(out_jpg, format="JPEG", quality=85, optimize=True)
-            fbytes = out_jpg.getvalue()
+        from app.services.caratula_estudios_service import optimize_single_image_for_whatsapp
+        opt_bytes = optimize_single_image_for_whatsapp(fbytes)
+        if opt_bytes is not fbytes:
+            fbytes = opt_bytes
             fmime = "image/jpeg"
 
         ext = ".jpg" if fmime == "image/jpeg" or fname.lower().endswith((".jpg", ".jpeg")) else ".png"
@@ -1351,7 +1314,8 @@ async def enviar_y_archivar_estudio_oftalmologico(
     aplicar_caratula: bool = Form(True),
     obra_social: Optional[str] = Form(None),
     plan: Optional[str] = Form(None),
-    client_request_id: Optional[str] = Form(None)
+    client_request_id: Optional[str] = Form(None),
+    grilla_2x2: bool = Form(False)
 ):
     """
     Flujo Maestro de Estudios Oftalmológicos:
@@ -1390,9 +1354,11 @@ async def enviar_y_archivar_estudio_oftalmologico(
             )
         )
 
-    # Leer y validar archivos en memoria RAM
+    # Leer y validar archivos en memoria RAM con tope por lote
     ALLOWED_MIMES = {"application/pdf", "image/jpeg", "image/jpg", "image/png"}
     raw_files: List[Tuple[str, bytes, str]] = []
+    max_batch_upload_bytes = int(19.5 * 1024 * 1024)
+    running_batch_bytes = 0
     for up in files:
         fname = up.filename or "estudio.pdf"
         ext = os.path.splitext(fname)[1].lower()
@@ -1413,7 +1379,16 @@ async def enviar_y_archivar_estudio_oftalmologico(
             raise HTTPException(status_code=400, detail=f"El archivo {fname} está vacío.")
         if len(f_bytes) > 20 * 1024 * 1024:
             raise HTTPException(status_code=400, detail=f"El archivo {fname} supera el límite máximo de 20 MB.")
+        running_batch_bytes += len(f_bytes)
+        if running_batch_bytes > max_batch_upload_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail="El lote subido supera el límite máximo de 19,5 MiB soportado por Geclisa. Activa la grilla 2×2 o divide el estudio en dos tandas."
+            )
         raw_files.append((fname, f_bytes, mime))
+
+    if grilla_2x2 and len(raw_files) > 1:
+        unificar_en_pdf = True
 
     # Construir nombre estandarizado profesional para Geclisa y WhatsApp:
     # Formato: Estudio_{Tipo}_{Ojo}_{PrimerApellido}_{DNI}.{ext}
@@ -1530,6 +1505,20 @@ async def enviar_y_archivar_estudio_oftalmologico(
             files_data=raw_files,
             unificar_en_pdf=unificar_en_pdf,
             base_filename=base_fname
+        )
+
+    # Liberar inmediatamente los buffers de entrada para contener el pico de RAM
+    raw_files.clear()
+    del raw_files
+
+    max_final_bytes = 19 * 1024 * 1024
+    if guardar_en_geclisa and len(final_bytes) > max_final_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"El archivo final ({len(final_bytes) / (1024 * 1024):.1f} MiB) supera el techo seguro de 19 MiB para Geclisa (tope 20 MiB). "
+                "Activa la opción 'Agrupar 4 tomas por página (Grilla 2×2)' o divide el estudio en dos envíos."
+            )
         )
 
     obs_geclisa = (observaciones or "").strip()
@@ -1704,6 +1693,9 @@ async def enviar_y_archivar_estudio_oftalmologico(
                     "geclisa_as_id": geclisa_as_id,
                     "wamid": wamid,
                     "tecnico": resolved_tecnico_nombre,
+                    "raw_bytes_cliente": raw_bytes_total,
+                    "final_bytes": len(final_bytes),
+                    "grilla_2x2": grilla_2x2,
                     "geclisa_error": geclisa_err,
                     "whatsapp_error": wa_err
                 }

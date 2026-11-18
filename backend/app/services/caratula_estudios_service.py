@@ -1,11 +1,13 @@
 import os
 import io
 import re
+import tempfile
 import unicodedata
 import logging
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional, Union
 from datetime import datetime, timezone, timedelta
 
+import img2pdf
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 import pypdf
 import reportlab
@@ -419,6 +421,132 @@ def generar_portada_pdf_a4(
     return out_buf.getvalue()
 
 
+def optimize_single_image_for_whatsapp(
+    raw_bytes: bytes,
+    max_bytes: int = int(4.7 * 1024 * 1024),
+    max_dim: int = 2200
+) -> bytes:
+    """
+    Garantiza que una imagen JPEG individual no supere el tope de Meta (5 MB -> 4.7 MB seguros),
+    normalizando orientación EXIF, aplanando canal alfa y ajustando calidad de forma iterativa.
+    """
+    if len(raw_bytes) <= max_bytes:
+        try:
+            with Image.open(io.BytesIO(raw_bytes)) as im_chk:
+                exif = im_chk.getexif()
+                orient = exif.get(274) if exif else None
+                if im_chk.format == "JPEG" and im_chk.mode in ("RGB", "L") and orient in (None, 1):
+                    return raw_bytes
+        except Exception:
+            pass
+
+    img = Image.open(io.BytesIO(raw_bytes))
+    try:
+        img = ImageOps.exif_transpose(img) or img
+        if img.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            bg.paste(img, mask=img.split()[-1] if "A" in img.mode else None)
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+        for q in (90, 82, 74, 65):
+            out = io.BytesIO()
+            img.save(out, format="JPEG", quality=q, optimize=True)
+            data = out.getvalue()
+            if len(data) <= max_bytes or q == 65:
+                return data
+        return data
+    finally:
+        img.close()
+
+
+def build_compact_pdf_from_images(
+    images_data: List[Union[bytes, Tuple[str, bytes, str]]],
+    max_dim: int = 2400,
+    jpeg_quality: int = 84
+) -> bytes:
+    """
+    Ensambla un PDF multipágina procesando una imagen por vez (sin acumular bitmaps RGB en RAM)
+    e incrustando flujos JPEG directos (/DCTDecode) mediante img2pdf con ajuste A4 automático.
+    """
+    if not images_data:
+        raise ValueError("No se recibieron imágenes para ensamblar el PDF.")
+
+    spooled_inputs: List[tempfile.SpooledTemporaryFile] = []
+    out_spool = tempfile.SpooledTemporaryFile(max_size=5 * 1024 * 1024)
+    try:
+        for item in images_data:
+            raw_b = item[1] if isinstance(item, tuple) else item
+            stream = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024)
+
+            passthrough_ok = False
+            try:
+                with Image.open(io.BytesIO(raw_b)) as im_meta:
+                    exif = im_meta.getexif()
+                    orient = exif.get(274) if exif else None
+                    if (
+                        im_meta.format == "JPEG"
+                        and im_meta.mode in ("RGB", "L")
+                        and orient in (None, 1)
+                        and max(im_meta.size) <= max_dim
+                    ):
+                        passthrough_ok = True
+            except Exception:
+                passthrough_ok = False
+
+            if passthrough_ok:
+                stream.write(raw_b)
+            else:
+                img = Image.open(io.BytesIO(raw_b))
+                try:
+                    img = ImageOps.exif_transpose(img) or img
+                    if img.mode in ("RGBA", "LA", "P"):
+                        bg = Image.new("RGB", img.size, (255, 255, 255))
+                        if img.mode == "P":
+                            img = img.convert("RGBA")
+                        bg.paste(img, mask=img.split()[-1] if "A" in img.mode else None)
+                        img = bg
+                    elif img.mode not in ("RGB", "L"):
+                        img = img.convert("RGB")
+
+                    if max(img.size) > max_dim:
+                        img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+                    img.save(stream, format="JPEG", quality=jpeg_quality, optimize=True)
+                finally:
+                    img.close()
+                    del img
+
+            stream.seek(0)
+            spooled_inputs.append(stream)
+
+        a4_portrait = (img2pdf.mm_to_pt(210), img2pdf.mm_to_pt(297))
+        layout_fun = img2pdf.get_layout_fun(
+            pagesize=a4_portrait,
+            fit=img2pdf.FitMode.into,
+            auto_orient=True
+        )
+        img2pdf.convert(*spooled_inputs, outputstream=out_spool, layout_fun=layout_fun)
+        out_spool.seek(0)
+        return out_spool.read()
+    finally:
+        for s in spooled_inputs:
+            try:
+                s.close()
+            except Exception:
+                pass
+        try:
+            out_spool.close()
+        except Exception:
+            pass
+
+
 def fusionar_portada_con_pdf(portada_bytes: bytes, estudio_pdf_bytes: bytes) -> bytes:
     """
     Combina la portada generada (Página 1) al frente del PDF original del estudio.
@@ -609,14 +737,22 @@ def componer_lamina_digital_imagen(
 
     # Exportar según el formato solicitado
     if str(export_format).upper() in ("JPEG", "JPG"):
-        out_jpg = io.BytesIO()
-        canvas_img.save(out_jpg, format="JPEG", quality=90, optimize=True)
-        return out_jpg.getvalue()
+        max_wa_bytes = int(4.7 * 1024 * 1024)
+        for q in (90, 82, 74, 65):
+            out_jpg = io.BytesIO()
+            canvas_img.save(out_jpg, format="JPEG", quality=q, optimize=True)
+            data_jpg = out_jpg.getvalue()
+            if len(data_jpg) <= max_wa_bytes or q == 65:
+                return data_jpg
+        return data_jpg
 
-    # Guardar en PDF de 1 página de alta definición
-    out_pdf = io.BytesIO()
-    canvas_img.save(out_pdf, format="PDF", resolution=150.0)
-    return out_pdf.getvalue()
+    # Guardar en PDF de 1 página vía img2pdf (flujo JPEG directo sin compresión Flate inflada)
+    out_jpg_pdf = io.BytesIO()
+    canvas_img.save(out_jpg_pdf, format="JPEG", quality=90, optimize=True)
+    return build_compact_pdf_from_images(
+        [out_jpg_pdf.getvalue()],
+        max_dim=max(canvas_img.size)
+    )
 
 
 def componer_estudio_hibrido(
@@ -647,15 +783,20 @@ def componer_estudio_hibrido(
     if not safe_name.lower().endswith(".pdf"):
         safe_name = f"{safe_name}.pdf"
 
-    # Si la carátula está desactivada en Ajustes, usar consolidación estándar
-    if not cfg.get("activo", True):
-        # Fallback a PDF unificado normal
-        if len(files_data) == 1 and files_data[0][2] == "application/pdf":
-            return files_data[0][1], safe_name, "application/pdf"
-
     all_images = all(m.startswith("image/") for _, _, m in files_data)
     is_single_image = (len(files_data) == 1 and all_images)
     modo_hibrido = cfg.get("modo_hibrido", True)
+
+    # Si la carátula está desactivada en Ajustes, usar consolidación estándar sin membrete
+    if not cfg.get("activo", True):
+        if len(files_data) == 1 and files_data[0][2] == "application/pdf":
+            return files_data[0][1], safe_name, "application/pdf"
+        if is_single_image and not unificar_en_pdf:
+            safe_jpg_name = f"{os.path.splitext(clean_base)[0]}.jpg"
+            opt_bytes = optimize_single_image_for_whatsapp(files_data[0][1])
+            return opt_bytes, safe_jpg_name, "image/jpeg"
+        pdf_sin_caratula = build_compact_pdf_from_images(files_data)
+        return pdf_sin_caratula, safe_name, "application/pdf"
 
     # =========================================================================
     # CASO 1: IMAGEN ÚNICA EN MODO MOBILE-FIRST (LÁMINA CLÍNICA DE 1 PÁGINA)
@@ -682,7 +823,6 @@ def componer_estudio_hibrido(
                 export_format="PDF"
             )
             return lamina_pdf, safe_pdf_name, "application/pdf"
-        return lamina_pdf_bytes, safe_name, "application/pdf"
 
     # =========================================================================
     # CASO 2: PDF O MÚLTIPLES IMÁGENES -> CARÁTULA A4 FORMAL (PÁGINA 1) + ESTUDIO
@@ -691,24 +831,8 @@ def componer_estudio_hibrido(
     if len(files_data) == 1 and files_data[0][2] == "application/pdf":
         estudio_pdf_bytes = files_data[0][1]
     else:
-        # Si son múltiples imágenes, convertirlas primero a PDF multipágina
-        pil_pages: List[Image.Image] = []
-        for _, raw_b, _ in files_data:
-            im = Image.open(io.BytesIO(raw_b))
-            im = ImageOps.exif_transpose(im) or im
-            if im.mode != "RGB":
-                im = im.convert("RGB")
-            pil_pages.append(im)
-
-        tmp_pdf = io.BytesIO()
-        pil_pages[0].save(
-            tmp_pdf,
-            format="PDF",
-            resolution=150.0,
-            save_all=True,
-            append_images=pil_pages[1:]
-        )
-        estudio_pdf_bytes = tmp_pdf.getvalue()
+        # Ensamblado secuencial en streaming vía img2pdf sin acumular bitmaps en RAM
+        estudio_pdf_bytes = build_compact_pdf_from_images(files_data)
 
     # 2.2 Generar la portada A4 independiente con ReportLab
     portada_bytes = generar_portada_pdf_a4(

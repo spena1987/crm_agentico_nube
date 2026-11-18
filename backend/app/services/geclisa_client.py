@@ -1800,7 +1800,7 @@ class GeclisaClient:
             
         t_start = time.time()
         try:
-            res = self._do_request("POST", url, headers=headers, data=data, files=files, timeout=30)
+            res = self._do_request("POST", url, headers=headers, data=data, files=files, timeout=60)
             duracion = int((time.time() - t_start) * 1000)
             res.raise_for_status()
             res_data = res.json() if res.content else {}
