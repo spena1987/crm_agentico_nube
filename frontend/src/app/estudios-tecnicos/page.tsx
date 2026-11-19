@@ -69,6 +69,9 @@ import {
   getGeclisaTitleInfo
 } from '@/lib/estudiosDefaults'
 
+// Flag para reactivar el Worklist de órdenes médicas cuando se habilite el flujo de consultorio
+const ENABLE_WORKLIST_ORDENES = false
+
 interface PacienteGeclisaInfo {
   dni: string
   tipo_documento?: string
@@ -103,6 +106,7 @@ interface ArchivoGeclisaItem {
   titulo: string
   observaciones: string
   profesional_nombre: string
+  prestador?: string
   pre_id: number
 }
 
@@ -244,7 +248,9 @@ export default function EstudiosTecnicosPage() {
   }, [])
 
   useEffect(() => {
-    cargarWorklist()
+    if (ENABLE_WORKLIST_ORDENES) {
+      cargarWorklist()
+    }
   }, [cargarWorklist])
 
   const handleSeleccionarPedidoWorklist = (pedido: any) => {
@@ -548,9 +554,31 @@ export default function EstudiosTecnicosPage() {
     )
   }, [studyItems])
 
-  // Soporte global para pegar capturas con Ctrl + V
+  const anyModalOpen = Boolean(
+    showArchivosGeclisa ||
+      mostrarPreviewPlantilla ||
+      (candidatosGeclisa.length > 1 && !paciente) ||
+      editingItem ||
+      anulatingItem ||
+      detalleItem
+  )
+
+  // Cerrar modales con Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (showArchivosGeclisa) setShowArchivosGeclisa(false)
+      if (mostrarPreviewPlantilla) setMostrarPreviewPlantilla(false)
+      if (candidatosGeclisa.length > 1 && !paciente) setCandidatosGeclisa([])
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showArchivosGeclisa, mostrarPreviewPlantilla, candidatosGeclisa.length, paciente])
+
+  // Soporte global para pegar capturas con Ctrl + V (pausado si hay un modal abierto)
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
+      if (anyModalOpen) return
       if (!e.clipboardData || !e.clipboardData.files || e.clipboardData.files.length === 0) return
       const pastedFiles = Array.from(e.clipboardData.files).filter(isAllowedStudyFile)
       if (pastedFiles.length > 0) {
@@ -560,7 +588,7 @@ export default function EstudiosTecnicosPage() {
     }
     window.addEventListener('paste', handlePaste)
     return () => window.removeEventListener('paste', handlePaste)
-  }, [appendStudyFiles])
+  }, [appendStudyFiles, anyModalOpen])
 
   const ejecutarBusquedaPaciente = async (cleanDni: string, fichaIdSeleccionada?: number) => {
     setBuscandoPaciente(true)
@@ -882,7 +910,7 @@ export default function EstudiosTecnicosPage() {
 
       // Si proviene de un pedido médico del worklist, completarlo automáticamente
       const estudioCreadoId = data.estudio_id || data.id || data.estudio?.id
-      if (pedidoSeleccionado?.id && estudioCreadoId) {
+      if (ENABLE_WORKLIST_ORDENES && pedidoSeleccionado?.id && estudioCreadoId) {
         try {
           await apiFetch(`/api/oftalmo/worklist-estudios/${pedidoSeleccionado.id}/completar`, {
             method: 'POST',
@@ -898,8 +926,10 @@ export default function EstudiosTecnicosPage() {
         }
       }
 
-      // Refrescar archivos de Geclisa del paciente e historial
-      handleBuscarPaciente()
+      // Refrescar archivos de Geclisa del paciente e historial sin perder la ficha seleccionada
+      if (paciente.dni) {
+        void ejecutarBusquedaPaciente(paciente.dni, paciente.geclisa_ficha_id ?? undefined)
+      }
       fetchHistorial()
     } catch (err: any) {
       setFeedback({
@@ -1162,439 +1192,255 @@ export default function EstudiosTecnicosPage() {
   }
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
-      {/* CABECERA DEL MÓDULO */}
-      <div className="p-5 sm:p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div className="flex items-start sm:items-center gap-4">
-          <div className="p-3.5 rounded-2xl bg-gradient-to-br from-cyan-500 to-teal-600 text-white shadow-lg shadow-cyan-500/20 shrink-0">
-            <Eye size={28} />
-          </div>
-          <div>
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <h1 className="text-xl font-bold text-[var(--foreground)]">
-                Consola de Estudios Oftalmológicos (Técnicos)
-              </h1>
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30">
-                Archivo Geclisa + WhatsApp Línea 2
-              </span>
-            </div>
-            <p className="text-xs sm:text-sm text-[var(--secondary)] mt-1">
-              Busca al paciente por DNI en Geclisa, adjunta el estudio (`PDF`, `JPG`, `PNG` o `Ctrl+V`) y envíalo al instante sin imprimir papel ni ensuciar el chat quirúrgico.
-            </p>
-          </div>
-        </div>
-
-        {/* Estado de Credenciales del Técnico y Línea 2 */}
-        <div className="flex flex-wrap items-center gap-3 shrink-0">
-          {/* Badge Prestador Geclisa */}
-          <div className={`px-3.5 py-2 rounded-xl border text-xs flex items-center gap-2 ${
-            tecnicoPreId
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
-              : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
-          }`}>
-            <Database size={15} />
-            <div>
-              <span className="block text-[10px] uppercase font-bold opacity-75">
-                Firma Geclisa {profile?.nombre_completo ? `• ${profile.nombre_completo}` : ''}
-              </span>
-              <span className="font-bold">
-                {tecnicoPreId ? `${tecnicoNombre} (PreId #${tecnicoPreId})` : 'Sin PreId asignado'}
-              </span>
-            </div>
-          </div>
-
-          {/* Badge Línea 2 WhatsApp */}
-          <div className={`px-3.5 py-2 rounded-xl border text-xs flex items-center gap-2 ${
-            lineaEstudiosStatus?.connected
-              ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300'
-              : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
-          }`}>
-            <Smartphone size={15} />
-            <div>
-              <span className="block text-[10px] uppercase font-bold opacity-75">Línea 2 Estudios</span>
-              <span className="font-bold">
-                {lineaEstudiosStatus?.connected
-                  ? lineaEstudiosStatus.display_phone_number || 'Conectada'
-                  : 'Configurar en Ajustes'}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Alerta si el técnico no tiene geclisa_pre_id vinculado */}
-      {!tecnicoPreId && (
-        <div className="p-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3 text-xs text-amber-800 dark:text-amber-200">
-            <AlertTriangle size={20} className="text-amber-500 shrink-0" />
-            <div>
-              <p className="font-bold">Tu usuario no tiene un Prestador de Geclisa (`geclisa_pre_id`) fijo en su perfil.</p>
-              <p className="opacity-90">
-                Selecciona temporalmente el prestador aquí a la derecha para subir a Geclisa, o vincúlalo de forma permanente en{' '}
-                <Link href="/ajustes/usuarios" className="underline font-bold">Ajustes &gt; Usuarios</Link>.
-              </p>
-            </div>
-          </div>
-          {prestadoresGeclisa.length > 0 && (
-            <select
-              value={manualPreId}
-              onChange={(e) => setManualPreId(e.target.value)}
-              className="px-3 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-900 border border-amber-500/40 text-[var(--foreground)]"
-            >
-              <option value="">Seleccionar Prestador Geclisa...</option>
-              {prestadoresGeclisa.map((p) => (
-                <option key={p.id} value={String(p.id)}>
-                  {p.nombre} (#{p.id})
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-      )}
-
-      {/* KPIs DEL DÍA */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5">
-        <div className="p-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--secondary)]">Estudios Hoy</span>
-          <div className="text-2xl font-extrabold text-[var(--foreground)] mt-1">{metricas.total_hoy}</div>
-          <span className="text-[11px] text-[var(--secondary)]">Procesados en el día</span>
-        </div>
-        <div className="p-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Archivados en Geclisa</span>
-          <div className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 mt-1">{metricas.guardados_geclisa_hoy}</div>
-          <span className="text-[11px] text-[var(--secondary)]">0 bytes en Supabase Storage</span>
-        </div>
-        <div className="p-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-cyan-600 dark:text-cyan-400">Enviados / Leídos WA</span>
-          <div className="text-2xl font-extrabold text-cyan-600 dark:text-cyan-400 mt-1">
-            {metricas.entregados_o_leidos_hoy}{' '}
-            <span className="text-xs font-semibold text-sky-500">({metricas.leidos_azul_hoy} leídos ✓✓)</span>
-          </div>
-          <span className="text-[11px] text-[var(--secondary)]">Vía Línea 2 exclusiva</span>
-        </div>
-        <div className="p-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-rose-500">Con Incidencia WA</span>
-          <div className="text-2xl font-extrabold text-rose-500 mt-1">{metricas.fallidos_hoy}</div>
-          <span className="text-[11px] text-[var(--secondary)]">Reintentables en 1 clic</span>
-        </div>
-        <div className="p-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs col-span-2 sm:col-span-1">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Anulados Hoy</span>
-          <div className="text-2xl font-extrabold text-slate-700 dark:text-slate-200 mt-1">{metricas.anulados_hoy}</div>
-          <span className="text-[11px] text-[var(--secondary)]">Auditoría / Purga</span>
-        </div>
-      </div>
-
-      {/* FEEDBACK BANNER */}
+    <div className="px-3 sm:px-5 py-2.5 max-w-7xl mx-auto space-y-2.5">
+      {/* TOAST FLOTANTE DE FEEDBACK (Sin empujar el layout HD) */}
       {feedback && (
-        <div className={`p-4 rounded-2xl border flex items-start justify-between gap-3 ${
-          feedback.type === 'success'
-            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-200'
-            : feedback.type === 'warning'
-            ? 'bg-amber-500/10 border-amber-500/30 text-amber-800 dark:text-amber-200'
-            : 'bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-200'
-        }`}>
-          <div className="flex items-start gap-3">
+        <div
+          className={`fixed bottom-4 right-4 z-50 max-w-md p-3.5 rounded-2xl border shadow-xl backdrop-blur-md flex items-start justify-between gap-3 ${
+            feedback.type === 'success'
+              ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-100'
+              : feedback.type === 'warning'
+              ? 'bg-amber-950/90 border-amber-500/50 text-amber-100'
+              : 'bg-rose-950/90 border-rose-500/50 text-rose-100'
+          }`}
+        >
+          <div className="flex items-start gap-2.5">
             {feedback.type === 'success' ? (
-              <CheckCircle2 size={20} className="text-emerald-500 shrink-0 mt-0.5" />
+              <CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5" />
             ) : (
-              <AlertTriangle size={20} className="text-amber-500 shrink-0 mt-0.5" />
+              <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
             )}
             <div className="text-xs space-y-0.5">
-              <p className="font-bold text-sm">{feedback.title}</p>
-              <p className="leading-relaxed">{feedback.detail}</p>
+              <p className="font-bold">{feedback.title}</p>
+              <p className="opacity-90 leading-snug">{feedback.detail}</p>
             </div>
           </div>
-          <button onClick={() => setFeedback(null)} className="p-1 opacity-70 hover:opacity-100">
-            <X size={16} />
+          <button
+            type="button"
+            onClick={() => setFeedback(null)}
+            className="p-1 opacity-70 hover:opacity-100 shrink-0"
+            title="Cerrar aviso"
+          >
+            <X size={15} />
           </button>
         </div>
       )}
 
-      {/* WORKLIST DE PEDIDOS MÉDICOS PENDIENTES (Fase 3 Integración Consultorio -> Técnicos) */}
-      <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-2xl p-4 shadow-lg border border-slate-700 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 bg-cyan-500/20 rounded-xl text-cyan-400">
-              <ClipboardList size={20} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="font-extrabold text-sm tracking-wide">
-                  Worklist de Órdenes Médicas Solicitadas
-                </h2>
-                <span className="bg-cyan-500/30 text-cyan-300 text-[10px] font-black px-2 py-0.5 rounded-full border border-cyan-400/40">
-                  {worklistPedidos.length} {worklistPedidos.length === 1 ? 'pendiente' : 'pendientes'}
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Estudios indicados por los oftalmólogos desde Historia Clínica en consultorio
-              </p>
-            </div>
+      {/* FRANJA SUPERIOR COMPACTA: TÍTULO + CREDENCIALES + 5 KPIs */}
+      <div className="px-3.5 py-2 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="p-1.5 rounded-xl bg-gradient-to-br from-cyan-500 to-teal-600 text-white shadow-sm shrink-0">
+            <Eye size={18} />
           </div>
-          <div className="flex items-center gap-2">
+          <h1 className="text-sm sm:text-base font-bold text-[var(--foreground)]">
+            Estudios Oftalmológicos
+          </h1>
+
+          {/* Badge Firma Geclisa (con selector rápido inline si falta PreId) */}
+          <div
+            className={`px-2.5 py-1 rounded-lg border text-[11px] flex items-center gap-1.5 ${
+              tecnicoPreId
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
+            }`}
+          >
+            <Database size={12} className="shrink-0" />
+            {tecnicoPreId ? (
+              <span className="font-semibold">
+                {tecnicoNombre} <span className="opacity-75">(#{tecnicoPreId})</span>
+              </span>
+            ) : prestadoresGeclisa.length > 0 ? (
+              <select
+                value={manualPreId}
+                onChange={(e) => setManualPreId(e.target.value)}
+                className="bg-transparent font-bold text-[11px] focus:outline-none cursor-pointer"
+                title="Seleccionar Prestador Geclisa"
+              >
+                <option value="">Asignar Prestador...</option>
+                {prestadoresGeclisa.map((p) => (
+                  <option key={p.id} value={String(p.id)} className="text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900">
+                    {p.nombre} (#{p.id})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <Link href="/ajustes/usuarios" className="font-bold underline">
+                Sin PreId
+              </Link>
+            )}
+          </div>
+
+          {/* Badge Línea 2 */}
+          <div
+            className={`px-2.5 py-1 rounded-lg border text-[11px] flex items-center gap-1.5 ${
+              lineaEstudiosStatus?.connected
+                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
+            }`}
+          >
+            <Smartphone size={12} className="shrink-0" />
+            <span className="font-semibold">
+              {lineaEstudiosStatus?.connected
+                ? lineaEstudiosStatus.display_phone_number || 'L2 Activa'
+                : 'L2 Sin conectar'}
+            </span>
+          </div>
+        </div>
+
+        {/* 5 KPIs compactos en línea */}
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800/70 border border-[var(--border)] font-semibold">
+            Hoy: <strong className="text-[var(--foreground)]">{metricas.total_hoy}</strong>
+          </span>
+          <span className="px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300 font-semibold">
+            Geclisa: <strong>{metricas.guardados_geclisa_hoy}</strong>
+          </span>
+          <span className="px-2 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/25 text-cyan-700 dark:text-cyan-300 font-semibold">
+            WA: <strong>{metricas.entregados_o_leidos_hoy}</strong>{' '}
+            <span className="text-sky-500">({metricas.leidos_azul_hoy}✓✓)</span>
+          </span>
+          <span
+            className={`px-2 py-1 rounded-lg border font-semibold ${
+              metricas.fallidos_hoy > 0
+                ? 'bg-rose-500/15 border-rose-500/35 text-rose-500'
+                : 'bg-slate-100 dark:bg-slate-800/70 border-[var(--border)] text-[var(--secondary)]'
+            }`}
+          >
+            Error: <strong>{metricas.fallidos_hoy}</strong>
+          </span>
+          <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800/70 border border-[var(--border)] text-[var(--secondary)] font-semibold">
+            Anul: <strong>{metricas.anulados_hoy}</strong>
+          </span>
+        </div>
+      </div>
+
+      {/* WORKLIST DESACTIVADO TEMPORALMENTE POR FEATURE FLAG */}
+      {ENABLE_WORKLIST_ORDENES && (
+        <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-2xl p-4 shadow-lg border border-slate-700 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-cyan-500/20 rounded-xl text-cyan-400">
+                <ClipboardList size={20} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="font-extrabold text-sm tracking-wide">
+                    Worklist de Órdenes Médicas Solicitadas
+                  </h2>
+                  <span className="bg-cyan-500/30 text-cyan-300 text-[10px] font-black px-2 py-0.5 rounded-full border border-cyan-400/40">
+                    {worklistPedidos.length} {worklistPedidos.length === 1 ? 'pendiente' : 'pendientes'}
+                  </span>
+                </div>
+              </div>
+            </div>
             <button
               type="button"
               onClick={cargarWorklist}
               disabled={cargandoWorklist}
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors text-xs flex items-center gap-1"
-              title="Actualizar pedidos"
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
             >
               <RefreshCw size={14} className={cargandoWorklist ? 'animate-spin' : ''} />
             </button>
-            <button
-              type="button"
-              onClick={() => setMostrarWorklist(!mostrarWorklist)}
-              className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-            >
-              {mostrarWorklist ? 'Ocultar' : 'Ver pedidos'}
-            </button>
           </div>
         </div>
+      )}
 
-        {mostrarWorklist && (
-          <div className="pt-2">
-            {worklistPedidos.length === 0 ? (
-              <div className="text-center py-4 text-xs text-slate-400 italic bg-slate-800/40 rounded-xl border border-slate-700/50">
-                No hay pedidos médicos pendientes en este momento. Todas las órdenes están completadas.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                {worklistPedidos.map(pedido => {
-                  const isSelected = pedidoSeleccionado?.id === pedido.id
-                  const isUrgente = pedido.prioridad === 'URGENTE' || pedido.prioridad === 'PREQUIRURGICO'
-                  return (
-                    <div
-                      key={pedido.id}
-                      className={`p-3 rounded-xl border text-xs space-y-2 transition-all ${
-                        isSelected
-                          ? 'bg-cyan-950/40 border-cyan-400 ring-2 ring-cyan-500/20'
-                          : 'bg-slate-800/60 border-slate-700 hover:border-slate-600'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-extrabold text-slate-200 truncate">
-                          {pedido.pacientes?.nombre || 'Paciente'}
-                        </span>
-                        <span
-                          className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${
-                            isUrgente
-                              ? 'bg-red-500/20 text-red-300 border-red-500/40'
-                              : 'bg-slate-700 text-slate-300 border-slate-600'
-                          }`}
-                        >
-                          {pedido.prioridad || 'NORMAL'}
-                        </span>
-                      </div>
-
-                      <div className="space-y-1.5 text-[11px] text-slate-300">
-                        <div className="font-bold text-cyan-300 flex items-center justify-between gap-2">
-                          <span className="truncate">{pedido.titulo}</span>
-                          <span className="text-[10px] bg-slate-700/80 px-1.5 py-0.2 rounded font-mono shrink-0">
-                            {pedido.ojo || 'AO'}
-                          </span>
-                        </div>
-                        {Array.isArray(pedido.estudios || pedido.items) && (pedido.estudios || pedido.items).length > 0 && (
-                          <div className="flex flex-wrap gap-1 pt-0.5">
-                            {(pedido.estudios || pedido.items).map((est: string, idx: number) => (
-                              <button
-                                key={`${est}-${idx}`}
-                                type="button"
-                                onClick={() => {
-                                  if (!isSelected) {
-                                    handleSeleccionarPedidoWorklist(pedido)
-                                  }
-                                  setTipoEstudio(est)
-                                }}
-                                title="Clic para seleccionar este estudio específico"
-                                className={`text-[10px] font-semibold px-2 py-0.5 rounded-md border transition-colors ${
-                                  isSelected && tipoEstudio === est
-                                    ? 'bg-cyan-500 text-slate-950 border-cyan-300 font-bold'
-                                    : 'bg-cyan-500/15 hover:bg-cyan-500/30 text-cyan-200 border-cyan-500/30'
-                                }`}
-                              >
-                                {est}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        <div className="text-slate-400 text-[10px]">
-                          DNI: {pedido.pacientes?.dni || '-'} · Fecha: {formatDateArg(pedido.fecha)}
-                        </div>
-                      </div>
-
-                      <div className="pt-1 flex items-center justify-between border-t border-slate-700/50">
-                        <span className="text-[10px] text-slate-400">
-                          {pedido.diagnostico ? `Dx: ${pedido.diagnostico}` : 'Orden de consultorio'}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleSeleccionarPedidoWorklist(pedido)}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-                            isSelected
-                              ? 'bg-cyan-500 text-slate-900 shadow-sm'
-                              : 'bg-cyan-600/80 hover:bg-cyan-500 text-white'
-                          }`}
-                        >
-                          <Sparkles size={12} />
-                          <span>{isSelected ? 'Cargando orden...' : 'Atender Pedido'}</span>
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* FLUJO DE 3 PASOS: BUSCAR PACIENTE -> CONFIGURAR ESTUDIO -> ADJUNTAR Y ENVIAR */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* COLUMNA IZQUIERDA (5 cols): PASO 1 - BUSCADOR DE PACIENTE EN GECLISA */}
-        <div className="lg:col-span-5 space-y-5">
-          <div className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm space-y-4">
-            <div className="flex items-center gap-2.5">
-              <span className="w-6 h-6 rounded-full bg-cyan-600 text-white text-xs font-bold flex items-center justify-center">
-                1
-              </span>
-              <h2 className="font-bold text-base text-[var(--foreground)]">
-                Buscar Paciente por DNI en Geclisa
-              </h2>
+      {/* PASO 1 HORIZONTAL: BUSCADOR DE PACIENTE + RESUMEN + CELULAR + MODAL GECLISA */}
+      <div className="p-3 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+          {/* Buscador DNI */}
+          <form onSubmit={handleBuscarPaciente} className="flex items-center gap-2 lg:w-[270px] shrink-0">
+            <span className="w-6 h-6 rounded-full bg-cyan-600 text-white text-xs font-bold flex items-center justify-center shrink-0">
+              1
+            </span>
+            <div className="relative flex-1">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--secondary)]" />
+              <input
+                type="text"
+                placeholder="DNI y Enter..."
+                value={dniInput}
+                onChange={(e) => setDniInput(e.target.value)}
+                className="w-full pl-8 pr-2.5 py-2 rounded-xl text-xs font-mono bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                autoFocus
+              />
             </div>
+            <button
+              type="submit"
+              disabled={buscandoPaciente}
+              className="px-3 py-2 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white flex items-center gap-1 transition-all disabled:opacity-50 shrink-0"
+            >
+              {buscandoPaciente ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
+              <span>{buscandoPaciente ? '...' : 'Buscar'}</span>
+            </button>
+          </form>
 
-            <form onSubmit={handleBuscarPaciente} className="flex gap-2">
-              <div className="relative flex-1">
-                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--secondary)]" />
-                <input
-                  type="text"
-                  placeholder="Ingresa el DNI y presiona Enter..."
-                  value={dniInput}
-                  onChange={(e) => setDniInput(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm font-mono bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  autoFocus
-                />
+          {/* Estado Derecho de la Barra de Paciente */}
+          <div className="flex-1 min-w-0 lg:border-l lg:border-[var(--border)] lg:pl-3">
+            {errorBusqueda ? (
+              <div className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-300 text-xs flex items-center gap-2">
+                <AlertTriangle size={15} className="shrink-0" />
+                <span className="truncate">{errorBusqueda}</span>
               </div>
-              <button
-                type="submit"
-                disabled={buscandoPaciente}
-                className="px-4 py-2.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white flex items-center gap-1.5 transition-all disabled:opacity-50 shrink-0"
-              >
-                {buscandoPaciente ? <RefreshCw size={15} className="animate-spin" /> : <Search size={15} />}
-                <span>{buscandoPaciente ? 'Buscando...' : 'Buscar'}</span>
-              </button>
-            </form>
-
-            {errorBusqueda && (
-              <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-300 text-xs flex items-center gap-2">
-                <AlertTriangle size={16} className="shrink-0" />
-                <span>{errorBusqueda}</span>
-              </div>
-            )}
-
-            {/* Selector de candidatos si hay múltiples fichas activas exactas en Geclisa */}
-            {candidatosGeclisa.length > 1 && !paciente && (
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2.5">
-                <div className="flex items-center gap-2 text-xs font-bold text-amber-700 dark:text-amber-300">
-                  <AlertTriangle size={15} className="shrink-0" />
-                  <span>Se encontraron {candidatosGeclisa.length} fichas activas con ese número. Selecciona el paciente correcto:</span>
-                </div>
-                <div className="space-y-1.5">
-                  {candidatosGeclisa.map((cand) => (
-                    <button
-                      key={cand.ficha_id}
-                      type="button"
-                      onClick={() => handleSeleccionarCandidato(cand)}
-                      className="w-full text-left p-2.5 rounded-xl bg-white dark:bg-slate-900/70 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border border-[var(--border)] hover:border-cyan-500/50 transition-all flex items-center justify-between gap-2"
-                    >
-                      <div>
-                        <p className="text-xs font-bold text-[var(--foreground)]">{cand.nombre_completo}</p>
-                        <p className="text-[11px] text-[var(--secondary)] font-mono">
-                          {cand.tipo_documento}: {cand.dni} • Ficha #{cand.ficha_id}
-                          {cand.fecha_nacimiento ? ` • Nac: ${cand.fecha_nacimiento}` : ''}
-                        </p>
-                      </div>
-                      <span className="text-[11px] font-bold text-cyan-600 dark:text-cyan-400 shrink-0">
-                        Elegir →
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Tarjeta del Paciente Encontrado en Geclisa */}
-            {paciente && (
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-cyan-500/30 space-y-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2.5 rounded-xl bg-cyan-500/15 text-cyan-600 dark:text-cyan-400">
-                      <User size={20} />
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-sm text-[var(--foreground)]">
+            ) : paciente ? (
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+                {/* Identidad y Cobertura */}
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="p-2 rounded-xl bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 shrink-0">
+                    <User size={17} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-bold text-sm text-[var(--foreground)] truncate">
                         {paciente.nombre_completo}
                       </h3>
-                      <p className="text-xs text-[var(--secondary)] font-mono">
-                        {paciente.tipo_documento || 'D.N.I.'}: {paciente.dni} • Ficha Geclisa #{paciente.geclisa_ficha_id}
-                      </p>
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold shrink-0">
+                        ✓ Activo
+                      </span>
                     </div>
+                    <p className="text-[11px] text-[var(--secondary)] font-mono truncate">
+                      {paciente.tipo_documento || 'D.N.I.'}: {paciente.dni} • Ficha #{paciente.geclisa_ficha_id}
+                      {paciente.obra_social ? ` • ${paciente.obra_social}${paciente.plan ? ` (${paciente.plan})` : ''}` : ''}
+                    </p>
                   </div>
-                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold">
-                    ✓ Geclisa Activo
-                  </span>
                 </div>
 
-                {paciente.obra_social && (
-                  <div className="text-xs text-[var(--secondary)] bg-white dark:bg-slate-900/60 px-3 py-2 rounded-xl border border-[var(--border)]">
-                    <span className="font-semibold text-[var(--foreground)]">Cobertura:</span> {paciente.obra_social}{' '}
-                    {paciente.plan ? `(${paciente.plan})` : ''}
-                  </div>
-                )}
-
-                {/* Campo editable de Celular para WhatsApp con Prefijo Fijo (+54 9) y Entrada Local */}
-                <div className="pt-1">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-xs font-bold text-[var(--foreground)] flex items-center gap-1.5">
-                      <Phone size={13} className="text-cyan-500" />
-                      Celular del Paciente (Editable si cambió)
-                    </label>
-                    <span className="text-[10px] text-[var(--secondary)] font-medium">
-                      Área + Número (sin 0 ni 15)
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {/* Badge / Selector de Prefijo de País */}
-                    <div className="relative shrink-0">
-                      <select
-                        value={codigoPais}
-                        onChange={(e) => setCodigoPais(e.target.value)}
-                        className="appearance-none bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700/80 border border-[var(--border)] text-xs font-bold px-3 py-2.5 pr-7 rounded-xl cursor-pointer focus:outline-none focus:ring-2 focus:ring-cyan-500 text-[var(--foreground)] transition-colors shadow-sm"
-                        title="Prefijo internacional para WhatsApp"
-                      >
-                        <option value="549">🇦🇷 +54 9 (Arg)</option>
-                        <option value="569">🇨🇱 +56 9 (Chile)</option>
-                        <option value="598">🇺🇾 +598 (Uruguay)</option>
-                        <option value="55">🇧🇷 +55 (Brasil)</option>
-                        <option value="">🌐 + (Otro)</option>
-                      </select>
-                      <ChevronDown size={12} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--secondary)]" />
-                    </div>
-
-                    {/* Input de dígitos locales */}
-                    <div className="flex-1 relative">
+                {/* Celular Editable + Botón Modal Archivos Geclisa */}
+                <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={codigoPais}
+                      onChange={(e) => setCodigoPais(e.target.value)}
+                      className="bg-slate-100 dark:bg-slate-800/80 border border-[var(--border)] text-[11px] font-bold px-2 py-1.5 rounded-xl cursor-pointer focus:outline-none focus:ring-2 focus:ring-cyan-500 text-[var(--foreground)]"
+                      title="Prefijo internacional para WhatsApp"
+                    >
+                      <option value="549">🇦🇷 +54 9</option>
+                      <option value="569">🇨🇱 +56 9</option>
+                      <option value="598">🇺🇾 +598</option>
+                      <option value="55">🇧🇷 +55</option>
+                      <option value="">🌐 +</option>
+                    </select>
+                    <div className="relative w-36 sm:w-40">
                       <input
                         type="text"
                         value={telefonoLocal}
                         onChange={(e) => setTelefonoLocal(cleanLocalInputDigits(e.target.value, codigoPais))}
-                        placeholder={codigoPais === '549' ? 'Ej: 261 470 3230 o 11 4123 4567' : 'Número móvil sin prefijo'}
-                        className="w-full px-3.5 py-2.5 rounded-xl text-sm font-mono bg-white dark:bg-slate-900 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500 placeholder:text-slate-400 dark:placeholder:text-slate-500 shadow-sm"
+                        placeholder="Área + Número"
+                        className={`w-full pl-2.5 pr-6 py-1.5 rounded-xl text-xs font-mono bg-white dark:bg-slate-900 border focus:outline-none focus:ring-2 focus:ring-cyan-500 ${
+                          codigoPais === '549' && telefonoLocal && telefonoLocal.length < 10
+                            ? 'border-amber-500/60'
+                            : 'border-[var(--border)]'
+                        }`}
+                        title={
+                          telefonoLocal
+                            ? `Destino WhatsApp: ${formatPhoneDisplay(telefonoDestino)}`
+                            : 'Ingresá código de área y número sin 0 ni 15'
+                        }
                       />
                       {telefonoLocal && (
                         <button
                           type="button"
                           onClick={() => setTelefonoLocal('')}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs px-1.5 py-0.5 rounded"
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-[10px] px-1"
                           title="Limpiar número"
                         >
                           ✕
@@ -1603,763 +1449,767 @@ export default function EstudiosTecnicosPage() {
                     </div>
                   </div>
 
-                  {/* Resumen dinámico y validación visual */}
-                  {telefonoLocal ? (
-                    <div className="flex items-center gap-1.5 mt-2 text-[11px] text-cyan-600 dark:text-cyan-400 font-semibold">
-                      <CheckCircle2 size={13} className="text-emerald-500 shrink-0" />
-                      <span>
-                        Destino WhatsApp verificado: <strong>{formatPhoneDisplay(telefonoDestino)}</strong>
-                      </span>
-                      {codigoPais === '549' && telefonoLocal.length < 10 && (
-                        <span className="text-amber-500 text-[10px] font-normal ml-auto">
-                          (Faltan {10 - telefonoLocal.length} dígitos para los 10 de Argentina)
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1.5">
-                      Ingresá solo el código de área y el número (sin 0 y sin 15). Ej: para Mendoza <span className="font-mono text-cyan-500">261 470-3230</span>, CABA/GBA <span className="font-mono text-cyan-500">11 4123-4567</span>.
-                    </p>
-                  )}
-                </div>
-
-                {/* Archivos ya existentes en la Historia Clínica de Geclisa (Reenvío en 1 clic) */}
-                {archivosGeclisa.length > 0 && (
-                  <div className="pt-2 border-t border-[var(--border)]">
+                  {archivosGeclisa.length > 0 && (
                     <button
                       type="button"
-                      onClick={() => setShowArchivosGeclisa(!showArchivosGeclisa)}
-                      className="w-full flex items-center justify-between text-xs font-bold text-cyan-600 dark:text-cyan-400 hover:underline py-1"
+                      onClick={() => setShowArchivosGeclisa(true)}
+                      className="px-2.5 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-700 dark:text-cyan-300 text-xs font-bold flex items-center gap-1.5 transition-colors shrink-0"
                     >
-                      <span className="flex items-center gap-1.5">
-                        <FolderOpen size={14} />
-                        Archivos en Geclisa (Solapa Archivos Clínicos) ({archivosGeclisa.length})
-                      </span>
-                      <span>{showArchivosGeclisa ? 'Ocultar ▲' : 'Ver / Enviar ▼'}</span>
+                      <FolderOpen size={14} />
+                      <span>Archivos Geclisa ({archivosGeclisa.length})</span>
                     </button>
-
-                    {showArchivosGeclisa && (
-                      <div className="mt-2 space-y-2 max-h-56 overflow-y-auto pr-1">
-                        {archivosGeclisa.map((arc) => (
-                          <div
-                            key={arc.as_id}
-                            className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-[var(--border)] flex items-center justify-between gap-2 text-xs"
-                          >
-                            <div className="min-w-0">
-                              <p className="font-bold text-[var(--foreground)] truncate" title={arc.titulo}>
-                                {arc.titulo || `Archivo #${arc.as_id}`}
-                              </p>
-                              <p className="text-[10px] text-[var(--secondary)]">
-                                {formatDateArg(arc.fecha)} • AS_ID #{arc.as_id}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <a
-                                href={`${BACKEND_URL}/api/geclisa/archivos/${arc.as_id}/ver`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-600 dark:text-slate-300"
-                                title="Ver archivo desde Geclisa"
-                              >
-                                <ExternalLink size={13} />
-                              </a>
-                              <button
-                                type="button"
-                                disabled={enviandoExistenteId === arc.as_id}
-                                onClick={() => handleEnviarArchivoExistenteGeclisa(arc)}
-                                className="px-2.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-bold flex items-center gap-1 disabled:opacity-50"
-                                title="Enviar este archivo ya guardado en Geclisa por WhatsApp sin volver a subirlo"
-                              >
-                                <Send size={11} />
-                                <span>{enviandoExistenteId === arc.as_id ? '...' : 'Enviar WA'}</span>
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-[var(--secondary)] flex items-center gap-2 py-1">
+                <Info size={14} className="text-cyan-500 shrink-0" />
+                <span>Ingresa el DNI del paciente para cargar su ficha, celular y archivos previos de Geclisa.</span>
               </div>
             )}
           </div>
         </div>
+      </div>
 
-        {/* COLUMNA DERECHA (7 cols): PASO 2 Y 3 - TIPO DE ESTUDIO, DRAG & DROP Y ENVÍO DUAL */}
-        <div className="lg:col-span-7">
-          <form
-            onSubmit={handleEnviarEstudio}
-            className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm space-y-5"
-          >
-            {/* Paso 2: Selección rápida de Estudio y Ojo */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <span className="w-6 h-6 rounded-full bg-cyan-600 text-white text-xs font-bold flex items-center justify-center">
-                    2
-                  </span>
-                  <h2 className="font-bold text-base text-[var(--foreground)]">
-                    Tipo de Estudio Oftalmológico y Lateralidad
-                  </h2>
-                </div>
-              </div>
-
-              {/* Banner de Pedido Médico Seleccionado con Chips Rápidos */}
-              {pedidoSeleccionado && (
-                <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 space-y-2 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="font-bold text-cyan-700 dark:text-cyan-300 flex items-center gap-1.5">
-                      <Sparkles size={14} className="shrink-0" />
-                      <span>
-                        Atendiendo orden médica de {pedidoSeleccionado.pacientes?.nombre || 'Paciente'} ({pedidoSeleccionado.ojo || 'AO'})
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setPedidoSeleccionado(null)}
-                      className="text-[11px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-semibold"
-                    >
-                      Desvincular
-                    </button>
-                  </div>
-                  {Array.isArray(pedidoSeleccionado.estudios || pedidoSeleccionado.items) &&
-                    (pedidoSeleccionado.estudios || pedidoSeleccionado.items).length > 0 && (
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[11px] text-[var(--secondary)] font-medium">
-                          Estudios solicitados (clic para asignar):
-                        </span>
-                        {(pedidoSeleccionado.estudios || pedidoSeleccionado.items).map((est: string, i: number) => (
-                          <button
-                            key={`${est}-${i}`}
-                            type="button"
-                            onClick={() => setTipoEstudio(est)}
-                            className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold border transition-all ${
-                              tipoEstudio === est
-                                ? 'bg-cyan-600 text-white border-cyan-600'
-                                : 'bg-white dark:bg-slate-800 text-cyan-700 dark:text-cyan-300 border-cyan-500/40 hover:bg-cyan-500/20'
-                            }`}
-                          >
-                            {est}
-                          </button>
-                        ))}
-                        {(pedidoSeleccionado.estudios || pedidoSeleccionado.items).length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setTipoEstudio((pedidoSeleccionado.estudios || pedidoSeleccionado.items).join(' + '))
-                            }
-                            className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold border transition-all ${
-                              tipoEstudio === (pedidoSeleccionado.estudios || pedidoSeleccionado.items).join(' + ')
-                                ? 'bg-cyan-600 text-white border-cyan-600'
-                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-400/40 hover:bg-slate-500/20'
-                            }`}
-                          >
-                            Todos juntos
-                          </button>
-                        )}
-                      </div>
-                    )}
-                </div>
-              )}
-
-              {/* Chips de 1 Clic */}
-              {estudiosPresets.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {estudiosPresets.map((preset) => (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => {
-                        formTouchedRef.current = true
-                        setTipoEstudio(preset.nombre)
-                      }}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-                        tipoEstudio === preset.nombre
-                          ? 'bg-cyan-600 text-white border-cyan-600 shadow-xs'
-                          : 'bg-slate-50 dark:bg-slate-800/50 border-[var(--border)] text-[var(--foreground)] hover:bg-slate-100 dark:hover:bg-slate-800'
-                      }`}
-                    >
-                      {preset.nombre}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-[11px] text-[var(--secondary)] italic">
-                  Sin etiquetas rápidas activas — ingresa el título del estudio manualmente.
-                </p>
-              )}
-
-              <datalist id="presets-estudios">
-                {estudiosPresets.map((preset) => (
-                  <option key={preset.id} value={preset.nombre} />
-                ))}
-              </datalist>
-
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 pt-1">
-                <div className="sm:col-span-8">
-                  <label className="block text-xs font-semibold text-[var(--secondary)] mb-1">
-                    Título del Estudio (se guardará en la ficha de Geclisa y en el mensaje)
-                  </label>
-                  <input
-                    type="text"
-                    value={tipoEstudio}
-                    onChange={(e) => {
-                      formTouchedRef.current = true
-                      setTipoEstudio(e.target.value)
-                    }}
-                    placeholder="Escribe el tipo de estudio..."
-                    className="w-full px-3.5 py-2 rounded-xl text-sm bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    required
-                  />
-                  {tipoEstudio.trim() && getGeclisaTitleInfo(tipoEstudio, ojo).exceedsLimit && (
-                    <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                      <AlertTriangle size={11} className="shrink-0" />
-                      <span>
-                        Título en Geclisa ({getGeclisaTitleInfo(tipoEstudio, ojo).length}/45): se truncará a 45 caracteres en la ficha; la carátula PDF y WhatsApp conservarán el nombre completo.
-                      </span>
-                    </p>
-                  )}
-                </div>
-                <div className="sm:col-span-4">
-                  <label className="block text-xs font-semibold text-[var(--secondary)] mb-1">
-                    Ojo / Lateralidad
-                  </label>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {(['AO', 'OD', 'OI'] as const).map((o) => (
-                      <button
-                        key={o}
-                        type="button"
-                        onClick={() => {
-                          formTouchedRef.current = true
-                          setOjo(o)
-                        }}
-                        className={`py-2 rounded-xl text-xs font-bold border transition-all ${
-                          ojo === o
-                            ? 'bg-cyan-600 text-white border-cyan-600'
-                            : 'bg-slate-50 dark:bg-slate-800/50 border-[var(--border)] text-[var(--foreground)]'
-                        }`}
-                      >
-                        {o}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
+      {/* ÁREA OPERATIVA EN 2 COLUMNAS PARALELAS (Configuración + Envío a la Izquierda | Adjuntos + Miniaturas a la Derecha) */}
+      <form onSubmit={handleEnviarEstudio} className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-stretch">
+        {/* COLUMNA IZQUIERDA (5 cols): PASO 2, OPCIONES, PLANTILLA Y BOTÓN ENVIAR SIEMPRE VISIBLE */}
+        <div className="lg:col-span-5 p-3.5 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs flex flex-col gap-2.5">
+          {/* Header Paso 2 + Lateralidad AO/OD/OI */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-cyan-600 text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                2
+              </span>
+              <h2 className="font-bold text-sm text-[var(--foreground)]">
+                Estudio y Lateralidad
+              </h2>
             </div>
+            <div className="grid grid-cols-3 gap-1">
+              {(['AO', 'OD', 'OI'] as const).map((o) => (
+                <button
+                  key={o}
+                  type="button"
+                  onClick={() => {
+                    formTouchedRef.current = true
+                    setOjo(o)
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                    ojo === o
+                      ? 'bg-cyan-600 text-white border-cyan-600'
+                      : 'bg-slate-50 dark:bg-slate-800/50 border-[var(--border)] text-[var(--foreground)]'
+                  }`}
+                >
+                  {o}
+                </button>
+              ))}
+            </div>
+          </div>
 
-            {/* Paso 3: Zona Drag & Drop + Pegado Ctrl+V */}
-            <div className="space-y-3 pt-2 border-t border-[var(--border)]">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2.5">
-                  <span className="w-6 h-6 rounded-full bg-cyan-600 text-white text-xs font-bold flex items-center justify-center">
-                    3
-                  </span>
-                  <h2 className="font-bold text-base text-[var(--foreground)]">
-                    Adjuntar Estudio (`PDF`, `JPG`, `PNG` o `Ctrl+V`)
-                  </h2>
-                </div>
-                <span className="text-[11px] text-[var(--secondary)] flex items-center gap-1">
-                  <ClipboardPaste size={13} className="text-cyan-600" />
-                  Puedes pegar capturas directamente con <strong>Ctrl + V</strong>
-                </span>
-              </div>
+          {/* Chips de Presets compactos */}
+          {estudiosPresets.length > 0 ? (
+            <div className="flex flex-wrap gap-1 max-h-[82px] overflow-y-auto pr-1">
+              {estudiosPresets.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => {
+                    formTouchedRef.current = true
+                    setTipoEstudio(preset.nombre)
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all ${
+                    tipoEstudio === preset.nombre
+                      ? 'bg-cyan-600 text-white border-cyan-600 shadow-xs'
+                      : 'bg-slate-50 dark:bg-slate-800/50 border-[var(--border)] text-[var(--foreground)] hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {preset.nombre}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-[var(--secondary)] italic">
+              Sin etiquetas activas — escribe el título manualmente.
+            </p>
+          )}
 
-              <div
-                onDragOver={(e) => {
-                  if (!e.dataTransfer.types.includes('Files')) return
-                  e.preventDefault()
-                  setIsDragging(true)
-                }}
-                onDragLeave={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                    setIsDragging(false)
-                  }
-                }}
-                onDrop={(e) => {
-                  if (!e.dataTransfer.types.includes('Files')) return
-                  e.preventDefault()
-                  setIsDragging(false)
-                  handleFileChange(e.dataTransfer.files)
-                }}
-                onClick={() => fileInputRef.current?.click()}
-                className={`p-6 rounded-2xl border-2 border-dashed text-center cursor-pointer transition-all ${
-                  isDragging
-                    ? 'border-cyan-500 bg-cyan-500/10'
-                    : 'border-[var(--border)] hover:border-cyan-500/60 bg-slate-50/70 dark:bg-slate-800/30'
+          {/* Título del Estudio */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[11px] font-semibold text-[var(--secondary)]">
+                Título del Estudio
+              </label>
+              <span
+                className={`text-[10px] font-mono ${
+                  tipoEstudio.trim() && getGeclisaTitleInfo(tipoEstudio, ojo).exceedsLimit
+                    ? 'text-amber-500 font-bold'
+                    : 'text-[var(--secondary)]'
                 }`}
               >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => handleFileChange(e.target.files)}
-                />
+                {getGeclisaTitleInfo(tipoEstudio, ojo).length}/45 Geclisa
+              </span>
+            </div>
+            <input
+              type="text"
+              value={tipoEstudio}
+              onChange={(e) => {
+                formTouchedRef.current = true
+                setTipoEstudio(e.target.value)
+              }}
+              placeholder="Escribe el tipo de estudio..."
+              className="w-full px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              required
+            />
+          </div>
+
+          {/* Observaciones */}
+          <div>
+            <input
+              type="text"
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+              placeholder="Observaciones para Historia Clínica (opcional)..."
+              className="w-full px-3 py-1.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            />
+          </div>
+
+          {/* Checkboxes compactos */}
+          <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 text-[11px] pt-0.5">
+            <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
+              <input
+                type="checkbox"
+                checked={guardarEnGeclisa}
+                onChange={(e) => setGuardarEnGeclisa(e.target.checked)}
+                className="h-3.5 w-3.5 accent-emerald-600 rounded"
+              />
+              <span>Guardar en Geclisa</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
+              <input
+                type="checkbox"
+                checked={enviarWhatsapp}
+                onChange={(e) => setEnviarWhatsapp(e.target.checked)}
+                className="h-3.5 w-3.5 accent-cyan-600 rounded"
+              />
+              <span>WhatsApp (L2)</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-teal-600 dark:text-teal-400">
+              <input
+                type="checkbox"
+                checked={aplicarCaratula}
+                onChange={(e) => setAplicarCaratula(e.target.checked)}
+                className="h-3.5 w-3.5 accent-teal-600 rounded"
+              />
+              <span>Membrete Centrovisión</span>
+            </label>
+          </div>
+
+          {/* Plantilla WhatsApp en 1 línea + Botón Vista Previa Modal */}
+          {enviarWhatsapp && (
+            <div className="flex items-center gap-2 pt-0.5">
+              <Sparkles size={14} className="text-cyan-600 shrink-0" />
+              <select
+                value={plantillaSeleccionada}
+                onChange={(e) => setPlantillaSeleccionada(e.target.value)}
+                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold bg-slate-50 dark:bg-slate-900 border border-cyan-500/30 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                title="Plantilla de WhatsApp Oficial (Meta Línea 2)"
+              >
+                <option value="auto">
+                  ✦ Auto ({activeTemplateName})
+                </option>
+                {estudiosTemplates.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.titulo_amigable || t.name} [{t.header_type}]
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setMostrarPreviewPlantilla(true)}
+                className="px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border border-cyan-500/30 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/10 flex items-center gap-1 shrink-0"
+                title="Ver mensaje que recibirá el paciente"
+              >
+                <Eye size={13} />
+                <span>Previa</span>
+              </button>
+            </div>
+          )}
+
+          {/* CTA Principal fijado al pie de la columna izquierda */}
+          <button
+            type="submit"
+            disabled={enviandoEstudio || !paciente || selectedFiles.length === 0}
+            className="mt-auto w-full px-4 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 text-white flex items-center justify-center gap-2 shadow-md shadow-cyan-500/20 transition-all disabled:opacity-50"
+          >
+            {enviandoEstudio ? (
+              <>
+                <RefreshCw size={15} className="animate-spin" />
+                <span>{progresoOptimizacion || 'Procesando en paralelo (Geclisa + Meta)...'}</span>
+              </>
+            ) : (
+              <>
+                <Send size={15} />
+                <span>Archivar en Geclisa y Enviar por WhatsApp</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* COLUMNA DERECHA (7 cols): PASO 3 - ADJUNTAR, ORDENAR Y PREVISUALIZAR MINIATURAS */}
+        <div className="lg:col-span-7 p-3.5 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs flex flex-col gap-2.5">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-cyan-600 text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                3
+              </span>
+              <h2 className="font-bold text-sm text-[var(--foreground)]">
+                Adjuntar Estudio (`PDF`, `JPG`, `PNG` o `Ctrl+V`)
+              </h2>
+            </div>
+            <span className="text-[11px] text-[var(--secondary)] flex items-center gap-1">
+              <ClipboardPaste size={13} className="text-cyan-600" />
+              Pegar con <strong>Ctrl + V</strong>
+            </span>
+          </div>
+
+          {/* Dropzone adaptativo: amplio si está vacío, barra compacta si ya hay archivos */}
+          <div
+            onDragOver={(e) => {
+              if (!e.dataTransfer.types.includes('Files')) return
+              e.preventDefault()
+              setIsDragging(true)
+            }}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                setIsDragging(false)
+              }
+            }}
+            onDrop={(e) => {
+              if (!e.dataTransfer.types.includes('Files')) return
+              e.preventDefault()
+              setIsDragging(false)
+              handleFileChange(e.dataTransfer.files)
+            }}
+            onClick={() => fileInputRef.current?.click()}
+            className={`rounded-2xl border-2 border-dashed cursor-pointer transition-all ${
+              studyItems.length > 0 ? 'px-4 py-2.5 flex items-center justify-between gap-3' : 'p-8 text-center'
+            } ${
+              isDragging
+                ? 'border-cyan-500 bg-cyan-500/10'
+                : 'border-[var(--border)] hover:border-cyan-500/60 bg-slate-50/70 dark:bg-slate-800/30'
+            }`}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+              multiple
+              className="hidden"
+              onChange={(e) => handleFileChange(e.target.files)}
+            />
+            {studyItems.length > 0 ? (
+              <>
+                <div className="flex items-center gap-2.5 text-xs">
+                  <Upload size={16} className="text-cyan-600 shrink-0" />
+                  <span className="font-semibold text-[var(--foreground)]">
+                    Agregar más archivos, arrastrar aquí o <kbd className="px-1 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-[10px]">Ctrl+V</kbd>
+                  </span>
+                </div>
+                <span className="text-[11px] font-bold text-cyan-600 dark:text-cyan-400 shrink-0">
+                  + Seleccionar
+                </span>
+              </>
+            ) : (
+              <>
                 <Upload size={28} className="mx-auto text-cyan-600 mb-2" />
                 <p className="text-sm font-bold text-[var(--foreground)]">
                   Arrastra el estudio aquí o haz clic para seleccionarlo
                 </p>
                 <p className="text-xs text-[var(--secondary)] mt-1">
-                  Soporta archivos <strong>PDF, JPG y PNG</strong> (hasta 20 MB). Si subes imágenes de ambos ojos (OD + OI), se ordenan en ascendente natural y puedes reordenarlas abajo.
+                  Soporta <strong>PDF, JPG y PNG</strong> (hasta 20 MB). Las imágenes se ordenan en ascendente natural y puedes reordenarlas antes de enviar.
                 </p>
-              </div>
+              </>
+            )}
+          </div>
 
-              {/* Grilla visual de miniaturas numeradas y reordenables */}
-              {studyItems.length > 0 && (() => {
-                const allImages = studyItems.every((i) => !i.isPdf)
-                const mostrarAgrupado2x2 = grilla2x2 && studyItems.length > 1 && allImages
+          {/* Grilla visual de miniaturas numeradas y reordenables */}
+          {studyItems.length > 0 && (() => {
+            const allImages = studyItems.every((i) => !i.isPdf)
+            const mostrarAgrupado2x2 = grilla2x2 && studyItems.length > 1 && allImages
 
-                const renderThumbCard = (item: StudyFileItem, idx: number) => {
-                  const isBeingDragged = draggedItemId === item.id
-                  const isDragTarget = dragOverItemId === item.id && draggedItemId !== item.id
-                  return (
-                    <div
-                      key={item.id}
-                      draggable={!enviandoEstudio}
-                      onDragStart={(e) => {
-                        if (enviandoEstudio) return
-                        e.dataTransfer.effectAllowed = 'move'
-                        e.dataTransfer.setData('application/x-study-thumb', item.id)
-                        setDraggedItemId(item.id)
-                      }}
-                      onDragOver={(e) => {
-                        if (!e.dataTransfer.types.includes('application/x-study-thumb')) return
-                        e.preventDefault()
-                        e.stopPropagation()
-                        if (dragOverItemId !== item.id) {
-                          setDragOverItemId(item.id)
-                        }
-                      }}
-                      onDragLeave={(e) => {
-                        if (!e.currentTarget.contains(e.relatedTarget as Node) && dragOverItemId === item.id) {
-                          setDragOverItemId(null)
-                        }
-                      }}
-                      onDrop={(e) => {
-                        if (!e.dataTransfer.types.includes('application/x-study-thumb')) return
-                        e.preventDefault()
-                        e.stopPropagation()
-                        const sourceId = e.dataTransfer.getData('application/x-study-thumb')
-                        setDraggedItemId(null)
-                        setDragOverItemId(null)
-                        moveStudyItemById(sourceId, item.id)
-                      }}
-                      onDragEnd={() => {
-                        setDraggedItemId(null)
-                        setDragOverItemId(null)
-                      }}
-                      className={`group relative rounded-xl border bg-slate-50 dark:bg-slate-800/60 overflow-hidden transition-all select-none ${
-                        !enviandoEstudio ? 'cursor-grab active:cursor-grabbing' : 'opacity-70'
-                      } ${
-                        isDragTarget
-                          ? 'border-cyan-500 ring-2 ring-cyan-500/40 scale-[1.02]'
-                          : isBeingDragged
-                            ? 'opacity-40 border-dashed border-cyan-500'
-                            : 'border-[var(--border)] hover:border-cyan-500/50'
-                      }`}
-                    >
-                      {/* Badge de orden #N */}
-                      <span className="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded-md bg-slate-900/80 text-white text-[10px] font-bold font-mono shadow-sm">
-                        #{idx + 1}
-                      </span>
+            const renderThumbCard = (item: StudyFileItem, idx: number) => {
+              const isBeingDragged = draggedItemId === item.id
+              const isDragTarget = dragOverItemId === item.id && draggedItemId !== item.id
+              return (
+                <div
+                  key={item.id}
+                  draggable={!enviandoEstudio}
+                  onDragStart={(e) => {
+                    if (enviandoEstudio) return
+                    e.dataTransfer.effectAllowed = 'move'
+                    e.dataTransfer.setData('application/x-study-thumb', item.id)
+                    setDraggedItemId(item.id)
+                  }}
+                  onDragOver={(e) => {
+                    if (!e.dataTransfer.types.includes('application/x-study-thumb')) return
+                    e.preventDefault()
+                    e.stopPropagation()
+                    if (dragOverItemId !== item.id) {
+                      setDragOverItemId(item.id)
+                    }
+                  }}
+                  onDragLeave={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node) && dragOverItemId === item.id) {
+                      setDragOverItemId(null)
+                    }
+                  }}
+                  onDrop={(e) => {
+                    if (!e.dataTransfer.types.includes('application/x-study-thumb')) return
+                    e.preventDefault()
+                    e.stopPropagation()
+                    const sourceId = e.dataTransfer.getData('application/x-study-thumb')
+                    setDraggedItemId(null)
+                    setDragOverItemId(null)
+                    moveStudyItemById(sourceId, item.id)
+                  }}
+                  onDragEnd={() => {
+                    setDraggedItemId(null)
+                    setDragOverItemId(null)
+                  }}
+                  className={`group relative rounded-xl border bg-slate-50 dark:bg-slate-800/60 overflow-hidden transition-all select-none ${
+                    !enviandoEstudio ? 'cursor-grab active:cursor-grabbing' : 'opacity-70'
+                  } ${
+                    isDragTarget
+                      ? 'border-cyan-500 ring-2 ring-cyan-500/40 scale-[1.02]'
+                      : isBeingDragged
+                        ? 'opacity-40 border-dashed border-cyan-500'
+                        : 'border-[var(--border)] hover:border-cyan-500/50'
+                  }`}
+                >
+                  <span className="absolute top-1 left-1 z-10 px-1.5 py-0.5 rounded bg-slate-900/80 text-white text-[10px] font-bold font-mono shadow-sm">
+                    #{idx + 1}
+                  </span>
 
-                      {/* Botón eliminar */}
-                      <button
-                        type="button"
-                        disabled={enviandoEstudio}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          removeStudyItem(item.id)
-                        }}
-                        title="Quitar archivo"
-                        className="absolute top-1.5 right-1.5 z-10 p-1 rounded-md bg-slate-900/75 hover:bg-rose-600 text-white transition-colors disabled:opacity-40"
-                      >
-                        <X size={12} />
-                      </button>
+                  <button
+                    type="button"
+                    disabled={enviandoEstudio}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      removeStudyItem(item.id)
+                    }}
+                    title="Quitar archivo"
+                    className="absolute top-1 right-1 z-10 p-1 rounded bg-slate-900/75 hover:bg-rose-600 text-white transition-colors disabled:opacity-40"
+                  >
+                    <X size={11} />
+                  </button>
 
-                      {/* Miniatura */}
-                      <div className="aspect-[4/3] w-full bg-slate-200/70 dark:bg-slate-900/70 flex items-center justify-center overflow-hidden">
-                        {item.isPdf ? (
-                          <div className="flex flex-col items-center gap-1 text-rose-500">
-                            <FileText size={28} />
-                            <span className="text-[10px] font-bold uppercase">PDF</span>
-                          </div>
-                        ) : item.thumbUrl ? (
-                          <img
-                            src={item.thumbUrl}
-                            alt={item.file.name}
-                            draggable={false}
-                            className="w-full h-full object-contain bg-white dark:bg-slate-950"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center animate-pulse">
-                            <ImageIcon size={22} className="text-cyan-500/60" />
-                          </div>
-                        )}
+                  <div className="aspect-[4/3] w-full bg-slate-200/70 dark:bg-slate-900/70 flex items-center justify-center overflow-hidden">
+                    {item.isPdf ? (
+                      <div className="flex flex-col items-center gap-1 text-rose-500">
+                        <FileText size={24} />
+                        <span className="text-[10px] font-bold uppercase">PDF</span>
                       </div>
+                    ) : item.thumbUrl ? (
+                      <img
+                        src={item.thumbUrl}
+                        alt={item.file.name}
+                        draggable={false}
+                        className="w-full h-full object-contain bg-white dark:bg-slate-950"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center animate-pulse">
+                        <ImageIcon size={20} className="text-cyan-500/60" />
+                      </div>
+                    )}
+                  </div>
 
-                      {/* Pie: nombre + tamaño + flechas rápidas */}
-                      <div className="p-1.5 space-y-1 bg-white/70 dark:bg-slate-900/50 border-t border-[var(--border)]">
-                        <p className="text-[10px] font-semibold text-[var(--foreground)] truncate" title={item.file.name}>
-                          {item.file.name}
-                        </p>
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-[9px] text-[var(--secondary)] font-mono">
-                            {(item.file.size / (1024 * 1024)).toFixed(2)} MB
-                          </span>
-                          {studyItems.length > 1 && (
-                            <div className="flex items-center gap-0.5">
-                              <button
-                                type="button"
-                                disabled={enviandoEstudio || idx === 0}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  moveStudyItem(idx, idx - 1)
-                                }}
-                                title="Mover antes"
-                                className="p-0.5 rounded hover:bg-cyan-500/15 text-[var(--secondary)] hover:text-cyan-600 disabled:opacity-25"
-                              >
-                                <ArrowLeft size={12} />
-                              </button>
-                              <button
-                                type="button"
-                                disabled={enviandoEstudio || idx === studyItems.length - 1}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  moveStudyItem(idx, idx + 1)
-                                }}
-                                title="Mover después"
-                                className="p-0.5 rounded hover:bg-cyan-500/15 text-[var(--secondary)] hover:text-cyan-600 disabled:opacity-25"
-                              >
-                                <ArrowRight size={12} />
-                              </button>
-                            </div>
-                          )}
+                  <div className="p-1.5 space-y-0.5 bg-white/70 dark:bg-slate-900/50 border-t border-[var(--border)]">
+                    <p className="text-[10px] font-semibold text-[var(--foreground)] truncate" title={item.file.name}>
+                      {item.file.name}
+                    </p>
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[9px] text-[var(--secondary)] font-mono">
+                        {(item.file.size / (1024 * 1024)).toFixed(2)} MB
+                      </span>
+                      {studyItems.length > 1 && (
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            disabled={enviandoEstudio || idx === 0}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              moveStudyItem(idx, idx - 1)
+                            }}
+                            title="Mover antes"
+                            className="p-0.5 rounded hover:bg-cyan-500/15 text-[var(--secondary)] hover:text-cyan-600 disabled:opacity-25"
+                          >
+                            <ArrowLeft size={11} />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={enviandoEstudio || idx === studyItems.length - 1}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              moveStudyItem(idx, idx + 1)
+                            }}
+                            title="Mover después"
+                            className="p-0.5 rounded hover:bg-cyan-500/15 text-[var(--secondary)] hover:text-cyan-600 disabled:opacity-25"
+                          >
+                            <ArrowRight size={11} />
+                          </button>
                         </div>
-                      </div>
+                      )}
                     </div>
-                  )
-                }
+                  </div>
+                </div>
+              )
+            }
 
-                const chunks: { sheetIndex: number; items: { item: StudyFileItem; globalIdx: number }[] }[] = []
-                if (mostrarAgrupado2x2) {
-                  for (let i = 0; i < studyItems.length; i += 4) {
-                    chunks.push({
-                      sheetIndex: Math.floor(i / 4) + 1,
-                      items: studyItems.slice(i, i + 4).map((item, offset) => ({
-                        item,
-                        globalIdx: i + offset
-                      }))
-                    })
-                  }
-                }
+            const chunks: { sheetIndex: number; items: { item: StudyFileItem; globalIdx: number }[] }[] = []
+            if (mostrarAgrupado2x2) {
+              for (let i = 0; i < studyItems.length; i += 4) {
+                chunks.push({
+                  sheetIndex: Math.floor(i / 4) + 1,
+                  items: studyItems.slice(i, i + 4).map((item, offset) => ({
+                    item,
+                    globalIdx: i + offset
+                  }))
+                })
+              }
+            }
 
-                return (
-                  <div className="space-y-3">
-                    {/* Toolbar de ordenamiento */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-slate-100/80 dark:bg-slate-800/50 border border-[var(--border)]">
-                      <span className="text-[11px] font-semibold text-[var(--foreground)]">
-                        {studyItems.length} {studyItems.length === 1 ? 'archivo' : 'archivos'} •{' '}
-                        <span className="font-mono text-[var(--secondary)]">
-                          {(studyItems.reduce((a, i) => a + i.file.size, 0) / (1024 * 1024)).toFixed(2)} MB
-                        </span>
-                      </span>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {studyItems.length > 1 && (
-                          <>
-                            <button
-                              type="button"
-                              disabled={enviandoEstudio}
-                              onClick={() => sortAllStudyItems('asc')}
-                              className="px-2 py-1 rounded-lg text-[11px] font-semibold bg-white dark:bg-slate-900 border border-[var(--border)] hover:border-cyan-500/50 text-[var(--foreground)] flex items-center gap-1 disabled:opacity-40"
-                              title="Ordenar por nombre ascendente (A→Z)"
-                            >
-                              <ArrowDownAZ size={13} className="text-cyan-600" />
-                              A→Z
-                            </button>
-                            <button
-                              type="button"
-                              disabled={enviandoEstudio}
-                              onClick={() => sortAllStudyItems('desc')}
-                              className="px-2 py-1 rounded-lg text-[11px] font-semibold bg-white dark:bg-slate-900 border border-[var(--border)] hover:border-cyan-500/50 text-[var(--foreground)] flex items-center gap-1 disabled:opacity-40"
-                              title="Ordenar por nombre descendente (Z→A)"
-                            >
-                              <ArrowUpZA size={13} className="text-cyan-600" />
-                              Z→A
-                            </button>
-                            <button
-                              type="button"
-                              disabled={enviandoEstudio}
-                              onClick={reverseStudyItems}
-                              className="px-2 py-1 rounded-lg text-[11px] font-semibold bg-white dark:bg-slate-900 border border-[var(--border)] hover:border-cyan-500/50 text-[var(--foreground)] flex items-center gap-1 disabled:opacity-40"
-                              title="Invertir el orden actual"
-                            >
-                              <ArrowUpDown size={13} className="text-cyan-600" />
-                              Invertir
-                            </button>
-                          </>
-                        )}
+            return (
+              <div className="flex-1 flex flex-col gap-2 min-h-0">
+                {/* Toolbar de ordenamiento */}
+                <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-slate-100/80 dark:bg-slate-800/50 border border-[var(--border)]">
+                  <span className="text-[11px] font-semibold text-[var(--foreground)]">
+                    {studyItems.length} {studyItems.length === 1 ? 'archivo' : 'archivos'} •{' '}
+                    <span className="font-mono text-[var(--secondary)]">
+                      {(studyItems.reduce((a, i) => a + i.file.size, 0) / (1024 * 1024)).toFixed(2)} MB
+                    </span>
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1">
+                    {studyItems.length > 1 && (
+                      <>
                         <button
                           type="button"
                           disabled={enviandoEstudio}
-                          onClick={clearStudyItems}
-                          className="px-2 py-1 rounded-lg text-[11px] font-semibold bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 text-rose-600 dark:text-rose-400 flex items-center gap-1 disabled:opacity-40"
+                          onClick={() => sortAllStudyItems('asc')}
+                          className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-white dark:bg-slate-900 border border-[var(--border)] hover:border-cyan-500/50 flex items-center gap-1 disabled:opacity-40"
+                          title="Ordenar por nombre ascendente (A→Z)"
                         >
-                          <Trash2 size={12} />
-                          Limpiar
+                          <ArrowDownAZ size={12} className="text-cyan-600" />
+                          A→Z
                         </button>
-                      </div>
-                    </div>
-
-                    {/* Grilla: agrupada 2x2 por hoja o secuencia continua */}
-                    {mostrarAgrupado2x2 ? (
-                      <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
-                        {chunks.map((chunk) => {
-                          const startNum = chunk.items[0].globalIdx + 1
-                          const endNum = chunk.items[chunk.items.length - 1].globalIdx + 1
-                          return (
-                            <div
-                              key={chunk.sheetIndex}
-                              className="p-2.5 rounded-xl bg-indigo-500/5 border border-indigo-500/25 space-y-2"
-                            >
-                              <div className="flex items-center justify-between text-[11px] font-bold text-indigo-600 dark:text-indigo-300 px-0.5">
-                                <span>
-                                  Hoja {chunk.sheetIndex} (Tomas #{startNum}–#{endNum})
-                                </span>
-                                {aplicarCaratula && (
-                                  <span className="text-[10px] font-normal text-[var(--secondary)]">
-                                    Pág. {chunk.sheetIndex + 1} del PDF
-                                  </span>
-                                )}
-                              </div>
-                              <div className="grid grid-cols-2 gap-2.5">
-                                {chunk.items.map(({ item, globalIdx }) => renderThumbCard(item, globalIdx))}
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-[460px] overflow-y-auto pr-1">
-                        {studyItems.map((item, idx) => renderThumbCard(item, idx))}
-                      </div>
+                        <button
+                          type="button"
+                          disabled={enviandoEstudio}
+                          onClick={() => sortAllStudyItems('desc')}
+                          className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-white dark:bg-slate-900 border border-[var(--border)] hover:border-cyan-500/50 flex items-center gap-1 disabled:opacity-40"
+                          title="Ordenar por nombre descendente (Z→A)"
+                        >
+                          <ArrowUpZA size={12} className="text-cyan-600" />
+                          Z→A
+                        </button>
+                        <button
+                          type="button"
+                          disabled={enviandoEstudio}
+                          onClick={reverseStudyItems}
+                          className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-white dark:bg-slate-900 border border-[var(--border)] hover:border-cyan-500/50 flex items-center gap-1 disabled:opacity-40"
+                          title="Invertir el orden actual"
+                        >
+                          <ArrowUpDown size={12} className="text-cyan-600" />
+                          Invertir
+                        </button>
+                      </>
                     )}
-
-                  {/* Opción de consolidar imágenes en 1 PDF y Grilla 2x2 */}
-                  {selectedFiles.every(f => f.type.startsWith('image/') || /\.(jpg|jpeg|png)$/i.test(f.name)) && (
-                    <div className="space-y-2">
-                      <div className="text-[11px] text-[var(--secondary)] px-1 flex items-center justify-between">
-                        <span>
-                          {selectedFiles.length} {selectedFiles.length === 1 ? 'imagen' : 'imágenes'} ({(selectedFiles.reduce((a, f) => a + f.size, 0) / (1024 * 1024)).toFixed(2)} MB originales)
-                        </span>
-                        <span className="text-cyan-600 dark:text-cyan-400 font-semibold">
-                          Se optimizarán automáticamente antes de subir
-                        </span>
-                      </div>
-
-                      <label className="flex items-center gap-2 p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-xs cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={unificarEnPdf || (grilla2x2 && selectedFiles.length > 1)}
-                          disabled={grilla2x2 && selectedFiles.length > 1}
-                          onChange={(e) => setUnificarEnPdf(e.target.checked)}
-                          className="h-4 w-4 accent-cyan-600 rounded"
-                        />
-                        <Layers size={14} className="text-cyan-600 shrink-0" />
-                        <span className="font-semibold text-[var(--foreground)]">
-                          Convertir y unificar imagen(es) en un documento PDF limpio (Recomendado para OD + OI)
-                        </span>
-                      </label>
-
-                      {selectedFiles.length > 1 && (
-                        <label className="flex items-center gap-2 p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={grilla2x2}
-                            onChange={(e) => {
-                              const next = e.target.checked
-                              setGrilla2x2(next)
-                              if (next) setUnificarEnPdf(true)
-                            }}
-                            className="h-4 w-4 accent-indigo-600 rounded"
-                          />
-                          <LayoutGrid size={14} className="text-indigo-500 shrink-0" />
-                          <span className="font-semibold text-[var(--foreground)]">
-                            Agrupar 4 tomas por página (Grilla comparativa 2×2 — ideal para RFG largas)
-                          </span>
-                        </label>
-                      )}
-                    </div>
-                  )}
-                  </div>
-                )
-              })()}
-
-              {/* Observaciones opcionales */}
-              <div>
-                <label className="block text-xs font-semibold text-[var(--secondary)] mb-1">
-                  Observaciones para la Historia Clínica de Geclisa (Opcional)
-                </label>
-                <input
-                  type="text"
-                  value={observaciones}
-                  onChange={(e) => setObservaciones(e.target.value)}
-                  placeholder="Ej: Estudio solicitado por Dr. Gómez..."
-                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                />
-              </div>
-
-              {/* Opciones de destino */}
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                <div className="flex flex-wrap items-center gap-4 text-xs">
-                  <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
-                    <input
-                      type="checkbox"
-                      checked={guardarEnGeclisa}
-                      onChange={(e) => setGuardarEnGeclisa(e.target.checked)}
-                      className="h-4 w-4 accent-emerald-600 rounded"
-                    />
-                    <span>Guardar en Geclisa</span>
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
-                    <input
-                      type="checkbox"
-                      checked={enviarWhatsapp}
-                      onChange={(e) => setEnviarWhatsapp(e.target.checked)}
-                      className="h-4 w-4 accent-cyan-600 rounded"
-                    />
-                    <span>Enviar por WhatsApp (Línea 2)</span>
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-teal-600 dark:text-teal-400">
-                    <input
-                      type="checkbox"
-                      checked={aplicarCaratula}
-                      onChange={(e) => setAplicarCaratula(e.target.checked)}
-                      className="h-4 w-4 accent-teal-600 rounded"
-                    />
-                    <span>Incluir membrete institucional Centrovisión</span>
-                  </label>
-                </div>
-
-              {/* Selector y Vista Previa de Plantilla WhatsApp cuando enviarWhatsapp está activo */}
-              {enviarWhatsapp && (
-                <div className="p-3.5 rounded-2xl bg-cyan-500/5 border border-cyan-500/25 space-y-2.5">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Sparkles size={15} className="text-cyan-600 shrink-0" />
-                      <label className="text-xs font-bold text-[var(--foreground)]">
-                        Plantilla de WhatsApp Oficial (Meta Línea 2)
-                      </label>
-                    </div>
                     <button
                       type="button"
-                      onClick={() => setMostrarPreviewPlantilla(!mostrarPreviewPlantilla)}
-                      className="text-[11px] font-semibold text-cyan-600 dark:text-cyan-400 hover:underline flex items-center gap-1 self-start sm:self-auto"
+                      disabled={enviandoEstudio}
+                      onClick={clearStudyItems}
+                      className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 text-rose-600 dark:text-rose-400 flex items-center gap-1 disabled:opacity-40"
                     >
-                      <Eye size={13} />
-                      <span>{mostrarPreviewPlantilla ? 'Ocultar vista previa' : 'Ver mensaje que recibirá el paciente'}</span>
+                      <Trash2 size={11} />
+                      Limpiar
                     </button>
                   </div>
+                </div>
 
-                  <div className="space-y-1">
-                    <select
-                      value={plantillaSeleccionada}
-                      onChange={(e) => setPlantillaSeleccionada(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 border border-cyan-500/30 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    >
-                      <option value="auto">
-                        ✦ Automática (según archivo: PDF ➔ {defaultTemplates.default_pdf} | Imagen ➔ {defaultTemplates.default_img})
-                      </option>
-                      {estudiosTemplates.map((t) => (
-                        <option key={t.name} value={t.name}>
-                          {t.titulo_amigable || t.name} [{t.header_type}] {t.name === defaultTemplates.default_pdf ? '★ Predeterminada PDF' : t.name === defaultTemplates.default_img ? '★ Predeterminada Imagen' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-[11px] text-[var(--secondary)]">
-                      {plantillaSeleccionada === 'auto'
-                        ? `El CRM elegirá automáticamente la plantilla predeterminada (${activeTemplateName}) según si envías PDF o Imagen.`
-                        : `Plantilla personalizada seleccionada por el técnico: "${activeTemplateName}" [${activeTemplate.header_type}].`}
+                {/* Grilla con scroll interno acotado para no empujar el botón Enviar */}
+                {mostrarAgrupado2x2 ? (
+                  <div className="space-y-2.5 lg:max-h-[calc(100vh-340px)] min-h-[190px] overflow-y-auto pr-1">
+                    {chunks.map((chunk) => {
+                      const startNum = chunk.items[0].globalIdx + 1
+                      const endNum = chunk.items[chunk.items.length - 1].globalIdx + 1
+                      return (
+                        <div
+                          key={chunk.sheetIndex}
+                          className="p-2 rounded-xl bg-indigo-500/5 border border-indigo-500/25 space-y-1.5"
+                        >
+                          <div className="flex items-center justify-between text-[11px] font-bold text-indigo-600 dark:text-indigo-300 px-0.5">
+                            <span>Hoja {chunk.sheetIndex} (Tomas #{startNum}–#{endNum})</span>
+                            {aplicarCaratula && (
+                              <span className="text-[10px] font-normal text-[var(--secondary)]">
+                                Pág. {chunk.sheetIndex + 1} del PDF
+                              </span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            {chunk.items.map(({ item, globalIdx }) => renderThumbCard(item, globalIdx))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 lg:max-h-[calc(100vh-340px)] min-h-[180px] overflow-y-auto pr-1">
+                    {studyItems.map((item, idx) => renderThumbCard(item, idx))}
+                  </div>
+                )}
+
+                {/* Opciones de consolidación PDF / Grilla 2x2 en una fila compacta */}
+                {allImages && (
+                  <div className="mt-auto pt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                    <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 cursor-pointer font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={unificarEnPdf || (grilla2x2 && selectedFiles.length > 1)}
+                        disabled={grilla2x2 && selectedFiles.length > 1}
+                        onChange={(e) => setUnificarEnPdf(e.target.checked)}
+                        className="h-3.5 w-3.5 accent-cyan-600 rounded"
+                      />
+                      <Layers size={13} className="text-cyan-600 shrink-0" />
+                      <span>Unificar en PDF</span>
+                    </label>
+
+                    {selectedFiles.length > 1 && (
+                      <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 cursor-pointer font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={grilla2x2}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                            setGrilla2x2(next)
+                            if (next) setUnificarEnPdf(true)
+                          }}
+                          className="h-3.5 w-3.5 accent-indigo-600 rounded"
+                        />
+                        <LayoutGrid size={13} className="text-indigo-500 shrink-0" />
+                        <span>Grilla 2×2 (4 por pág.)</span>
+                      </label>
+                    )}
+
+                    <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-medium ml-auto">
+                      Auto-optimización antes de subir
+                    </span>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+        </div>
+      </form>
+
+      {/* MODAL: CANDIDATOS MÚLTIPLES EN GECLISA */}
+      {candidatosGeclisa.length > 1 && !paciente && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-candidatos-title"
+          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setCandidatosGeclisa([])}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5 shadow-2xl space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-300">
+                <AlertTriangle size={18} />
+                <h3 id="modal-candidatos-title" className="text-sm font-bold">
+                  Se encontraron {candidatosGeclisa.length} fichas activas
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCandidatosGeclisa([])}
+                className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-[var(--secondary)]"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs text-[var(--secondary)]">
+              Selecciona el paciente correcto para cargar su ficha de Geclisa:
+            </p>
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {candidatosGeclisa.map((cand) => (
+                <button
+                  key={cand.ficha_id}
+                  type="button"
+                  onClick={() => handleSeleccionarCandidato(cand)}
+                  className="w-full text-left p-3 rounded-xl bg-slate-50 dark:bg-slate-900/70 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border border-[var(--border)] hover:border-cyan-500/50 transition-all flex items-center justify-between gap-2"
+                >
+                  <div>
+                    <p className="text-xs font-bold text-[var(--foreground)]">{cand.nombre_completo}</p>
+                    <p className="text-[11px] text-[var(--secondary)] font-mono">
+                      {cand.tipo_documento}: {cand.dni} • Ficha #{cand.ficha_id}
+                      {cand.fecha_nacimiento ? ` • Nac: ${cand.fecha_nacimiento}` : ''}
                     </p>
                   </div>
+                  <span className="text-xs font-bold text-cyan-600 dark:text-cyan-400 shrink-0">
+                    Elegir →
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
-                  {/* Vista previa WhatsApp en tiempo real */}
-                  {mostrarPreviewPlantilla && (
-                    <div className="p-3 rounded-xl bg-slate-900 text-slate-100 border border-slate-700/60 text-xs space-y-2 mt-2">
-                      <div className="flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-1.5">
-                        <span className="flex items-center gap-1.5 font-semibold text-cyan-400">
-                          <Smartphone size={13} />
-                          Destino: {telefonoDestino ? formatPhoneDisplay(telefonoDestino) : '(Ingresa el celular en Paso 1)'}
-                        </span>
-                        <span className="font-mono text-[10px] text-slate-400">
-                          {activeTemplateName} ({activeTemplate.header_type})
-                        </span>
-                      </div>
+      {/* MODAL: ARCHIVOS EXISTENTES EN GECLISA */}
+      {showArchivosGeclisa && paciente && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-archivos-geclisa-title"
+          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setShowArchivosGeclisa(false)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5 shadow-2xl space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <FolderOpen size={18} className="text-cyan-500 shrink-0" />
+                <div className="min-w-0">
+                  <h3 id="modal-archivos-geclisa-title" className="text-sm font-bold text-[var(--foreground)] truncate">
+                    Archivos en Geclisa ({archivosGeclisa.length})
+                  </h3>
+                  <p className="text-[11px] text-[var(--secondary)] truncate">
+                    {paciente.nombre_completo} • Ficha #{paciente.geclisa_ficha_id}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowArchivosGeclisa(false)}
+                className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-[var(--secondary)]"
+              >
+                <X size={16} />
+              </button>
+            </div>
 
-                      <div className="max-w-md mx-auto bg-[#0b141a] p-3 rounded-2xl border border-emerald-950/40 shadow-inner space-y-2">
-                        <div className="flex items-center gap-2 p-2 rounded-lg bg-[#202c33] text-emerald-400 text-[11px] font-medium">
-                          {activeTemplate.header_type === 'IMAGE' ? (
-                            <ImageIcon size={15} />
-                          ) : (
-                            <FileText size={15} />
-                          )}
-                          <span>
-                            {activeTemplate.header_type === 'IMAGE'
-                              ? '📷 [Imagen del estudio oftalmológico adjunta]'
-                              : '📄 [Documento PDF del estudio oftalmológico adjunto]'}
-                          </span>
-                        </div>
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+              {archivosGeclisa.map((arc) => (
+                <div
+                  key={arc.as_id}
+                  className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-[var(--border)] flex items-center justify-between gap-3 text-xs"
+                >
+                  <div className="min-w-0">
+                    <p className="font-bold text-[var(--foreground)] truncate" title={arc.titulo}>
+                      {arc.titulo || `Archivo #${arc.as_id}`}
+                    </p>
+                    <p className="text-[11px] text-[var(--secondary)]">
+                      {formatDateArg(arc.fecha)} • AS_ID #{arc.as_id}
+                      {arc.prestador ? ` • ${arc.prestador}` : ''}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <a
+                      href={`${BACKEND_URL}/api/geclisa/archivos/${arc.as_id}/ver`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-2 rounded-lg bg-white dark:bg-slate-800 border border-[var(--border)] hover:bg-slate-100 text-[var(--foreground)]"
+                      title="Ver archivo desde Geclisa"
+                    >
+                      <ExternalLink size={14} />
+                    </a>
+                    <button
+                      type="button"
+                      disabled={enviandoExistenteId === arc.as_id}
+                      onClick={() => handleEnviarArchivoExistenteGeclisa(arc)}
+                      className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-50"
+                      title="Enviar este archivo ya guardado en Geclisa por WhatsApp"
+                    >
+                      <Send size={12} />
+                      <span>{enviandoExistenteId === arc.as_id ? 'Enviando...' : 'Enviar WA'}</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
-                        <p className="text-[12px] text-slate-100 whitespace-pre-wrap leading-relaxed font-sans">
-                          {previewBodyText}
-                        </p>
+      {/* MODAL: VISTA PREVIA DE PLANTILLA WHATSAPP */}
+      {mostrarPreviewPlantilla && enviarWhatsapp && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-preview-wa-title"
+          className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setMostrarPreviewPlantilla(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 text-slate-100 p-4 shadow-2xl space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Smartphone size={15} className="text-cyan-400" />
+                <h3 id="modal-preview-wa-title" className="text-xs font-bold">
+                  Vista previa WhatsApp ({activeTemplateName})
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMostrarPreviewPlantilla(false)}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400"
+              >
+                <X size={15} />
+              </button>
+            </div>
 
-                        <div className="text-[10px] text-slate-400 text-right">
-                          <span>Hoy 10:30 • Línea 2 Oficial Centrovisión</span>
-                        </div>
+            <div className="text-[11px] text-slate-400 flex items-center justify-between">
+              <span>
+                Destino: {telefonoDestino ? formatPhoneDisplay(telefonoDestino) : '(Sin celular)'}
+              </span>
+              <span className="font-mono text-[10px]">{activeTemplate.header_type}</span>
+            </div>
 
-                        {activeTemplate.buttons && activeTemplate.buttons.length > 0 && (
-                          <div className="pt-1.5 border-t border-slate-700/40 flex flex-col gap-1">
-                            {activeTemplate.buttons.map((btn, i) => (
-                              <div
-                                key={i}
-                                className="py-1 px-3 rounded-lg bg-[#202c33] hover:bg-[#2a3942] text-center text-[11px] text-cyan-400 font-semibold"
-                              >
-                                {btn.text}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+            <div className="bg-[#0b141a] p-3 rounded-2xl border border-emerald-950/40 space-y-2">
+              <div className="flex items-center gap-2 p-2 rounded-lg bg-[#202c33] text-emerald-400 text-[11px] font-medium">
+                {activeTemplate.header_type === 'IMAGE' ? <ImageIcon size={15} /> : <FileText size={15} />}
+                <span>
+                  {activeTemplate.header_type === 'IMAGE'
+                    ? '📷 [Imagen del estudio oftalmológico adjunta]'
+                    : '📄 [Documento PDF del estudio oftalmológico adjunto]'}
+                </span>
+              </div>
+              <p className="text-[12px] text-slate-100 whitespace-pre-wrap leading-relaxed">
+                {previewBodyText}
+              </p>
+              <div className="text-[10px] text-slate-400 text-right">
+                Hoy 10:30 • Línea 2 Oficial Centrovisión
+              </div>
+              {activeTemplate.buttons && activeTemplate.buttons.length > 0 && (
+                <div className="pt-1.5 border-t border-slate-700/40 flex flex-col gap-1">
+                  {activeTemplate.buttons.map((btn, i) => (
+                    <div
+                      key={i}
+                      className="py-1 px-3 rounded-lg bg-[#202c33] text-center text-[11px] text-cyan-400 font-semibold"
+                    >
+                      {btn.text}
                     </div>
-                  )}
+                  ))}
                 </div>
               )}
-
-
-                <button
-                  type="submit"
-                  disabled={enviandoEstudio || !paciente || selectedFiles.length === 0}
-                  className="w-full sm:w-auto px-6 py-3 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 text-white flex items-center justify-center gap-2 shadow-md shadow-cyan-500/20 transition-all disabled:opacity-50"
-                >
-                  {enviandoEstudio ? (
-                    <>
-                      <RefreshCw size={16} className="animate-spin" />
-                      <span>{progresoOptimizacion || 'Procesando en paralelo (Geclisa + Meta)...'}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send size={16} />
-                      <span>Archivar en Geclisa y Enviar por WhatsApp</span>
-                    </>
-                  )}
-                </button>
-              </div>
             </div>
-          </form>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* TABLA DE AUDITORÍA DE ENVÍOS EN TIEMPO REAL */}
       <div className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm space-y-4">
