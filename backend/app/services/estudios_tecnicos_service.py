@@ -1184,22 +1184,56 @@ async def send_test_message_from_line(payload: SendTestLinePayload):
 # =========================================================================
 
 @estudios_router.get("/api/estudios-tecnicos/buscar-paciente")
-def buscar_paciente_geclisa_para_estudio(dni: str = Query(..., description="DNI del paciente a buscar en Geclisa")):
+def buscar_paciente_geclisa_para_estudio(
+    dni: str = Query(..., description="DNI del paciente a buscar en Geclisa"),
+    ficha_id: Optional[int] = Query(None, description="ID de ficha específica para desambiguar múltiples coincidencias exactas"),
+):
     """
     Busca al paciente por DNI en tiempo real contra la base de datos de Geclisa,
     recupera su FichaId, celular, cobertura médica, archivos ya existentes en Geclisa
     y el historial de estudios enviados por WhatsApp, SIN crear registros en `public.pacientes`.
     """
-    dni_limpio = "".join(filter(str.isdigit, str(dni or "")))
+    dni_limpio = geclisa_client._normalizar_documento_numerico(dni)
     if not dni_limpio or len(dni_limpio) < 6:
         raise HTTPException(status_code=400, detail="Ingrese un número de DNI válido (mínimo 6 dígitos).")
 
-    res_geclisa = geclisa_client.buscar_paciente_por_dni(dni_limpio)
-    if not res_geclisa.get("encontrado"):
+    res_candidatos = geclisa_client.buscar_candidatos_por_dni(dni_limpio)
+    if not res_candidatos.get("encontrado"):
         raise HTTPException(
             status_code=404,
-            detail=res_geclisa.get("mensaje") or f"No se encontró ningún paciente con DNI {dni_limpio} en Geclisa."
+            detail=res_candidatos.get("mensaje") or f"No se encontró ningún paciente activo con DNI {dni_limpio} en Geclisa."
         )
+
+    exactos_activos = res_candidatos.get("exactos_activos") or []
+    candidatos = res_candidatos.get("candidatos") or []
+    duracion_ms = res_candidatos.get("duracion_ms", 0)
+
+    if ficha_id is not None:
+        item_elegido = next(
+            (
+                it for it in exactos_activos
+                if str(it.get("fichaId") or it.get("id") or it.get("ficId") or "") == str(ficha_id)
+            ),
+            None,
+        )
+        if item_elegido is not None:
+            res_geclisa = geclisa_client._enriquecer_o_normalizar_item(item_elegido, dni_limpio, duracion_ms)
+        else:
+            res_geclisa = geclisa_client.buscar_paciente_por_ficha(int(ficha_id))
+            if not res_geclisa.get("encontrado"):
+                raise HTTPException(status_code=404, detail=f"No se encontró la ficha #{ficha_id} en Geclisa.")
+    elif len(candidatos) > 1:
+        return {
+            "success": True,
+            "multiple": True,
+            "dni_buscado": res_candidatos.get("dni") or dni_limpio,
+            "candidatos": candidatos,
+            "paciente": None,
+            "archivos_geclisa": [],
+            "historial_envios": []
+        }
+    else:
+        res_geclisa = geclisa_client._enriquecer_o_normalizar_item(exactos_activos[0], dni_limpio, duracion_ms)
 
     raw_data = res_geclisa.get("raw") or {}
     ficha_id = res_geclisa.get("ficha_id") or res_geclisa.get("geclisa_ficha_id") or res_geclisa.get("FichaId") or raw_data.get("fichaId")
@@ -1216,6 +1250,13 @@ def buscar_paciente_geclisa_para_estudio(dni: str = Query(..., description="DNI 
         except (ValueError, TypeError):
             pass
 
+    dni_real = geclisa_client._normalizar_documento_numerico(
+        res_geclisa.get("dni") or raw_data.get("ficNrodoc") or raw_data.get("nroDoc")
+    ) or dni_limpio
+    tipo_documento = str(
+        res_geclisa.get("tipo_documento") or raw_data.get("ficTipodoc") or raw_data.get("tipoDoc") or ""
+    ).strip() or "D.N.I."
+
     nombre = res_geclisa.get("nombre_completo") or res_geclisa.get("nombre") or "Paciente"
     raw_tel = res_geclisa.get("telefono") or res_geclisa.get("celular") or ""
     tel_norm = normalize_phone_number(raw_tel) if raw_tel else ""
@@ -1227,7 +1268,7 @@ def buscar_paciente_geclisa_para_estudio(dni: str = Query(..., description="DNI 
     # Verificar (SOLO LECTURA) si el paciente ya existe en public.pacientes del CRM
     paciente_crm = None
     try:
-        paciente_crm = get_paciente_by_dni(dni_limpio)
+        paciente_crm = get_paciente_by_dni(dni_real)
         if not paciente_crm and pac_id:
             paciente_crm = get_paciente_by_geclisa_id(int(pac_id))
         if paciente_crm and not tel_norm and paciente_crm.get("telefono"):
@@ -1261,7 +1302,7 @@ def buscar_paciente_geclisa_para_estudio(dni: str = Query(..., description="DNI 
             q = (
                 supabase.table("estudios_oftalmo")
                 .select("*")
-                .or_(f"dni_paciente.eq.{dni_limpio},geclisa_ficha_id.eq.{ficha_id or 0}")
+                .or_(f"dni_paciente.eq.{dni_real},geclisa_ficha_id.eq.{ficha_id or 0}")
                 .order("created_at", desc=True)
                 .limit(25)
                 .execute()
@@ -1272,8 +1313,10 @@ def buscar_paciente_geclisa_para_estudio(dni: str = Query(..., description="DNI 
 
     return {
         "success": True,
+        "multiple": False,
         "paciente": {
-            "dni": dni_limpio,
+            "dni": dni_real,
+            "tipo_documento": tipo_documento,
             "nombre_completo": nombre,
             "geclisa_pac_id": pac_id,
             "geclisa_ficha_id": ficha_id,

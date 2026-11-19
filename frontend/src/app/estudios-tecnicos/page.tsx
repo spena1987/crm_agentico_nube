@@ -58,6 +58,7 @@ import {
 
 interface PacienteGeclisaInfo {
   dni: string
+  tipo_documento?: string
   nombre_completo: string
   geclisa_pac_id: number | null
   geclisa_ficha_id: number | null
@@ -70,6 +71,15 @@ interface PacienteGeclisaInfo {
   email: string
   existe_en_crm_quirurgico: boolean
   paciente_crm_id: string | null
+}
+
+interface CandidatoGeclisaItem {
+  ficha_id: number
+  nombre_completo: string
+  tipo_documento: string
+  dni: string
+  fecha_nacimiento?: string | null
+  celular?: string
 }
 
 interface ArchivoGeclisaItem {
@@ -154,6 +164,7 @@ export default function EstudiosTecnicosPage() {
   const [buscandoPaciente, setBuscandoPaciente] = useState(false)
   const [errorBusqueda, setErrorBusqueda] = useState<string | null>(null)
   const [paciente, setPaciente] = useState<PacienteGeclisaInfo | null>(null)
+  const [candidatosGeclisa, setCandidatosGeclisa] = useState<CandidatoGeclisaItem[]>([])
   const [archivosGeclisa, setArchivosGeclisa] = useState<ArchivoGeclisaItem[]>([])
   const [showArchivosGeclisa, setShowArchivosGeclisa] = useState(false)
 
@@ -223,25 +234,9 @@ export default function EstudiosTecnicosPage() {
     const dniPac = pedido.pacientes?.dni || ''
     if (dniPac) {
       setDniInput(dniPac)
-      // Disparar búsqueda automática
-      const cleanDni = dniPac.replace(/\D/g, '')
+      const cleanDni = dniPac.replace(/\D/g, '').replace(/^0+/, '') || dniPac.replace(/\D/g, '')
       if (cleanDni.length >= 6) {
-        setBuscandoPaciente(true)
-        setErrorBusqueda(null)
-        setFeedback(null)
-        apiFetch(`/api/estudios-tecnicos/buscar-paciente?dni=${cleanDni}`)
-          .then(async r => {
-            const data = await r.json()
-            if (r.ok && data) {
-              setPaciente(data.paciente)
-              setArchivosGeclisa(data.archivos_geclisa || [])
-              if (data.paciente.telefono_geclisa) {
-                setTelefonoLocal(extractLocalArgentineNumber(data.paciente.telefono_geclisa))
-              }
-            }
-          })
-          .catch(err => console.warn(err))
-          .finally(() => setBuscandoPaciente(false))
+        void ejecutarBusquedaPaciente(cleanDni)
       }
     }
     const listaEstudios: string[] = Array.isArray(pedido.estudios)
@@ -469,28 +464,33 @@ export default function EstudiosTecnicosPage() {
     return () => window.removeEventListener('paste', handlePaste)
   }, [])
 
-  const handleBuscarPaciente = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault()
-    const cleanDni = dniInput.replace(/\D/g, '')
-    if (cleanDni.length < 6) {
-      setErrorBusqueda('Ingresa un número de DNI válido (al menos 6 dígitos).')
-      return
-    }
-
+  const ejecutarBusquedaPaciente = async (cleanDni: string, fichaIdSeleccionada?: number) => {
     setBuscandoPaciente(true)
     setErrorBusqueda(null)
     setFeedback(null)
 
     try {
-      const res = await apiFetch(`/api/estudios-tecnicos/buscar-paciente?dni=${cleanDni}`)
+      const qs = fichaIdSeleccionada
+        ? `dni=${cleanDni}&ficha_id=${fichaIdSeleccionada}`
+        : `dni=${cleanDni}`
+      const res = await apiFetch(`/api/estudios-tecnicos/buscar-paciente?${qs}`)
       const data = await res.json()
       if (!res.ok) {
         setPaciente(null)
+        setCandidatosGeclisa([])
         setArchivosGeclisa([])
         setErrorBusqueda(data.detail || `No se encontró ningún paciente con DNI ${cleanDni} en Geclisa.`)
         return
       }
 
+      if (data.multiple && Array.isArray(data.candidatos) && data.candidatos.length > 1) {
+        setPaciente(null)
+        setArchivosGeclisa([])
+        setCandidatosGeclisa(data.candidatos)
+        return
+      }
+
+      setCandidatosGeclisa([])
       const rawPaciente = data.paciente || {}
       const fichaId = rawPaciente.geclisa_ficha_id ?? rawPaciente.ficha_id ?? data.ficha_id ?? null
       const pacId = rawPaciente.geclisa_pac_id ?? rawPaciente.pac_id ?? data.pac_id ?? fichaId
@@ -498,6 +498,7 @@ export default function EstudiosTecnicosPage() {
 
       const normalizedPaciente: PacienteGeclisaInfo = {
         dni: rawPaciente.dni || cleanDni,
+        tipo_documento: rawPaciente.tipo_documento || 'D.N.I.',
         nombre_completo: rawPaciente.nombre_completo || 'Paciente',
         geclisa_pac_id: pacId ? Number(pacId) : null,
         geclisa_ficha_id: fichaId ? Number(fichaId) : null,
@@ -534,6 +535,21 @@ export default function EstudiosTecnicosPage() {
     } finally {
       setBuscandoPaciente(false)
     }
+  }
+
+  const handleBuscarPaciente = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    const cleanDni = dniInput.replace(/\D/g, '').replace(/^0+/, '') || dniInput.replace(/\D/g, '')
+    if (cleanDni.length < 6) {
+      setErrorBusqueda('Ingresa un número de DNI válido (al menos 6 dígitos).')
+      return
+    }
+    await ejecutarBusquedaPaciente(cleanDni)
+  }
+
+  const handleSeleccionarCandidato = async (candidato: CandidatoGeclisaItem) => {
+    const cleanDni = (candidato.dni || dniInput).replace(/\D/g, '').replace(/^0+/, '') || candidato.dni
+    await ejecutarBusquedaPaciente(cleanDni, candidato.ficha_id)
   }
 
   const handleFileChange = (filesList: FileList | null) => {
@@ -1340,6 +1356,37 @@ export default function EstudiosTecnicosPage() {
               </div>
             )}
 
+            {/* Selector de candidatos si hay múltiples fichas activas exactas en Geclisa */}
+            {candidatosGeclisa.length > 1 && !paciente && (
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-700 dark:text-amber-300">
+                  <AlertTriangle size={15} className="shrink-0" />
+                  <span>Se encontraron {candidatosGeclisa.length} fichas activas con ese número. Selecciona el paciente correcto:</span>
+                </div>
+                <div className="space-y-1.5">
+                  {candidatosGeclisa.map((cand) => (
+                    <button
+                      key={cand.ficha_id}
+                      type="button"
+                      onClick={() => handleSeleccionarCandidato(cand)}
+                      className="w-full text-left p-2.5 rounded-xl bg-white dark:bg-slate-900/70 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 border border-[var(--border)] hover:border-cyan-500/50 transition-all flex items-center justify-between gap-2"
+                    >
+                      <div>
+                        <p className="text-xs font-bold text-[var(--foreground)]">{cand.nombre_completo}</p>
+                        <p className="text-[11px] text-[var(--secondary)] font-mono">
+                          {cand.tipo_documento}: {cand.dni} • Ficha #{cand.ficha_id}
+                          {cand.fecha_nacimiento ? ` • Nac: ${cand.fecha_nacimiento}` : ''}
+                        </p>
+                      </div>
+                      <span className="text-[11px] font-bold text-cyan-600 dark:text-cyan-400 shrink-0">
+                        Elegir →
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Tarjeta del Paciente Encontrado en Geclisa */}
             {paciente && (
               <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-cyan-500/30 space-y-3">
@@ -1353,7 +1400,7 @@ export default function EstudiosTecnicosPage() {
                         {paciente.nombre_completo}
                       </h3>
                       <p className="text-xs text-[var(--secondary)] font-mono">
-                        DNI: {paciente.dni} • Ficha Geclisa #{paciente.geclisa_ficha_id}
+                        {paciente.tipo_documento || 'D.N.I.'}: {paciente.dni} • Ficha Geclisa #{paciente.geclisa_ficha_id}
                       </p>
                     </div>
                   </div>

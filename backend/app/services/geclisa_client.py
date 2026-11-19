@@ -358,7 +358,8 @@ class GeclisaClient:
                 "nombre": nombre,
                 "apellido": apellido,
                 "nombre_completo": nombre_completo,
-                "dni": str(paciente_data.get("ficNrodoc") or paciente_data.get("nroDoc") or "").strip(),
+                "dni": self._normalizar_documento_numerico(paciente_data.get("ficNrodoc") or paciente_data.get("nroDoc")),
+                "tipo_documento": str(paciente_data.get("ficTipodoc") or paciente_data.get("tipoDoc") or "").strip(),
                 "nro_hc": str(paciente_data.get("ficHistoriac") or paciente_data.get("nroHc") or "").strip(),
                 "telefono": telefono_principal,
                 "celular": celular,
@@ -379,14 +380,91 @@ class GeclisaClient:
             logger.error(f"Error al obtener ficha {ficha_id}: {e}")
             return {"encontrado": False, "error": str(e)}
 
-    def buscar_paciente_por_dni(self, dni: str) -> dict:
+    @staticmethod
+    def _normalizar_documento_numerico(doc: Any) -> str:
+        """Extrae solo dígitos y remueve ceros a la izquierda (ej. '06163071' -> '6163071')."""
+        digits = "".join(filter(str.isdigit, str(doc or "")))
+        if not digits:
+            return ""
+        return digits.lstrip("0") or "0"
+
+    def _enriquecer_o_normalizar_item(self, paciente_item: dict, dni_limpio: str, duracion: int) -> dict:
+        """Enriquece un item de Geclisa vía obtener_ficha_completa o lo normaliza como fallback."""
+        ficha_id = paciente_item.get("fichaId") or paciente_item.get("id") or paciente_item.get("ficId")
+        tipo_doc_item = str(paciente_item.get("ficTipodoc") or paciente_item.get("tipoDoc") or "").strip()
+        dni_item = self._normalizar_documento_numerico(paciente_item.get("ficNrodoc") or paciente_item.get("nroDoc")) or dni_limpio
+
+        if ficha_id:
+            try:
+                ficha_completa = self.obtener_ficha_completa(int(ficha_id))
+                if ficha_completa.get("encontrado"):
+                    if not ficha_completa.get("dni"):
+                        ficha_completa["dni"] = dni_item
+                    if not ficha_completa.get("tipo_documento") and tipo_doc_item:
+                        ficha_completa["tipo_documento"] = tipo_doc_item
+                    log_event(
+                        nivel="INFO",
+                        modulo="GECLISA",
+                        accion="PACIENTE_ENCONTRADO_DNI",
+                        mensaje=f"Paciente '{ficha_completa.get('nombre_completo')}' (DNI {ficha_completa.get('dni')}) encontrado en Geclisa (Ficha #{ficha_id})",
+                        detalles={
+                            "dni": ficha_completa.get("dni"),
+                            "tipo_documento": ficha_completa.get("tipo_documento"),
+                            "ficha_id": ficha_id,
+                            "nombre": ficha_completa.get("nombre_completo"),
+                            "obra_social": ficha_completa.get("obra_social"),
+                        },
+                        duracion_ms=duracion,
+                        http_status=200
+                    )
+                    return ficha_completa
+            except Exception as enrich_err:
+                logger.warning(f"No se pudo enriquecer ficha completa #{ficha_id} ({enrich_err}), usando datos básicos.")
+
+        nombre = paciente_item.get("ficNombre") or paciente_item.get("nombre") or ""
+        apellido = paciente_item.get("ficApellido") or paciente_item.get("ficApe") or paciente_item.get("apellido") or ""
+        nombre_completo = paciente_item.get("ficNombreApe") or f"{apellido}, {nombre}".strip(" ,")
+
+        res_paciente = {
+            "encontrado": True,
+            "ficha_id": ficha_id,
+            "nombre": nombre,
+            "apellido": apellido,
+            "nombre_completo": nombre_completo,
+            "dni": dni_item,
+            "tipo_documento": tipo_doc_item,
+            "nro_hc": str(paciente_item.get("nroHc") or paciente_item.get("ficHistoriac") or ""),
+            "telefono": paciente_item.get("celular") or paciente_item.get("telefono") or "",
+            "celular": paciente_item.get("celular") or "",
+            "telefono_fijo": paciente_item.get("telefono") or "",
+            "email": paciente_item.get("email") or paciente_item.get("ficEmail") or "",
+            "fecha_nacimiento": paciente_item.get("fechaNacimiento"),
+            "sexo": paciente_item.get("sexo"),
+            "obra_social": None,
+            "plan_cobertura": None,
+            "direccion": f"{paciente_item.get('ficCalle', '')} {paciente_item.get('ficNro', '')} {paciente_item.get('locNombre', '')}".strip(),
+            "raw": paciente_item
+        }
+        log_event(
+            nivel="INFO",
+            modulo="GECLISA",
+            accion="PACIENTE_ENCONTRADO_DNI",
+            mensaje=f"Paciente '{nombre_completo}' (DNI {dni_item}) encontrado en Geclisa",
+            detalles={"dni": dni_item, "tipo_documento": tipo_doc_item, "ficha_id": ficha_id, "nombre": nombre_completo},
+            duracion_ms=duracion,
+            http_status=200
+        )
+        return res_paciente
+
+    def _buscar_exactos_activos_por_dni(self, dni: str) -> tuple[list[dict], str, int, Optional[dict]]:
         """
-        Busca al paciente por número de DNI y retorna su ficha normalizada y completa.
-        Ruta: GET /api/Pacientes/Documento/{documento}
+        Consulta GET /api/Pacientes/Documento/{dni} y filtra únicamente fichas activas
+        con coincidencia exacta normalizada (sin ceros a la izquierda).
+        Retorna: (exactos_activos, dni_limpio, duracion_ms, error_response_o_None)
         """
-        dni_limpio = "".join(filter(str.isdigit, str(dni)))
+        dni_limpio = self._normalizar_documento_numerico(dni)
         if not dni_limpio:
-            return {"encontrado": False, "mensaje": "Número de DNI no válido."}
+            return [], "", 0, {"encontrado": False, "mensaje": "Número de DNI no válido."}
 
         url = f"{self.base_url}/api/Pacientes/Documento/{dni_limpio}"
         t_start = time.time()
@@ -394,7 +472,7 @@ class GeclisaClient:
             headers = self._get_headers()
             response = self._do_request("GET", url, headers=headers, timeout=10)
             duracion = int((time.time() - t_start) * 1000)
-            
+
             if response.status_code == 404:
                 log_event(
                     nivel="WARNING",
@@ -405,96 +483,40 @@ class GeclisaClient:
                     duracion_ms=duracion,
                     http_status=404
                 )
-                return {"encontrado": False, "mensaje": f"No se encontró paciente con DNI {dni_limpio} en Geclisa."}
-                
+                return [], dni_limpio, duracion, {"encontrado": False, "mensaje": f"No se encontró paciente con DNI {dni_limpio} en Geclisa."}
+
             response.raise_for_status()
             data = response.json()
-            
-            # Si el endpoint devuelve una lista o un objeto paginado { data: [...] }
+
             if isinstance(data, list):
-                if len(data) == 0:
-                    log_event(
-                        nivel="WARNING",
-                        modulo="GECLISA",
-                        accion="PACIENTE_NO_ENCONTRADO_DNI",
-                        mensaje=f"DNI {dni_limpio} devolvió lista vacía en Geclisa",
-                        detalles={"dni": dni_limpio},
-                        duracion_ms=duracion,
-                        http_status=200
-                    )
-                    return {"encontrado": False, "mensaje": f"No se encontró paciente con DNI {dni_limpio} en Geclisa."}
-                paciente_item = data[0]
-            elif isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
-                if len(data["data"]) == 0:
-                    log_event(
-                        nivel="WARNING",
-                        modulo="GECLISA",
-                        accion="PACIENTE_NO_ENCONTRADO_DNI",
-                        mensaje=f"DNI {dni_limpio} devolvió data[] vacío en Geclisa",
-                        detalles={"dni": dni_limpio},
-                        duracion_ms=duracion,
-                        http_status=200
-                    )
-                    return {"encontrado": False, "mensaje": f"No se encontró paciente con DNI {dni_limpio} en Geclisa."}
-                paciente_item = data["data"][0]
+                items = data
+            elif isinstance(data, dict) and isinstance(data.get("data"), list):
+                items = data["data"]
+            elif isinstance(data, dict) and data:
+                items = [data]
             else:
-                paciente_item = data
+                items = []
 
-            # Extraer fichaId para intentar enriquecer ficha completa de forma segura
-            ficha_id = paciente_item.get("fichaId") or paciente_item.get("id") or paciente_item.get("ficId")
-            if ficha_id:
-                try:
-                    ficha_completa = self.obtener_ficha_completa(int(ficha_id))
-                    if ficha_completa.get("encontrado"):
-                        if not ficha_completa.get("dni"):
-                            ficha_completa["dni"] = str(paciente_item.get("ficNrodoc") or dni_limpio)
-                        log_event(
-                            nivel="INFO",
-                            modulo="GECLISA",
-                            accion="PACIENTE_ENCONTRADO_DNI",
-                            mensaje=f"Paciente '{ficha_completa.get('nombre_completo')}' (DNI {dni_limpio}) encontrado en Geclisa (Ficha #{ficha_id})",
-                            detalles={"dni": dni_limpio, "ficha_id": ficha_id, "nombre": ficha_completa.get("nombre_completo"), "obra_social": ficha_completa.get("obra_social")},
-                            duracion_ms=duracion,
-                            http_status=200
-                        )
-                        return ficha_completa
-                except Exception as enrich_err:
-                    logger.warning(f"No se pudo enriquecer ficha completa #{ficha_id} ({enrich_err}), usando datos básicos.")
-            
-            # Si no vino fichaId o falló la ficha detallada, normalizar el paciente_item directamente
-            nombre = paciente_item.get("ficNombre") or paciente_item.get("nombre") or ""
-            apellido = paciente_item.get("ficApellido") or paciente_item.get("ficApe") or paciente_item.get("apellido") or ""
-            nombre_completo = paciente_item.get("ficNombreApe") or f"{apellido}, {nombre}".strip(" ,")
+            exactos_activos = [
+                item for item in items
+                if isinstance(item, dict)
+                and item.get("pacienteHabilitado") is not False
+                and self._normalizar_documento_numerico(item.get("ficNrodoc") or item.get("nroDoc")) == dni_limpio
+            ]
 
-            res_paciente = {
-                "encontrado": True,
-                "ficha_id": ficha_id,
-                "nombre": nombre,
-                "apellido": apellido,
-                "nombre_completo": nombre_completo,
-                "dni": str(paciente_item.get("ficNrodoc") or paciente_item.get("nroDoc") or dni_limpio),
-                "nro_hc": str(paciente_item.get("nroHc") or paciente_item.get("ficHistoriac") or ""),
-                "telefono": paciente_item.get("celular") or paciente_item.get("telefono") or "",
-                "celular": paciente_item.get("celular") or "",
-                "telefono_fijo": paciente_item.get("telefono") or "",
-                "email": paciente_item.get("email") or paciente_item.get("ficEmail") or "",
-                "fecha_nacimiento": paciente_item.get("fechaNacimiento"),
-                "sexo": paciente_item.get("sexo"),
-                "obra_social": None,
-                "plan_cobertura": None,
-                "direccion": f"{paciente_item.get('ficCalle', '')} {paciente_item.get('ficNro', '')} {paciente_item.get('locNombre', '')}".strip(),
-                "raw": paciente_item
-            }
-            log_event(
-                nivel="INFO",
-                modulo="GECLISA",
-                accion="PACIENTE_ENCONTRADO_DNI",
-                mensaje=f"Paciente '{nombre_completo}' (DNI {dni_limpio}) encontrado en Geclisa",
-                detalles={"dni": dni_limpio, "ficha_id": ficha_id, "nombre": nombre_completo},
-                duracion_ms=duracion,
-                http_status=200
-            )
-            return res_paciente
+            if not exactos_activos:
+                log_event(
+                    nivel="WARNING",
+                    modulo="GECLISA",
+                    accion="PACIENTE_NO_ENCONTRADO_DNI",
+                    mensaje=f"DNI {dni_limpio} sin coincidencias activas exactas en Geclisa (recibidos={len(items)})",
+                    detalles={"dni": dni_limpio, "total_recibidos_geclisa": len(items)},
+                    duracion_ms=duracion,
+                    http_status=200
+                )
+                return [], dni_limpio, duracion, {"encontrado": False, "mensaje": f"No se encontró paciente activo con DNI exacto {dni_limpio} en Geclisa."}
+
+            return exactos_activos, dni_limpio, duracion, None
         except Exception as e:
             duracion = int((time.time() - t_start) * 1000)
             log_event(
@@ -506,7 +528,80 @@ class GeclisaClient:
                 duracion_ms=duracion
             )
             logger.error(f"Error al buscar paciente por DNI {dni_limpio}: {e}")
-            return {"encontrado": False, "error": str(e)}
+            return [], dni_limpio, duracion, {"encontrado": False, "error": str(e)}
+
+    def buscar_candidatos_por_dni(self, dni: str) -> dict:
+        """
+        Retorna todas las fichas activas con coincidencia exacta normalizada para permitir
+        desambiguación en UI cuando existan múltiples registros para el mismo número.
+        """
+        exactos_activos, dni_limpio, duracion, err = self._buscar_exactos_activos_por_dni(dni)
+        if err:
+            return err
+
+        candidatos = []
+        for item in exactos_activos:
+            ficha_id = item.get("fichaId") or item.get("id") or item.get("ficId")
+            nombre = item.get("ficNombre") or item.get("nombre") or ""
+            apellido = item.get("ficApellido") or item.get("ficApe") or item.get("apellido") or ""
+            nombre_completo = item.get("ficNombreApe") or (f"{apellido}, {nombre}".strip(" ,") if apellido else nombre)
+            candidatos.append({
+                "ficha_id": int(ficha_id) if ficha_id is not None else None,
+                "nombre_completo": nombre_completo,
+                "tipo_documento": str(item.get("ficTipodoc") or item.get("tipoDoc") or "").strip() or "D.N.I.",
+                "dni": self._normalizar_documento_numerico(item.get("ficNrodoc") or item.get("nroDoc")) or dni_limpio,
+                "fecha_nacimiento": item.get("fechaNacimiento"),
+                "celular": item.get("celular") or item.get("telefono") or "",
+            })
+
+        return {
+            "encontrado": True,
+            "dni": dni_limpio,
+            "duracion_ms": duracion,
+            "exactos_activos": exactos_activos,
+            "candidatos": candidatos,
+        }
+
+    def buscar_paciente_por_dni(self, dni: str) -> dict:
+        """
+        Busca al paciente por número de DNI y retorna su ficha normalizada y completa.
+        Exige coincidencia exacta normalizada (sin ceros a la izquierda) sobre fichas activas.
+        """
+        exactos_activos, dni_limpio, duracion, err = self._buscar_exactos_activos_por_dni(dni)
+        if err:
+            return err
+
+        if len(exactos_activos) > 1:
+            log_event(
+                nivel="WARNING",
+                modulo="GECLISA",
+                accion="PACIENTE_DUPLICADO_DNI",
+                mensaje=f"Múltiples fichas activas exactas para DNI {dni_limpio} ({len(exactos_activos)} registros)",
+                detalles={
+                    "dni": dni_limpio,
+                    "fichas": [
+                        {
+                            "ficha_id": it.get("fichaId") or it.get("id"),
+                            "tipo_doc": it.get("ficTipodoc"),
+                            "nombre": it.get("ficNombreApe"),
+                        }
+                        for it in exactos_activos
+                    ],
+                },
+                duracion_ms=duracion,
+                http_status=200
+            )
+            # Priorizar D.N.I. y luego fichaId más reciente
+            exactos_activos = sorted(
+                exactos_activos,
+                key=lambda it: (
+                    1 if "DNI" in str(it.get("ficTipodoc") or "").replace(".", "").upper() else 0,
+                    int(it.get("fichaId") or it.get("id") or it.get("ficId") or 0),
+                ),
+                reverse=True,
+            )
+
+        return self._enriquecer_o_normalizar_item(exactos_activos[0], dni_limpio, duracion)
 
     def buscar_paciente_por_ficha(self, ficha_id: int) -> dict:
         """
