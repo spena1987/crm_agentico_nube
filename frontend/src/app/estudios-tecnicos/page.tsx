@@ -202,6 +202,8 @@ export default function EstudiosTecnicosPage() {
   const isMountedRef = useRef(true)
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null)
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null)
+  const [lightboxItemId, setLightboxItemId] = useState<string | null>(null)
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const [unificarEnPdf, setUnificarEnPdf] = useState(true)
   const [grilla2x2, setGrilla2x2] = useState(false)
   const [progresoOptimizacion, setProgresoOptimizacion] = useState<string | null>(null)
@@ -557,15 +559,60 @@ export default function EstudiosTecnicosPage() {
   const anyModalOpen = Boolean(
     showArchivosGeclisa ||
       mostrarPreviewPlantilla ||
+      lightboxItemId ||
       (candidatosGeclisa.length > 1 && !paciente) ||
       editingItem ||
       anulatingItem ||
       detalleItem
   )
 
-  // Cerrar modales con Escape
+  const lightboxIndex = useMemo(
+    () => (lightboxItemId ? studyItems.findIndex((i) => i.id === lightboxItemId) : -1),
+    [lightboxItemId, studyItems]
+  )
+  const lightboxItem = lightboxIndex >= 0 ? studyItems[lightboxIndex] : null
+
+  useEffect(() => {
+    if (!lightboxItem || lightboxItem.isPdf) {
+      setLightboxUrl(null)
+      return
+    }
+    const url = URL.createObjectURL(lightboxItem.file)
+    setLightboxUrl(url)
+    return () => {
+      URL.revokeObjectURL(url)
+    }
+  }, [lightboxItem])
+
+  // Cerrar modales con Escape y navegar en lightbox con flechas
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (lightboxItemId) {
+        if (e.key === 'Escape') {
+          setLightboxItemId(null)
+          return
+        }
+        if (e.key === 'ArrowLeft' && lightboxIndex > 0) {
+          e.preventDefault()
+          for (let i = lightboxIndex - 1; i >= 0; i--) {
+            if (!studyItems[i].isPdf) {
+              setLightboxItemId(studyItems[i].id)
+              break
+            }
+          }
+          return
+        }
+        if (e.key === 'ArrowRight' && lightboxIndex >= 0 && lightboxIndex < studyItems.length - 1) {
+          e.preventDefault()
+          for (let i = lightboxIndex + 1; i < studyItems.length; i++) {
+            if (!studyItems[i].isPdf) {
+              setLightboxItemId(studyItems[i].id)
+              break
+            }
+          }
+          return
+        }
+      }
       if (e.key !== 'Escape') return
       if (showArchivosGeclisa) setShowArchivosGeclisa(false)
       if (mostrarPreviewPlantilla) setMostrarPreviewPlantilla(false)
@@ -573,7 +620,7 @@ export default function EstudiosTecnicosPage() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showArchivosGeclisa, mostrarPreviewPlantilla, candidatosGeclisa.length, paciente])
+  }, [showArchivosGeclisa, mostrarPreviewPlantilla, candidatosGeclisa.length, paciente, lightboxItemId, lightboxIndex, studyItems])
 
   // Soporte global para pegar capturas con Ctrl + V (pausado si hay un modal abierto)
   useEffect(() => {
@@ -1472,9 +1519,9 @@ export default function EstudiosTecnicosPage() {
       </div>
 
       {/* ÁREA OPERATIVA EN 2 COLUMNAS PARALELAS (Configuración + Envío a la Izquierda | Adjuntos + Miniaturas a la Derecha) */}
-      <form onSubmit={handleEnviarEstudio} className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-stretch">
+      <form onSubmit={handleEnviarEstudio} className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-stretch lg:h-[calc(100vh-205px)] lg:min-h-[395px] lg:max-h-[540px]">
         {/* COLUMNA IZQUIERDA (5 cols): PASO 2, OPCIONES, PLANTILLA Y BOTÓN ENVIAR SIEMPRE VISIBLE */}
-        <div className="lg:col-span-5 p-3.5 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs flex flex-col gap-2.5">
+        <div className="lg:col-span-5 p-3.5 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs flex flex-col gap-2.5 min-h-0">
           {/* Header Paso 2 + Lateralidad AO/OD/OI */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -1656,7 +1703,7 @@ export default function EstudiosTecnicosPage() {
         </div>
 
         {/* COLUMNA DERECHA (7 cols): PASO 3 - ADJUNTAR, ORDENAR Y PREVISUALIZAR MINIATURAS */}
-        <div className="lg:col-span-7 p-3.5 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs flex flex-col gap-2.5">
+        <div className="lg:col-span-7 p-3.5 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs flex flex-col gap-2.5 min-h-0">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <span className="w-5 h-5 rounded-full bg-cyan-600 text-white text-[11px] font-bold flex items-center justify-center shrink-0">
@@ -1803,7 +1850,18 @@ export default function EstudiosTecnicosPage() {
                     <X size={11} />
                   </button>
 
-                  <div className="aspect-[4/3] w-full bg-slate-200/70 dark:bg-slate-900/70 flex items-center justify-center overflow-hidden">
+                  <div
+                    onClick={(e) => {
+                      if (!item.isPdf) {
+                        e.stopPropagation()
+                        setLightboxItemId(item.id)
+                      }
+                    }}
+                    title={item.isPdf ? item.file.name : 'Clic para ampliar imagen'}
+                    className={`aspect-[4/3] w-full bg-slate-200/70 dark:bg-slate-900/70 flex items-center justify-center overflow-hidden ${
+                      !item.isPdf ? 'cursor-zoom-in' : ''
+                    }`}
+                  >
                     {item.isPdf ? (
                       <div className="flex flex-col items-center gap-1 text-rose-500">
                         <FileText size={24} />
@@ -1935,9 +1993,9 @@ export default function EstudiosTecnicosPage() {
                   </div>
                 </div>
 
-                {/* Grilla con scroll interno acotado para no empujar el botón Enviar */}
+                {/* Grilla con scroll interno real en wrapper separado (evita compresión de filas en CSS Grid) */}
                 {mostrarAgrupado2x2 ? (
-                  <div className="space-y-2.5 lg:max-h-[calc(100vh-340px)] min-h-[190px] overflow-y-auto pr-1">
+                  <div className="flex-1 min-h-[180px] overflow-y-auto pr-1 space-y-2.5">
                     {chunks.map((chunk) => {
                       const startNum = chunk.items[0].globalIdx + 1
                       const endNum = chunk.items[chunk.items.length - 1].globalIdx + 1
@@ -1954,7 +2012,7 @@ export default function EstudiosTecnicosPage() {
                               </span>
                             )}
                           </div>
-                          <div className="grid grid-cols-2 gap-2">
+                          <div className="grid grid-cols-2 gap-2 auto-rows-max">
                             {chunk.items.map(({ item, globalIdx }) => renderThumbCard(item, globalIdx))}
                           </div>
                         </div>
@@ -1962,8 +2020,10 @@ export default function EstudiosTecnicosPage() {
                     })}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 lg:max-h-[calc(100vh-340px)] min-h-[180px] overflow-y-auto pr-1">
-                    {studyItems.map((item, idx) => renderThumbCard(item, idx))}
+                  <div className="flex-1 min-h-[180px] overflow-y-auto pr-1">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 auto-rows-max">
+                      {studyItems.map((item, idx) => renderThumbCard(item, idx))}
+                    </div>
                   </div>
                 )}
 
@@ -2009,6 +2069,87 @@ export default function EstudiosTecnicosPage() {
           })()}
         </div>
       </form>
+
+      {/* MODAL: LIGHTBOX PARA INSPECCIONAR TOMA AMPLIADA */}
+      {lightboxItem && lightboxUrl && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-lightbox-title"
+          className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-xs flex flex-col items-center justify-center p-4"
+          onClick={() => setLightboxItemId(null)}
+        >
+          <div
+            className="w-full max-w-5xl flex items-center justify-between gap-3 text-white mb-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="px-2 py-0.5 rounded-md bg-cyan-600 text-xs font-bold font-mono shrink-0">
+                #{lightboxIndex + 1} / {studyItems.length}
+              </span>
+              <h3 id="modal-lightbox-title" className="text-xs sm:text-sm font-bold truncate">
+                {lightboxItem.file.name}
+              </h3>
+              <span className="text-[11px] text-slate-400 font-mono shrink-0">
+                ({(lightboxItem.file.size / (1024 * 1024)).toFixed(2)} MB)
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLightboxItemId(null)}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white"
+              title="Cerrar (Esc)"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div
+            className="relative flex items-center justify-center max-w-5xl w-full max-h-[80vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              disabled={lightboxIndex <= 0}
+              onClick={() => {
+                for (let i = lightboxIndex - 1; i >= 0; i--) {
+                  if (!studyItems[i].isPdf) {
+                    setLightboxItemId(studyItems[i].id)
+                    break
+                  }
+                }
+              }}
+              className="p-2.5 rounded-full bg-slate-900/80 hover:bg-cyan-600 text-white border border-slate-700 mr-3 disabled:opacity-25 shrink-0"
+              title="Toma anterior (←)"
+            >
+              <ArrowLeft size={20} />
+            </button>
+
+            <img
+              src={lightboxUrl}
+              alt={lightboxItem.file.name}
+              className="max-h-[78vh] max-w-full object-contain rounded-xl border border-slate-800 bg-black shadow-2xl"
+            />
+
+            <button
+              type="button"
+              disabled={lightboxIndex >= studyItems.length - 1}
+              onClick={() => {
+                for (let i = lightboxIndex + 1; i < studyItems.length; i++) {
+                  if (!studyItems[i].isPdf) {
+                    setLightboxItemId(studyItems[i].id)
+                    break
+                  }
+                }
+              }}
+              className="p-2.5 rounded-full bg-slate-900/80 hover:bg-cyan-600 text-white border border-slate-700 ml-3 disabled:opacity-25 shrink-0"
+              title="Toma siguiente (→)"
+            >
+              <ArrowRight size={20} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: CANDIDATOS MÚLTIPLES EN GECLISA */}
       {candidatosGeclisa.length > 1 && !paciente && (
