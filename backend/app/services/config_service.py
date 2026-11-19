@@ -87,6 +87,25 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "texto_indicaciones": "Presente este informe a su médico oftalmólogo en su próxima consulta de control.",
         "pie_legal": "Documento e informe técnico generado electrónicamente por Centrovisión Oftalmología Integral."
     },
+    "estudios_oftalmo": {
+        "presets": [
+            {"id": "oct_macular_papilar", "nombre": "OCT Macular y Papilar", "activo": True, "orden": 1},
+            {"id": "campo_visual", "nombre": "Campo Visual Computarizado", "activo": True, "orden": 2},
+            {"id": "topografia_corneal", "nombre": "Topografía Corneal (Pentacam)", "activo": True, "orden": 3},
+            {"id": "biometria_ocular", "nombre": "Biometría Ocular (IOL Master)", "activo": True, "orden": 4},
+            {"id": "paquimetria_corneal", "nombre": "Paquimetría Corneal", "activo": True, "orden": 5},
+            {"id": "retinografia_color", "nombre": "Retinografía Color", "activo": True, "orden": 6},
+            {"id": "ecografia_ocular", "nombre": "Ecografía Ocular Modo A/B", "activo": True, "orden": 7},
+            {"id": "recuento_endotelial", "nombre": "Recuento Endotelial", "activo": True, "orden": 8},
+            {"id": "aberrometria_opd", "nombre": "Aberrometría / OPD Scan", "activo": True, "orden": 9},
+            {"id": "meibografia_ojo_seco", "nombre": "Meibografía / Ojo Seco", "activo": True, "orden": 10}
+        ],
+        "operacion": {
+            "ojo_default": "AO",
+            "unificar_en_pdf_default": True,
+            "aplicar_caratula_default": True
+        }
+    },
     "lienzo_indicaciones": {
         "titulo_documento": "ORDEN MÉDICA DE PROCEDIMIENTO",
         "nombre_institucion": "CENTRO VISIÓN",
@@ -329,7 +348,7 @@ def load_settings(force_refresh: bool = False) -> Dict[str, Any]:
     return merged
 
 
-def save_settings(new_settings: Dict[str, Any]) -> Dict[str, Any]:
+def save_settings(new_settings: Dict[str, Any], actualizado_por: str = "sistema_crm") -> Dict[str, Any]:
     """
     Guarda las configuraciones atómicamente en Supabase (PostgreSQL) y
     respalda en archivo JSON local, actualizando la memoria caché.
@@ -352,7 +371,7 @@ def save_settings(new_settings: Dict[str, Any]) -> Dict[str, Any]:
                     "clave": "ajustes_crm",
                     "valor": current,
                     "updated_at": "now()",
-                    "actualizado_por": "sistema_crm"
+                    "actualizado_por": (actualizado_por or "sistema_crm")[:120]
                 }
                 supabase.table("configuracion_sistema").upsert(payload_db).execute()
                 logger.info("Configuraciones del CRM guardadas exitosamente en Supabase (configuracion_sistema).")

@@ -44,7 +44,7 @@ import SurgicalSettingsCard from '@/components/settings/SurgicalSettingsCard'
 import QuirofanoSettingsCard from '@/components/settings/QuirofanoSettingsCard'
 import PrestadoresSettingsCard from '@/components/settings/PrestadoresSettingsCard'
 import LioSettingsCard from '@/components/settings/LioSettingsCard'
-import CaratulaEstudiosSettingsCard from '@/components/settings/CaratulaEstudiosSettingsCard'
+import EstudiosOftalmologicosSettingsCard from '@/components/settings/EstudiosOftalmologicosSettingsCard'
 import { usePermissions } from '@/hooks/usePermissions'
 
 type TabType = 
@@ -56,11 +56,11 @@ type TabType =
   | 'prestadores' 
   | 'lios'
   | 'quirurgico' 
+  | 'estudios_oftalmologicos'
   | 'clinica' 
   | 'nomenclador' 
   | 'plantilla_presupuesto' 
   | 'plantilla_indicaciones'
-  | 'caratula_estudios'
   | 'seguridad' 
   | 'logs'
 
@@ -73,11 +73,11 @@ const TAB_PERMISSION_MAP: Record<TabType, string> = {
   prestadores: 'ver_prestadores',
   lios: 'ver_lios',
   quirurgico: 'ver_quirurgico',
+  estudios_oftalmologicos: 'ver_estudios_oftalmologicos',
   clinica: 'ver_clinica',
   nomenclador: 'ver_nomencladores',
   plantilla_presupuesto: 'ver_plantilla_presupuesto',
   plantilla_indicaciones: 'ver_plantilla_presupuesto',
-  caratula_estudios: 'ver_clinica',
   seguridad: 'ver_seguridad',
   logs: 'ver_logs',
 }
@@ -118,6 +118,7 @@ const tabCategories: TabCategory[] = [
       { id: 'prestadores', label: 'Equipo & Prestadores', icon: Users, description: 'Cirujanos, Anestesistas & Firmas' },
       { id: 'lios', label: 'Lentes Intraoculares (LIO)', icon: Eye, description: 'Catálogo de marcas, modelos y ópticas' },
       { id: 'quirurgico', label: 'Asesoría & Lead-to-Surgery', icon: Stethoscope, description: 'SLA, alertas y checklist quirúrgico' },
+      { id: 'estudios_oftalmologicos', label: 'Estudios Oftalmológicos', icon: FileText, description: 'Etiquetas rápidas, carátula PDF y parámetros del módulo de estudios', badge: 'Híbrido' },
     ]
   },
   {
@@ -129,7 +130,6 @@ const tabCategories: TabCategory[] = [
       { id: 'nomenclador', label: 'Nomencladores & Aranceles', icon: BookOpen, description: 'Catálogo de prácticas y valores' },
       { id: 'plantilla_presupuesto', label: 'Diseñador de Presupuestos', icon: FileCheck, description: 'Plantillas y estilo PDF' },
       { id: 'plantilla_indicaciones', label: 'Diseñador de Indicaciones', icon: Pill, description: 'Órdenes médicas, recetas y PDF quirúrgico', badge: 'Geclisa' },
-      { id: 'caratula_estudios', label: 'Carátula de Estudios', icon: FileText, description: 'Diseñador de membretes y portadas para estudios diagnósticos', badge: 'Híbrido' },
     ]
   },
   {
@@ -145,8 +145,10 @@ const tabCategories: TabCategory[] = [
 
 function AjustesContent() {
   const searchParams = useSearchParams()
-  const tabParam = searchParams.get('tab') as TabType | null
-  const subParam = searchParams.get('sub') as any
+  const rawTabParam = searchParams.get('tab')
+  const tabParam = (rawTabParam === 'caratula_estudios' ? 'estudios_oftalmologicos' : rawTabParam) as TabType | null
+  const rawSubParam = searchParams.get('sub') as any
+  const subParam = rawTabParam === 'caratula_estudios' && !rawSubParam ? 'caratula' : rawSubParam
   const { can, isAdmin, loading } = usePermissions()
 
   // Comprobar si una pestaña específica está permitida para este usuario
@@ -154,6 +156,9 @@ function AjustesContent() {
     if (isAdmin) return true
     if (tabId === 'automatismos') {
       return can('ajustes', 'ver_automatismos') || can('ajustes', 'ver_bot') || can('ajustes', 'ver_quirurgico') || true
+    }
+    if (tabId === 'estudios_oftalmologicos') {
+      return can('ajustes', 'ver_estudios_oftalmologicos') || can('ajustes', 'ver_clinica')
     }
     const permAction = TAB_PERMISSION_MAP[tabId]
     return permAction ? can('ajustes', permAction) : true
@@ -498,7 +503,7 @@ function AjustesContent() {
             {activeTab === 'nomenclador' && isTabAllowed('nomenclador') && <NomencladorSettingsCard />}
             {activeTab === 'plantilla_presupuesto' && isTabAllowed('plantilla_presupuesto') && <BudgetTemplateDesignerCard />}
             {activeTab === 'plantilla_indicaciones' && isTabAllowed('plantilla_indicaciones') && <IndicacionesTemplateDesignerCard />}
-            {activeTab === 'caratula_estudios' && isTabAllowed('caratula_estudios') && <CaratulaEstudiosSettingsCard />}
+            {activeTab === 'estudios_oftalmologicos' && isTabAllowed('estudios_oftalmologicos') && <EstudiosOftalmologicosSettingsCard initialSubSection={subParam} />}
             {activeTab === 'seguridad' && isTabAllowed('seguridad') && <SecuritySettingsCard />}
             {activeTab === 'logs' && isTabAllowed('logs') && <SystemLogsCard />}
           </div>

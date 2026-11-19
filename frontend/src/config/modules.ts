@@ -216,6 +216,8 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
       { code: 'ver_prestadores', label: 'Ver Equipo & Prestadores', description: 'Consultar cirujanos, anestesistas, instrumentadores y firmas digitales' },
       { code: 'ver_quirurgico', label: 'Ver Asesoría & Lead-to-Surgery', description: 'Consultar SLA, tiempos y checklist quirúrgico' },
       { code: 'ver_clinica', label: 'Ver Perfil del Centro Médico', description: 'Consultar datos y membrete de la institución' },
+      { code: 'ver_estudios_oftalmologicos', label: 'Ver Estudios Oftalmológicos', description: 'Consultar etiquetas de estudios, carátula y parámetros operativos' },
+      { code: 'editar_estudios_oftalmologicos', label: 'Editar Estudios Oftalmológicos', description: 'Crear, ordenar, habilitar/deshabilitar etiquetas y modificar parámetros de estudios' },
       { code: 'ver_plantilla_presupuesto', label: 'Ver Diseñador de Presupuestos', description: 'Consultar y diseñar plantillas PDF de presupuestos' },
       { code: 'ver_whatsapp', label: 'Ver WhatsApp & Gateway', description: 'Consultar estado de sincronización y sesión Meta' },
       { code: 'ver_plantillas_whatsapp', label: 'Ver Plantillas WhatsApp (Meta)', description: 'Consultar y diseñar plantillas oficiales de WhatsApp' },

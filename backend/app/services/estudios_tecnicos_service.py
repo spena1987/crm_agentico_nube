@@ -1696,6 +1696,7 @@ async def enviar_y_archivar_estudio_oftalmologico(
                     "raw_bytes_cliente": raw_bytes_total,
                     "final_bytes": len(final_bytes),
                     "grilla_2x2": grilla_2x2,
+                    "titulo_truncado": len(f"Estudio - {titulo_estudio_limpio}") > 45,
                     "geclisa_error": geclisa_err,
                     "whatsapp_error": wa_err
                 }
@@ -2462,3 +2463,197 @@ async def preview_caratula_estudio(
         pdf_bytes = generar_portada_pdf_a4(paciente_demo, estudio_demo, config=cfg)
 
     return Response(content=pdf_bytes, media_type="application/pdf")
+
+
+# =========================================================================
+# CONFIGURACIÓN DINÁMICA DEL MÓDULO DE ESTUDIOS OFTALMOLÓGICOS
+# =========================================================================
+
+class EstudioPresetItemPayload(BaseModel):
+    id: str
+    nombre: str
+    activo: bool = True
+    orden: Optional[int] = None
+
+
+class EstudiosOperacionPayload(BaseModel):
+    ojo_default: str = "AO"
+    unificar_en_pdf_default: bool = True
+    aplicar_caratula_default: bool = True
+
+
+class UpdateEstudiosConfigPayload(BaseModel):
+    presets: Optional[List[EstudioPresetItemPayload]] = None
+    operacion: Optional[EstudiosOperacionPayload] = None
+
+
+def _verify_can_edit_estudios_config(request: Request) -> str:
+    """
+    Valida en servidor que el usuario autenticado posea rol `admin` o el permiso
+    `ajustes:editar_estudios_oftalmologicos` (o fallback heredado `ajustes:ver_clinica`).
+    Retorna el nombre del actor para auditoría.
+    """
+    user_state = getattr(request.state, "user", None) or {}
+    uid = user_state.get("sub") or user_state.get("id")
+    if not uid:
+        raise HTTPException(
+            status_code=403,
+            detail="Se requiere sesión de usuario autenticada para modificar la configuración de Estudios."
+        )
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos no disponible para verificar permisos.")
+
+    try:
+        prof_q = (
+            supabase.table("usuarios_perfil")
+            .select("id, nombre_completo, email, rol_id, roles(codigo, nombre)")
+            .eq("id", str(uid))
+            .limit(1)
+            .execute()
+        )
+        if not prof_q.data:
+            raise HTTPException(status_code=403, detail="Perfil de usuario no encontrado.")
+        prof = prof_q.data[0]
+        actor_name = prof.get("nombre_completo") or prof.get("email") or str(uid)
+        rol_obj = prof.get("roles") or {}
+        if isinstance(rol_obj, list):
+            rol_obj = rol_obj[0] if rol_obj else {}
+        rol_codigo = (rol_obj.get("codigo") or "").lower()
+        if rol_codigo == "admin":
+            return actor_name
+
+        rol_id = prof.get("rol_id")
+        if not rol_id:
+            raise HTTPException(status_code=403, detail="Tu usuario no tiene un rol asignado.")
+
+        perm_q = (
+            supabase.table("rol_permisos")
+            .select("accion, permitido")
+            .eq("rol_id", str(rol_id))
+            .eq("modulo_codigo", "ajustes")
+            .in_("accion", ["editar_estudios_oftalmologicos", "ver_clinica"])
+            .eq("permitido", True)
+            .execute()
+        )
+        if not perm_q.data:
+            raise HTTPException(
+                status_code=403,
+                detail="Tu rol no tiene permiso para editar la configuración de Estudios Oftalmológicos."
+            )
+        return actor_name
+    except HTTPException:
+        raise
+    except Exception as perm_err:
+        logger.error(f"[EstudiosConfig] Error validando RBAC en servidor: {perm_err}")
+        raise HTTPException(status_code=500, detail="Error verificando permisos de configuración.")
+
+
+@estudios_router.get("/api/estudios-tecnicos/config")
+def obtener_config_estudios_oftalmologicos():
+    """
+    Devuelve la configuración vigente del módulo de Estudios Oftalmológicos
+    (etiquetas rápidas ordenadas, parámetros operativos y estado global de carátula).
+    Accesible tanto para técnicos en /estudios-tecnicos como para administradores en /ajustes.
+    """
+    from app.services.config_service import load_settings, DEFAULT_SETTINGS
+
+    settings = load_settings(force_refresh=True)
+    default_est = DEFAULT_SETTINGS.get("estudios_oftalmo", {})
+    est_cfg = settings.get("estudios_oftalmo") or default_est
+
+    presets_raw = est_cfg.get("presets") if isinstance(est_cfg.get("presets"), list) else default_est.get("presets", [])
+    presets_sorted = sorted(
+        [p for p in presets_raw if isinstance(p, dict) and p.get("nombre")],
+        key=lambda x: int(x.get("orden") or 9999)
+    )
+
+    op_default = default_est.get("operacion", {})
+    op_raw = est_cfg.get("operacion") or {}
+    operacion = {
+        "ojo_default": op_raw.get("ojo_default") if op_raw.get("ojo_default") in ("AO", "OD", "OI") else op_default.get("ojo_default", "AO"),
+        "unificar_en_pdf_default": bool(op_raw.get("unificar_en_pdf_default", op_default.get("unificar_en_pdf_default", True))),
+        "aplicar_caratula_default": bool(op_raw.get("aplicar_caratula_default", op_default.get("aplicar_caratula_default", True))),
+    }
+
+    caratula_cfg = settings.get("caratula_estudios") or DEFAULT_SETTINGS.get("caratula_estudios", {})
+    return {
+        "success": True,
+        "presets": presets_sorted,
+        "operacion": operacion,
+        "caratula_activa": bool(caratula_cfg.get("activo", True)),
+    }
+
+
+@estudios_router.put("/api/estudios-tecnicos/config")
+def actualizar_config_estudios_oftalmologicos(
+    request: Request,
+    payload: UpdateEstudiosConfigPayload
+):
+    """
+    Actualiza las etiquetas de estudios y/o los parámetros operativos por defecto
+    dentro de `configuracion_sistema` (`ajustes_crm.estudios_oftalmo`), validando
+    permisos RBAC en el servidor y registrando auditoría en `system_logs`.
+    """
+    from app.services.config_service import load_settings, save_settings, DEFAULT_SETTINGS
+
+    actor_name = _verify_can_edit_estudios_config(request)
+
+    if payload.presets is None and payload.operacion is None:
+        raise HTTPException(status_code=400, detail="Debe enviar `presets` u `operacion` para actualizar.")
+
+    current_settings = load_settings(force_refresh=True)
+    current_est = current_settings.get("estudios_oftalmo") or DEFAULT_SETTINGS.get("estudios_oftalmo", {})
+    new_est_payload: Dict[str, Any] = {}
+
+    if payload.presets is not None:
+        seen_names = set()
+        cleaned_presets: List[Dict[str, Any]] = []
+        for idx, item in enumerate(payload.presets, start=1):
+            norm_nombre = " ".join((item.nombre or "").strip().split())
+            if not norm_nombre:
+                raise HTTPException(status_code=400, detail="El nombre de cada etiqueta no puede estar vacío.")
+            lower_key = norm_nombre.lower()
+            if lower_key in seen_names:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Ya existe una etiqueta duplicada con el nombre '{norm_nombre}'."
+                )
+            seen_names.add(lower_key)
+            clean_id = (item.id or "").strip() or f"tag_{idx}"
+            cleaned_presets.append({
+                "id": clean_id,
+                "nombre": norm_nombre,
+                "activo": bool(item.activo),
+                "orden": int(item.orden) if item.orden is not None else idx,
+            })
+        cleaned_presets.sort(key=lambda x: x["orden"])
+        for i, p in enumerate(cleaned_presets, start=1):
+            p["orden"] = i
+        new_est_payload["presets"] = cleaned_presets
+
+    if payload.operacion is not None:
+        ojo_val = (payload.operacion.ojo_default or "AO").strip().upper()
+        if ojo_val not in ("AO", "OD", "OI"):
+            raise HTTPException(status_code=400, detail="Lateralidad por defecto inválida. Use AO, OD u OI.")
+        new_est_payload["operacion"] = {
+            "ojo_default": ojo_val,
+            "unificar_en_pdf_default": bool(payload.operacion.unificar_en_pdf_default),
+            "aplicar_caratula_default": bool(payload.operacion.aplicar_caratula_default),
+        }
+
+    save_settings({"estudios_oftalmo": new_est_payload}, actualizado_por=actor_name)
+
+    log_event(
+        nivel="INFO",
+        modulo="ESTUDIOS_TECNICOS",
+        accion="ACTUALIZAR_CONFIG_ESTUDIOS",
+        mensaje=f"Configuración de Estudios Oftalmológicos actualizada por {actor_name}",
+        detalles={
+            "actualizado_por": actor_name,
+            "secciones_actualizadas": list(new_est_payload.keys()),
+            "total_presets": len(new_est_payload.get("presets", current_est.get("presets", []))),
+            "operacion": new_est_payload.get("operacion", current_est.get("operacion")),
+        }
+    )
+
+    return obtener_config_estudios_oftalmologicos()
