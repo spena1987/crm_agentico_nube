@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import {
   Eye,
@@ -35,13 +35,26 @@ import {
   Info,
   ClipboardList,
   Stethoscope,
-  LayoutGrid
+  LayoutGrid,
+  ArrowLeft,
+  ArrowRight,
+  ArrowDownAZ,
+  ArrowUpZA,
+  ArrowUpDown
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { usePermissions } from '@/hooks/usePermissions'
 import { formatDateArg } from '@/lib/dateUtils'
 import { apiFetch, BACKEND_URL } from '@/lib/api'
 import { optimizeStudyFilesForUpload } from '@/lib/imageOptimizer'
+import {
+  StudyFileItem,
+  isAllowedStudyFile,
+  isPdfStudyFile,
+  sortFilesNatural,
+  sortStudyItemsNatural,
+  generateThumbnailsInQueue
+} from '@/lib/studyThumbnails'
 import { supabase } from '@/lib/supabase'
 import {
   formatPhoneDisplay,
@@ -179,7 +192,12 @@ export default function EstudiosTecnicosPage() {
   const [observaciones, setObservaciones] = useState('')
 
   // Paso 3: Archivos (Drag & Drop + Ctrl+V)
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [studyItems, setStudyItems] = useState<StudyFileItem[]>([])
+  const selectedFiles = useMemo(() => studyItems.map((i) => i.file), [studyItems])
+  const thumbUrlsRef = useRef<Set<string>>(new Set())
+  const isMountedRef = useRef(true)
+  const [draggedItemId, setDraggedItemId] = useState<string | null>(null)
+  const [dragOverItemId, setDragOverItemId] = useState<string | null>(null)
   const [unificarEnPdf, setUnificarEnPdf] = useState(true)
   const [grilla2x2, setGrilla2x2] = useState(false)
   const [progresoOptimizacion, setProgresoOptimizacion] = useState<string | null>(null)
@@ -448,21 +466,101 @@ export default function EstudiosTecnicosPage() {
     }
   }, [fetchLineaStatus, fetchHistorial, profile?.geclisa_pre_id])
 
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+      thumbUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+      thumbUrlsRef.current.clear()
+    }
+  }, [])
+
+  const clearStudyItems = useCallback(() => {
+    thumbUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+    thumbUrlsRef.current.clear()
+    setStudyItems([])
+  }, [])
+
+  const appendStudyFiles = useCallback((rawFiles: File[], sortBatch: boolean) => {
+    const valid = rawFiles.filter(isAllowedStudyFile)
+    if (valid.length === 0) {
+      setFeedback({
+        type: 'error',
+        title: 'Formato no válido',
+        detail: 'Solo se permiten archivos PDF, JPG o PNG.'
+      })
+      return
+    }
+
+    const batchHasPdf = valid.some(isPdfStudyFile)
+    const batchHasImg = valid.some((f) => !isPdfStudyFile(f))
+    if (batchHasPdf && batchHasImg) {
+      setFeedback({
+        type: 'error',
+        title: 'No se pueden mezclar PDF e imágenes',
+        detail: 'Envía archivos PDF por separado de las imágenes JPG/PNG para evitar descartes al compilar.'
+      })
+      return
+    }
+
+    const existingHasPdf = studyItems.some((i) => i.isPdf)
+    const existingHasImg = studyItems.some((i) => !i.isPdf)
+    if ((existingHasPdf && batchHasImg) || (existingHasImg && batchHasPdf)) {
+      setFeedback({
+        type: 'error',
+        title: 'No se pueden mezclar PDF e imágenes',
+        detail: 'Ya hay archivos de otro tipo cargados. Limpia la lista o envíalos por separado.'
+      })
+      return
+    }
+
+    const orderedBatch = sortBatch && valid.length > 1 ? sortFilesNatural(valid, 'asc') : valid
+    const newItems: StudyFileItem[] = orderedBatch.map((file) => ({
+      id: typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file,
+      isPdf: isPdfStudyFile(file),
+      thumbUrl: null
+    }))
+
+    setStudyItems((prev) => [...prev, ...newItems])
+
+    void generateThumbnailsInQueue(
+      newItems,
+      (id, url) => {
+        if (!isMountedRef.current) {
+          URL.revokeObjectURL(url)
+          return
+        }
+        thumbUrlsRef.current.add(url)
+        setStudyItems((prev) => {
+          const exists = prev.some((item) => item.id === id)
+          if (!exists) {
+            URL.revokeObjectURL(url)
+            thumbUrlsRef.current.delete(url)
+            return prev
+          }
+          return prev.map((item) => (item.id === id ? { ...item, thumbUrl: url } : item))
+        })
+      },
+      () => !isMountedRef.current
+    )
+  }, [studyItems])
+
   // Soporte global para pegar capturas con Ctrl + V
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       if (!e.clipboardData || !e.clipboardData.files || e.clipboardData.files.length === 0) return
-      const pastedFiles = Array.from(e.clipboardData.files).filter(f =>
-        ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'].includes(f.type.toLowerCase())
-      )
+      const pastedFiles = Array.from(e.clipboardData.files).filter(isAllowedStudyFile)
       if (pastedFiles.length > 0) {
         e.preventDefault()
-        setSelectedFiles(prev => [...prev, ...pastedFiles])
+        appendStudyFiles(pastedFiles, pastedFiles.length > 1)
       }
     }
     window.addEventListener('paste', handlePaste)
     return () => window.removeEventListener('paste', handlePaste)
-  }, [])
+  }, [appendStudyFiles])
 
   const ejecutarBusquedaPaciente = async (cleanDni: string, fichaIdSeleccionada?: number) => {
     setBuscandoPaciente(true)
@@ -553,24 +651,61 @@ export default function EstudiosTecnicosPage() {
   }
 
   const handleFileChange = (filesList: FileList | null) => {
-    if (!filesList) return
-    const valid = Array.from(filesList).filter(f => {
-      const ext = f.name.split('.').pop()?.toLowerCase() || ''
-      return ['pdf', 'jpg', 'jpeg', 'png'].includes(ext)
-    })
-    if (valid.length === 0) {
-      setFeedback({
-        type: 'error',
-        title: 'Formato no válido',
-        detail: 'Solo se permiten archivos PDF, JPG o PNG.'
-      })
-      return
+    if (!filesList || filesList.length === 0) return
+    appendStudyFiles(Array.from(filesList), true)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
     }
-    setSelectedFiles(prev => [...prev, ...valid])
   }
 
-  const removeSelectedFile = (index: number) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index))
+  const removeStudyItem = (id: string) => {
+    setStudyItems((prev) => {
+      const target = prev.find((i) => i.id === id)
+      if (target?.thumbUrl) {
+        URL.revokeObjectURL(target.thumbUrl)
+        thumbUrlsRef.current.delete(target.thumbUrl)
+      }
+      return prev.filter((i) => i.id !== id)
+    })
+  }
+
+  const moveStudyItem = (fromIndex: number, toIndex: number) => {
+    setStudyItems((prev) => {
+      if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= prev.length ||
+        toIndex >= prev.length ||
+        fromIndex === toIndex
+      ) {
+        return prev
+      }
+      const next = [...prev]
+      const [moved] = next.splice(fromIndex, 1)
+      next.splice(toIndex, 0, moved)
+      return next
+    })
+  }
+
+  const moveStudyItemById = (sourceId: string, targetId: string) => {
+    if (!sourceId || !targetId || sourceId === targetId) return
+    setStudyItems((prev) => {
+      const fromIndex = prev.findIndex((i) => i.id === sourceId)
+      const toIndex = prev.findIndex((i) => i.id === targetId)
+      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return prev
+      const next = [...prev]
+      const [moved] = next.splice(fromIndex, 1)
+      next.splice(toIndex, 0, moved)
+      return next
+    })
+  }
+
+  const sortAllStudyItems = (direction: 'asc' | 'desc') => {
+    setStudyItems((prev) => sortStudyItemsNatural(prev, direction))
+  }
+
+  const reverseStudyItems = () => {
+    setStudyItems((prev) => [...prev].reverse())
   }
 
   const handleEnviarEstudio = async (e: React.FormEvent) => {
@@ -706,7 +841,7 @@ export default function EstudiosTecnicosPage() {
           title: '¡Estudio archivado en Geclisa y enviado por WhatsApp!',
           detail: `Guardado en Ficha #${paciente.geclisa_ficha_id} (Solapa Archivos Clínicos, AS_ID #${data.geclisa_as_id || 'OK'}) y despachado a ${formatPhoneDisplay(telefonoDestino)}.`
         })
-        setSelectedFiles([])
+        clearStudyItems()
         setObservaciones('')
       } else if (onlyGeclisa && data.geclisa_ok) {
         setFeedback({
@@ -714,7 +849,7 @@ export default function EstudiosTecnicosPage() {
           title: '¡Estudio guardado exitosamente en Geclisa!',
           detail: `El archivo quedó archivado en la Historia Clínica (Ficha #${paciente.geclisa_ficha_id}, Solapa Archivos Clínicos, AS_ID #${data.geclisa_as_id || 'OK'}).`
         })
-        setSelectedFiles([])
+        clearStudyItems()
         setObservaciones('')
       } else if (onlyWa && data.whatsapp_ok) {
         setFeedback({
@@ -722,7 +857,7 @@ export default function EstudiosTecnicosPage() {
           title: '¡Estudio enviado por WhatsApp!',
           detail: `Despachado con éxito a ${formatPhoneDisplay(telefonoDestino)}.`
         })
-        setSelectedFiles([])
+        clearStudyItems()
         setObservaciones('')
       } else if (data.geclisa_ok && !data.whatsapp_ok) {
         setFeedback({
@@ -730,7 +865,7 @@ export default function EstudiosTecnicosPage() {
           title: 'Guardado en Geclisa OK, pero falló el envío por WhatsApp',
           detail: `El archivo ya quedó seguro en Geclisa (AS_ID #${data.geclisa_as_id}). Motivo WhatsApp: ${data.whatsapp_error}. Puedes reintentar desde la tabla inferior sin duplicar el archivo.`
         })
-        setSelectedFiles([])
+        clearStudyItems()
       } else if (!data.geclisa_ok && data.whatsapp_ok && both) {
         setFeedback({
           type: 'warning',
@@ -1731,11 +1866,17 @@ export default function EstudiosTecnicosPage() {
 
               <div
                 onDragOver={(e) => {
+                  if (!e.dataTransfer.types.includes('Files')) return
                   e.preventDefault()
                   setIsDragging(true)
                 }}
-                onDragLeave={() => setIsDragging(false)}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                    setIsDragging(false)
+                  }
+                }}
                 onDrop={(e) => {
+                  if (!e.dataTransfer.types.includes('Files')) return
                   e.preventDefault()
                   setIsDragging(false)
                   handleFileChange(e.dataTransfer.files)
@@ -1760,40 +1901,250 @@ export default function EstudiosTecnicosPage() {
                   Arrastra el estudio aquí o haz clic para seleccionarlo
                 </p>
                 <p className="text-xs text-[var(--secondary)] mt-1">
-                  Soporta archivos <strong>PDF, JPG y PNG</strong> (hasta 20 MB). Si subes imágenes de ambos ojos (OD + OI), se pueden unificar en un solo PDF automáticamente.
+                  Soporta archivos <strong>PDF, JPG y PNG</strong> (hasta 20 MB). Si subes imágenes de ambos ojos (OD + OI), se ordenan en ascendente natural y puedes reordenarlas abajo.
                 </p>
               </div>
 
-              {/* Lista de archivos seleccionados */}
-              {selectedFiles.length > 0 && (
-                <div className="space-y-2">
-                  {selectedFiles.map((file, idx) => (
+              {/* Grilla visual de miniaturas numeradas y reordenables */}
+              {studyItems.length > 0 && (() => {
+                const allImages = studyItems.every((i) => !i.isPdf)
+                const mostrarAgrupado2x2 = grilla2x2 && studyItems.length > 1 && allImages
+
+                const renderThumbCard = (item: StudyFileItem, idx: number) => {
+                  const isBeingDragged = draggedItemId === item.id
+                  const isDragTarget = dragOverItemId === item.id && draggedItemId !== item.id
+                  return (
                     <div
-                      key={`${file.name}-${idx}`}
-                      className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-[var(--border)] flex items-center justify-between gap-3 text-xs"
+                      key={item.id}
+                      draggable={!enviandoEstudio}
+                      onDragStart={(e) => {
+                        if (enviandoEstudio) return
+                        e.dataTransfer.effectAllowed = 'move'
+                        e.dataTransfer.setData('application/x-study-thumb', item.id)
+                        setDraggedItemId(item.id)
+                      }}
+                      onDragOver={(e) => {
+                        if (!e.dataTransfer.types.includes('application/x-study-thumb')) return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        if (dragOverItemId !== item.id) {
+                          setDragOverItemId(item.id)
+                        }
+                      }}
+                      onDragLeave={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node) && dragOverItemId === item.id) {
+                          setDragOverItemId(null)
+                        }
+                      }}
+                      onDrop={(e) => {
+                        if (!e.dataTransfer.types.includes('application/x-study-thumb')) return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        const sourceId = e.dataTransfer.getData('application/x-study-thumb')
+                        setDraggedItemId(null)
+                        setDragOverItemId(null)
+                        moveStudyItemById(sourceId, item.id)
+                      }}
+                      onDragEnd={() => {
+                        setDraggedItemId(null)
+                        setDragOverItemId(null)
+                      }}
+                      className={`group relative rounded-xl border bg-slate-50 dark:bg-slate-800/60 overflow-hidden transition-all select-none ${
+                        !enviandoEstudio ? 'cursor-grab active:cursor-grabbing' : 'opacity-70'
+                      } ${
+                        isDragTarget
+                          ? 'border-cyan-500 ring-2 ring-cyan-500/40 scale-[1.02]'
+                          : isBeingDragged
+                            ? 'opacity-40 border-dashed border-cyan-500'
+                            : 'border-[var(--border)] hover:border-cyan-500/50'
+                      }`}
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        {file.type.includes('pdf') || file.name.toLowerCase().endsWith('.pdf') ? (
-                          <FileText size={18} className="text-rose-500 shrink-0" />
-                        ) : (
-                          <ImageIcon size={18} className="text-cyan-500 shrink-0" />
-                        )}
-                        <div className="min-w-0">
-                          <p className="font-bold text-[var(--foreground)] truncate">{file.name}</p>
-                          <p className="text-[10px] text-[var(--secondary)]">
-                            {(file.size / (1024 * 1024)).toFixed(2)} MB
-                          </p>
-                        </div>
-                      </div>
+                      {/* Badge de orden #N */}
+                      <span className="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded-md bg-slate-900/80 text-white text-[10px] font-bold font-mono shadow-sm">
+                        #{idx + 1}
+                      </span>
+
+                      {/* Botón eliminar */}
                       <button
                         type="button"
-                        onClick={() => removeSelectedFile(idx)}
-                        className="p-1.5 rounded-lg hover:bg-rose-500/15 text-slate-400 hover:text-rose-500 transition-colors"
+                        disabled={enviandoEstudio}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          removeStudyItem(item.id)
+                        }}
+                        title="Quitar archivo"
+                        className="absolute top-1.5 right-1.5 z-10 p-1 rounded-md bg-slate-900/75 hover:bg-rose-600 text-white transition-colors disabled:opacity-40"
                       >
-                        <X size={15} />
+                        <X size={12} />
                       </button>
+
+                      {/* Miniatura */}
+                      <div className="aspect-[4/3] w-full bg-slate-200/70 dark:bg-slate-900/70 flex items-center justify-center overflow-hidden">
+                        {item.isPdf ? (
+                          <div className="flex flex-col items-center gap-1 text-rose-500">
+                            <FileText size={28} />
+                            <span className="text-[10px] font-bold uppercase">PDF</span>
+                          </div>
+                        ) : item.thumbUrl ? (
+                          <img
+                            src={item.thumbUrl}
+                            alt={item.file.name}
+                            draggable={false}
+                            className="w-full h-full object-contain bg-white dark:bg-slate-950"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center animate-pulse">
+                            <ImageIcon size={22} className="text-cyan-500/60" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Pie: nombre + tamaño + flechas rápidas */}
+                      <div className="p-1.5 space-y-1 bg-white/70 dark:bg-slate-900/50 border-t border-[var(--border)]">
+                        <p className="text-[10px] font-semibold text-[var(--foreground)] truncate" title={item.file.name}>
+                          {item.file.name}
+                        </p>
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[9px] text-[var(--secondary)] font-mono">
+                            {(item.file.size / (1024 * 1024)).toFixed(2)} MB
+                          </span>
+                          {studyItems.length > 1 && (
+                            <div className="flex items-center gap-0.5">
+                              <button
+                                type="button"
+                                disabled={enviandoEstudio || idx === 0}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  moveStudyItem(idx, idx - 1)
+                                }}
+                                title="Mover antes"
+                                className="p-0.5 rounded hover:bg-cyan-500/15 text-[var(--secondary)] hover:text-cyan-600 disabled:opacity-25"
+                              >
+                                <ArrowLeft size={12} />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={enviandoEstudio || idx === studyItems.length - 1}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  moveStudyItem(idx, idx + 1)
+                                }}
+                                title="Mover después"
+                                className="p-0.5 rounded hover:bg-cyan-500/15 text-[var(--secondary)] hover:text-cyan-600 disabled:opacity-25"
+                              >
+                                <ArrowRight size={12} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  ))}
+                  )
+                }
+
+                const chunks: { sheetIndex: number; items: { item: StudyFileItem; globalIdx: number }[] }[] = []
+                if (mostrarAgrupado2x2) {
+                  for (let i = 0; i < studyItems.length; i += 4) {
+                    chunks.push({
+                      sheetIndex: Math.floor(i / 4) + 1,
+                      items: studyItems.slice(i, i + 4).map((item, offset) => ({
+                        item,
+                        globalIdx: i + offset
+                      }))
+                    })
+                  }
+                }
+
+                return (
+                  <div className="space-y-3">
+                    {/* Toolbar de ordenamiento */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-slate-100/80 dark:bg-slate-800/50 border border-[var(--border)]">
+                      <span className="text-[11px] font-semibold text-[var(--foreground)]">
+                        {studyItems.length} {studyItems.length === 1 ? 'archivo' : 'archivos'} •{' '}
+                        <span className="font-mono text-[var(--secondary)]">
+                          {(studyItems.reduce((a, i) => a + i.file.size, 0) / (1024 * 1024)).toFixed(2)} MB
+                        </span>
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {studyItems.length > 1 && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={enviandoEstudio}
+                              onClick={() => sortAllStudyItems('asc')}
+                              className="px-2 py-1 rounded-lg text-[11px] font-semibold bg-white dark:bg-slate-900 border border-[var(--border)] hover:border-cyan-500/50 text-[var(--foreground)] flex items-center gap-1 disabled:opacity-40"
+                              title="Ordenar por nombre ascendente (A→Z)"
+                            >
+                              <ArrowDownAZ size={13} className="text-cyan-600" />
+                              A→Z
+                            </button>
+                            <button
+                              type="button"
+                              disabled={enviandoEstudio}
+                              onClick={() => sortAllStudyItems('desc')}
+                              className="px-2 py-1 rounded-lg text-[11px] font-semibold bg-white dark:bg-slate-900 border border-[var(--border)] hover:border-cyan-500/50 text-[var(--foreground)] flex items-center gap-1 disabled:opacity-40"
+                              title="Ordenar por nombre descendente (Z→A)"
+                            >
+                              <ArrowUpZA size={13} className="text-cyan-600" />
+                              Z→A
+                            </button>
+                            <button
+                              type="button"
+                              disabled={enviandoEstudio}
+                              onClick={reverseStudyItems}
+                              className="px-2 py-1 rounded-lg text-[11px] font-semibold bg-white dark:bg-slate-900 border border-[var(--border)] hover:border-cyan-500/50 text-[var(--foreground)] flex items-center gap-1 disabled:opacity-40"
+                              title="Invertir el orden actual"
+                            >
+                              <ArrowUpDown size={13} className="text-cyan-600" />
+                              Invertir
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          disabled={enviandoEstudio}
+                          onClick={clearStudyItems}
+                          className="px-2 py-1 rounded-lg text-[11px] font-semibold bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 text-rose-600 dark:text-rose-400 flex items-center gap-1 disabled:opacity-40"
+                        >
+                          <Trash2 size={12} />
+                          Limpiar
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Grilla: agrupada 2x2 por hoja o secuencia continua */}
+                    {mostrarAgrupado2x2 ? (
+                      <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                        {chunks.map((chunk) => {
+                          const startNum = chunk.items[0].globalIdx + 1
+                          const endNum = chunk.items[chunk.items.length - 1].globalIdx + 1
+                          return (
+                            <div
+                              key={chunk.sheetIndex}
+                              className="p-2.5 rounded-xl bg-indigo-500/5 border border-indigo-500/25 space-y-2"
+                            >
+                              <div className="flex items-center justify-between text-[11px] font-bold text-indigo-600 dark:text-indigo-300 px-0.5">
+                                <span>
+                                  Hoja {chunk.sheetIndex} (Tomas #{startNum}–#{endNum})
+                                </span>
+                                {aplicarCaratula && (
+                                  <span className="text-[10px] font-normal text-[var(--secondary)]">
+                                    Pág. {chunk.sheetIndex + 1} del PDF
+                                  </span>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-2 gap-2.5">
+                                {chunk.items.map(({ item, globalIdx }) => renderThumbCard(item, globalIdx))}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-[460px] overflow-y-auto pr-1">
+                        {studyItems.map((item, idx) => renderThumbCard(item, idx))}
+                      </div>
+                    )}
 
                   {/* Opción de consolidar imágenes en 1 PDF y Grilla 2x2 */}
                   {selectedFiles.every(f => f.type.startsWith('image/') || /\.(jpg|jpeg|png)$/i.test(f.name)) && (
@@ -1841,8 +2192,9 @@ export default function EstudiosTecnicosPage() {
                       )}
                     </div>
                   )}
-                </div>
-              )}
+                  </div>
+                )
+              })()}
 
               {/* Observaciones opcionales */}
               <div>
