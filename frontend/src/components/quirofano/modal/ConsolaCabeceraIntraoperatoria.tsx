@@ -21,6 +21,8 @@ import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
 import ModalPausaQuirurgicaOms from './ModalPausaQuirurgicaOms'
 import ModalCartelesPechoA4 from './ModalCartelesPechoA4'
+import ModalRevertirOperado from '../ModalRevertirOperado'
+import { usePermissions } from '@/hooks/usePermissions'
 import { Printer } from 'lucide-react'
 
 interface ConsolaCabeceraProps {
@@ -41,6 +43,9 @@ export default function ConsolaCabeceraIntraoperatoria({
   const [subiendoGeclisa, setSubiendoGeclisa] = useState(false)
   const [desvinculandoGeclisa, setDesvinculandoGeclisa] = useState(false)
   const [mostrarCartelPecho, setMostrarCartelPecho] = useState(false)
+  const [mostrarRevertirOperado, setMostrarRevertirOperado] = useState(false)
+  const { can } = usePermissions()
+  const puedeRevertirOperado = can('quirofano-en-vivo', 'revertir_operado')
 
   const estado = turno.estado || 'programado'
   const esProgramado = estado === 'programado'
@@ -337,6 +342,17 @@ export default function ConsolaCabeceraIntraoperatoria({
                 <Check size={15} className="text-emerald-400" />
                 <span>Cirugía Concluida</span>
               </span>
+              {puedeRevertirOperado && (
+                <button
+                  type="button"
+                  onClick={() => setMostrarRevertirOperado(true)}
+                  className="px-3 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                  title="Revertir estado operado (requiere permiso de rol y motivo)"
+                >
+                  <Undo2 size={14} />
+                  <span>Revertir Operado</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -398,6 +414,22 @@ export default function ConsolaCabeceraIntraoperatoria({
           )}
         </div>
       </div>
+
+      {/* Modal de Reversión de Turno Operado */}
+      <ModalRevertirOperado
+        isOpen={mostrarRevertirOperado}
+        turno={turno}
+        onClose={() => setMostrarRevertirOperado(false)}
+        onRevertido={(turnoActualizado, advertencias) => {
+          setMostrarRevertirOperado(false)
+          if (onTurnoActualizado && turnoActualizado) {
+            onTurnoActualizado({ ...turno, ...turnoActualizado })
+          }
+          if (advertencias && advertencias.length > 0) {
+            alert(advertencias.join('\n'))
+          }
+        }}
+      />
 
       {/* Modal de Pausa Quirúrgica OMS */}
       <ModalPausaQuirurgicaOms

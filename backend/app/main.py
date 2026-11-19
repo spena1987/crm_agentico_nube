@@ -168,6 +168,7 @@ from app.db import (
     actualizar_item_catalogo_maestro,
     eliminar_item_catalogo_maestro,
     cambiar_estado_turno_quirofano,
+    revertir_turno_operado,
     suspender_o_reprogramar_turno_quirofano,
     subir_consentimiento_turno_a_geclisa,
     subir_parte_quirurgico_turno_a_geclisa,
@@ -449,7 +450,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-from app.auth import AuthSecurityMiddleware, verify_webhook_secret, get_optional_user, get_current_user
+from app.auth import AuthSecurityMiddleware, verify_webhook_secret, get_optional_user, get_current_user, verificar_permiso_usuario
 
 # Configuración de CORS estricta y compatible con credenciales W3C (evita el error 'Failed to fetch')
 default_origins = [
@@ -6294,6 +6295,27 @@ def crear_turno(request: Request, payload: Dict[str, Any] = Body(...)):
         forzar_conflicto = payload.get("forzar_conflicto_cirujano", False)
 
         if qid and fecha and hora:
+            # Validar inmutabilidad de agenda en turnos ya operados antes de verificar solapamiento
+            try:
+                from app.db import supabase as _sb_op
+                if _sb_op:
+                    _r_op = _sb_op.table("turnos_quirofano").select("estado, fecha_cirugia, hora_inicio, quirofano_id, duracion_minutos").eq("id", turno_id).limit(1).execute()
+                    if _r_op.data and _r_op.data[0].get("estado") == "operado":
+                        _tp = _r_op.data[0]
+                        if (
+                            str(fecha).strip() != str(_tp.get("fecha_cirugia") or "").strip()
+                            or str(hora).strip()[:5] != str(_tp.get("hora_inicio") or "").strip()[:5]
+                            or str(qid).strip() != str(_tp.get("quirofano_id") or "").strip()
+                            or (payload.get("duracion_minutos") is not None and int(payload.get("duracion_minutos")) != int(_tp.get("duracion_minutos") or 20))
+                        ):
+                            raise HTTPException(
+                                status_code=409,
+                                detail="No se puede modificar fecha, horario, duración ni sala de un turno que ya fue marcado como operado. Debe revertirlo primero desde la Pizarra en Vivo o crear un nuevo turno."
+                            )
+            except HTTPException:
+                raise
+            except Exception:
+                pass
             conflicto = verificar_solapamiento_turno_quirofano(
                 quirofano_id=qid,
                 fecha_cirugia=fecha,
@@ -6339,6 +6361,27 @@ def actualizar_turno(turno_id: str, request: Request, payload: Dict[str, Any] = 
         forzar_conflicto = payload.get("forzar_conflicto_cirujano", False)
 
         if qid and fecha and hora:
+            # Validar inmutabilidad de agenda en turnos ya operados antes de verificar solapamiento
+            try:
+                from app.db import supabase as _sb_op
+                if _sb_op:
+                    _r_op = _sb_op.table("turnos_quirofano").select("estado, fecha_cirugia, hora_inicio, quirofano_id, duracion_minutos").eq("id", turno_id).limit(1).execute()
+                    if _r_op.data and _r_op.data[0].get("estado") == "operado":
+                        _tp = _r_op.data[0]
+                        if (
+                            str(fecha).strip() != str(_tp.get("fecha_cirugia") or "").strip()
+                            or str(hora).strip()[:5] != str(_tp.get("hora_inicio") or "").strip()[:5]
+                            or str(qid).strip() != str(_tp.get("quirofano_id") or "").strip()
+                            or (payload.get("duracion_minutos") is not None and int(payload.get("duracion_minutos")) != int(_tp.get("duracion_minutos") or 20))
+                        ):
+                            raise HTTPException(
+                                status_code=409,
+                                detail="No se puede modificar fecha, horario, duración ni sala de un turno que ya fue marcado como operado. Debe revertirlo primero desde la Pizarra en Vivo o crear un nuevo turno."
+                            )
+            except HTTPException:
+                raise
+            except Exception:
+                pass
             conflicto = verificar_solapamiento_turno_quirofano(
                 quirofano_id=qid,
                 fecha_cirugia=fecha,
@@ -6362,6 +6405,8 @@ def actualizar_turno(turno_id: str, request: Request, payload: Dict[str, Any] = 
 
         turno = actualizar_turno_quirofano(turno_id, payload)
         return {"success": True, "turno": turno}
+    except CrmConflictError as ce:
+        raise HTTPException(status_code=409, detail=str(ce))
     except HTTPException:
         raise
     except Exception as e:
@@ -6394,6 +6439,8 @@ def eliminar_turno(turno_id: str):
     try:
         ok = eliminar_turno_quirofano(turno_id)
         return {"success": ok}
+    except CrmConflictError as ce:
+        raise HTTPException(status_code=409, detail=str(ce))
     except Exception as e:
         logger.error(f"Error al eliminar turno {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -6423,7 +6470,10 @@ def escanear_qr_turno_api(payload: EscanearQRRequest):
         solo_verificar=payload.solo_verificar
     )
     if not res.get("success"):
-        raise HTTPException(status_code=400, detail=res.get("error") or "Error al procesar el código QR.")
+        raise HTTPException(
+            status_code=res.get("status_code") or 400,
+            detail=res.get("error") or "Error al procesar el código QR."
+        )
     return res
 
 @app.get("/api/turnos-quirofano/{turno_id}/datos-pulsera")
@@ -7951,6 +8001,11 @@ def confirmar_pausa_oms_endpoint(turno_id: str, payload: ConfirmarPausaOmsPayloa
         turno_actual = get_turno_quirofano_by_id(turno_id)
         if not turno_actual:
             raise HTTPException(status_code=404, detail="Turno quirúrgico no encontrado")
+        if turno_actual.get("estado") == "operado":
+            raise HTTPException(
+                status_code=409,
+                detail="No se puede iniciar cirugía sobre un turno ya marcado como operado. Debe revertirlo primero."
+            )
 
         # 2. Preparar payload de actualización
         update_data: Dict[str, Any] = {
@@ -9003,13 +9058,51 @@ def cambiar_estado_turno_endpoint(turno_id: str, payload: CambiarEstadoPayload):
             observaciones_intraoperatorias=payload.observaciones_intraoperatorias,
         )
         if not res.get("success"):
-            raise HTTPException(status_code=400, detail=res.get("error") or "Error al actualizar estado")
+            raise HTTPException(
+                status_code=res.get("status_code") or 400,
+                detail=res.get("error") or "Error al actualizar estado"
+            )
         return res
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error en endpoint cambiar estado {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class RevertirOperadoPayload(BaseModel):
+    estado_destino: str = "en_operacion"
+    motivo: str
+    desvincular_geclisa: bool = False
+
+
+@app.post("/api/turnos-quirofano/{turno_id}/revertir-operado")
+def revertir_operado_endpoint(turno_id: str, request: Request, payload: RevertirOperadoPayload):
+    """
+    Ruta canónica única para revertir un turno quirúrgico marcado como 'operado',
+    protegida por permiso de rol (quirofano-en-vivo:revertir_operado) en backend.
+    """
+    user_info = getattr(request.state, "user", None) or {}
+    if not verificar_permiso_usuario(user_info, "quirofano-en-vivo", "revertir_operado"):
+        raise HTTPException(
+            status_code=403,
+            detail="Su rol no tiene permiso para revertir cirugías marcadas como operadas."
+        )
+
+    res = revertir_turno_operado(
+        turno_id=turno_id,
+        estado_destino=payload.estado_destino,
+        motivo=payload.motivo,
+        usuario_id=user_info.get("sub"),
+        usuario_nombre=user_info.get("email") or user_info.get("nombre") or "Operador Quirófano",
+        desvincular_geclisa=payload.desvincular_geclisa,
+    )
+    if not res.get("success"):
+        raise HTTPException(
+            status_code=res.get("status_code") or 400,
+            detail=res.get("error") or "Error al revertir turno operado"
+        )
+    return res
 
 @app.post("/api/turnos-quirofano/{turno_id}/revertir-recepcion")
 @app.put("/api/turnos-quirofano/{turno_id}/revertir-recepcion")

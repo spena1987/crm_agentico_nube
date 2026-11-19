@@ -197,6 +197,68 @@ async def get_optional_user(
     except HTTPException:
         return None
 
+
+def verificar_permiso_usuario(
+    user_payload: Optional[Dict[str, Any]],
+    modulo_codigo: str,
+    accion_codigo: str
+) -> bool:
+    """
+    Verifica en Supabase (usuarios_perfil -> roles -> rol_permisos) si el usuario
+    autenticado posee permiso para (modulo_codigo, accion_codigo).
+    Falla cerrado (False) si falta 'sub', perfil inactivo/inexistente o permiso no asignado.
+    Los roles con codigo 'admin' o 'superadmin' tienen acceso total.
+    """
+    if not user_payload or not isinstance(user_payload, dict):
+        return False
+    auth_user_id = (user_payload.get("sub") or "").strip()
+    if not auth_user_id:
+        return False
+
+    try:
+        from app.db import supabase
+        if not supabase:
+            return False
+
+        p_res = (
+            supabase.table("usuarios_perfil")
+            .select("id, rol_id, activo, roles(id, codigo)")
+            .eq("auth_user_id", auth_user_id)
+            .limit(1)
+            .execute()
+        )
+        if not p_res.data:
+            return False
+
+        perfil = p_res.data[0]
+        if perfil.get("activo") is False:
+            return False
+
+        rol_obj = perfil.get("roles") or {}
+        if isinstance(rol_obj, list):
+            rol_obj = rol_obj[0] if rol_obj else {}
+        rol_codigo = (rol_obj.get("codigo") or "").strip().lower()
+        if rol_codigo in ("admin", "superadmin"):
+            return True
+
+        rol_id = perfil.get("rol_id")
+        if not rol_id:
+            return False
+
+        perm_res = (
+            supabase.table("rol_permisos")
+            .select("id, modulos!inner(codigo)")
+            .eq("rol_id", rol_id)
+            .eq("accion", accion_codigo)
+            .eq("modulos.codigo", modulo_codigo)
+            .limit(1)
+            .execute()
+        )
+        return bool(perm_res.data)
+    except Exception as e:
+        logger.warning(f"Error verificando permiso ({modulo_codigo}:{accion_codigo}) para {auth_user_id}: {e}")
+        return False
+
 async def verify_webhook_secret(request: Request) -> bool:
     """
     Valida que los eventos entrantes a los webhooks autorizados de WhatsApp provengan

@@ -233,12 +233,22 @@ export default function TabProgramacionLio({
         </div>
       </div>
 
+      {turno?.estado === 'operado' && (
+        <div className="p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-800 dark:text-amber-200 font-semibold flex items-center gap-2">
+          <AlertTriangle size={15} className="text-amber-500 shrink-0" />
+          <span>
+            Turno concluido (Operado). La sala de quirófano está bloqueada. Podés seguir editando los datos clínicos post-operatorios, trazabilidad de LIO y notas.
+          </span>
+        </div>
+      )}
+
       {/* Selector de Quirófano, Ojo y Anestesia */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Sala de Quirófano */}
         <div>
           <label className="block text-xs font-bold text-[var(--foreground)] mb-1">Sala de Quirófano</label>
           <select
+            disabled={turno?.estado === 'operado'}
             value={formData.quirofano_id}
             onChange={(e) => setFormData({ ...formData, quirofano_id: e.target.value })}
             className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--background)] text-xs font-semibold focus:ring-2 focus:ring-blue-500 outline-none"

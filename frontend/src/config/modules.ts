@@ -108,6 +108,7 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
     actions: [
       { code: 'ver', label: 'Ver Pizarra en Vivo', description: 'Visualizar el estado intraoperatorio en tiempo real' },
       { code: 'actualizar_estado_paciente', label: 'Actualizar Estado Quirófano', description: 'Mover paciente (en espera, anestesia, cirugía, recuperación)' },
+      { code: 'revertir_operado', label: 'Revertir Cirugía Operada', description: 'Retroceder turnos ya marcados como operados en la Pizarra en Vivo' },
     ],
   },
   {

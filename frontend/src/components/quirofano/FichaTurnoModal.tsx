@@ -1528,11 +1528,21 @@ export default function FichaTurnoModal({
               )}
             </div>
 
+            {turno?.estado === 'operado' && (
+              <div className="p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-800 dark:text-amber-200 font-semibold flex items-center gap-2">
+                <AlertTriangle size={15} className="text-amber-500 shrink-0" />
+                <span>
+                  Turno concluido (Operado). Fecha, horario, duración y sala están bloqueados para preservar la trazabilidad médico-legal. Para reprogramar o corregir, revertí el estado desde Pizarra en Vivo (si tu rol tiene permiso) o creá un nuevo turno.
+                </span>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
               {/* 1. Quirófano / Sala */}
               <div>
                 <label className="text-[11px] font-semibold text-[var(--secondary)]">Quirófano / Sala *</label>
                 <select
+                  disabled={turno?.estado === 'operado'}
                   value={formData.quirofano_id}
                   onChange={(e) => {
                     const nuevoQId = e.target.value
@@ -1565,6 +1575,7 @@ export default function FichaTurnoModal({
                 </div>
                 <input
                   type="date"
+                  disabled={turno?.estado === 'operado'}
                   value={formData.fecha_cirugia}
                   onChange={(e) => setFormData({ ...formData, fecha_cirugia: e.target.value })}
                   className={`w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border text-xs font-mono font-bold outline-none transition-all ${
@@ -1585,6 +1596,7 @@ export default function FichaTurnoModal({
                   </span>
                 </label>
                 <select
+                  disabled={turno?.estado === 'operado'}
                   value={formData.hora_inicio}
                   onChange={(e) => setFormData({ ...formData, hora_inicio: e.target.value })}
                   className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-mono font-bold outline-none focus:border-blue-500"
@@ -1612,6 +1624,7 @@ export default function FichaTurnoModal({
                 <label className="text-[11px] font-semibold text-[var(--secondary)]">Duración en Minutos *</label>
                 <input
                   type="number"
+                  disabled={turno?.estado === 'operado'}
                   min={5}
                   step={5}
                   value={formData.duracion_minutos}

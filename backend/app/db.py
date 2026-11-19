@@ -9385,12 +9385,39 @@ def actualizar_turno_quirofano(turno_id: str, datos: Dict[str, Any]) -> Dict[str
     try:
         datos_orig = dict(datos)
         turno_previo = None
-        if not datos_orig.get("asesoria_id"):
-            try:
-                rp = supabase.table("turnos_quirofano").select("asesoria_id, lio_calculado, lio_calculado_at, lio_calculado_por, lio_calculo_opciones").eq("id", turno_id).limit(1).execute()
-                turno_previo = rp.data[0] if rp.data else None
-            except Exception:
-                turno_previo = None
+        try:
+            rp = (
+                supabase.table("turnos_quirofano")
+                .select("estado, fecha_cirugia, hora_inicio, quirofano_id, duracion_minutos, asesoria_id, lio_calculado, lio_calculado_at, lio_calculado_por, lio_calculo_opciones")
+                .eq("id", turno_id)
+                .limit(1)
+                .execute()
+            )
+            turno_previo = rp.data[0] if rp.data else None
+        except Exception:
+            turno_previo = None
+
+        if turno_previo and turno_previo.get("estado") == "operado":
+            cambios_agenda = []
+            if "fecha_cirugia" in datos_orig and datos_orig["fecha_cirugia"] is not None:
+                if str(datos_orig["fecha_cirugia"]).strip() != str(turno_previo.get("fecha_cirugia") or "").strip():
+                    cambios_agenda.append("fecha_cirugia")
+            if "hora_inicio" in datos_orig and datos_orig["hora_inicio"] is not None:
+                if str(datos_orig["hora_inicio"]).strip()[:5] != str(turno_previo.get("hora_inicio") or "").strip()[:5]:
+                    cambios_agenda.append("hora_inicio")
+            if "quirofano_id" in datos_orig and datos_orig["quirofano_id"] is not None:
+                if str(datos_orig["quirofano_id"]).strip() != str(turno_previo.get("quirofano_id") or "").strip():
+                    cambios_agenda.append("quirofano_id")
+            if "duracion_minutos" in datos_orig and datos_orig["duracion_minutos"] is not None:
+                try:
+                    if int(datos_orig["duracion_minutos"]) != int(turno_previo.get("duracion_minutos") or 20):
+                        cambios_agenda.append("duracion_minutos")
+                except (TypeError, ValueError):
+                    cambios_agenda.append("duracion_minutos")
+            if cambios_agenda:
+                raise CrmConflictError(
+                    "No se puede modificar fecha, horario, duración ni sala de un turno que ya fue marcado como operado. Debe revertirlo primero desde la Pizarra en Vivo o crear un nuevo turno."
+                )
 
         payload = {k: v for k, v in datos_orig.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
         payload["updated_at"] = "now()"
@@ -9438,6 +9465,8 @@ def actualizar_turno_quirofano(turno_id: str, datos: Dict[str, Any]) -> Dict[str
             logger.warning(f"Aviso recuperando joins de turno {turno_id}: {e_full}")
 
         return _hidratar_lio_metadata_turno(turno_actualizado)
+    except CrmConflictError:
+        raise
     except Exception as e:
         logger.error(f"Error al actualizar turno de quirófano: {e}")
         return {}
@@ -9487,9 +9516,13 @@ def eliminar_turno_quirofano(turno_id: str) -> bool:
     if not supabase or not turno_id:
         return False
     try:
-        # Obtener turno antes de borrar para saber si tenía asesoría vinculada
-        res_t = supabase.table("turnos_quirofano").select("asesoria_id, ojo").eq("id", turno_id).limit(1).execute()
+        # Obtener turno antes de borrar para verificar bloqueo operado y si tenía asesoría vinculada
+        res_t = supabase.table("turnos_quirofano").select("estado, asesoria_id, ojo").eq("id", turno_id).limit(1).execute()
         turno_previo = res_t.data[0] if res_t.data else None
+        if turno_previo and turno_previo.get("estado") == "operado":
+            raise CrmConflictError(
+                "No se puede eliminar un turno que ya fue marcado como operado. Debe revertirlo primero desde la Pizarra en Vivo."
+            )
         asesoria_id = turno_previo.get("asesoria_id") if turno_previo else None
 
         supabase.table("turnos_quirofano").delete().eq("id", turno_id).execute()
@@ -9510,6 +9543,8 @@ def eliminar_turno_quirofano(turno_id: str) -> bool:
                 sincronizar_asesoria_desde_quirofano(asesoria_id, turnos_rest[0], nuevo_estado="programado")
 
         return True
+    except CrmConflictError:
+        raise
     except Exception as e:
         logger.error(f"Error al eliminar turno de quirófano: {e}")
         return False
@@ -9663,14 +9698,18 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                 **lio_p1,
             }
             if turno_p1:
-                # Actualizar turno existente preservando estado si ya avanzó en quirófano
-                if turno_p1.get("estado") in ["en_espera", "pre_quirofano", "en_operacion", "operado"]:
-                    datos_turno_1["estado"] = turno_p1.get("estado")
-                payload_upd = {k: v for k, v in datos_turno_1.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
-                payload_upd["updated_at"] = "now()"
-                upd_res = supabase.table("turnos_quirofano").update(payload_upd).eq("id", turno_p1["id"]).execute()
-                if upd_res.data:
-                    turnos_procesados.append(upd_res.data[0])
+                if turno_p1.get("estado") == "operado":
+                    # Invariante: nunca sobrescribir agenda ni estado de un turno ya operado desde Asesoramiento
+                    turnos_procesados.append(turno_p1)
+                else:
+                    # Actualizar turno existente preservando estado si ya avanzó en quirófano
+                    if turno_p1.get("estado") in ["en_espera", "pre_quirofano", "en_operacion"]:
+                        datos_turno_1["estado"] = turno_p1.get("estado")
+                    payload_upd = {k: v for k, v in datos_turno_1.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
+                    payload_upd["updated_at"] = "now()"
+                    upd_res = supabase.table("turnos_quirofano").update(payload_upd).eq("id", turno_p1["id"]).execute()
+                    if upd_res.data:
+                        turnos_procesados.append(upd_res.data[0])
             else:
                 # Heredar consentimiento previo asentado en asesorias_quirurgicas
                 c1_chk = (checklist.get(f"_consentimiento_qx_{ojo_p1}") if es_bilateral_escalonada else None) or checklist.get("_consentimiento_qx") or {}
@@ -9721,14 +9760,18 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                     **lio_p2,
                 }
                 if turno_p2:
-                    # Actualizar turno existente preservando estado si ya avanzó en quirófano
-                    if turno_p2.get("estado") in ["en_espera", "pre_quirofano", "en_operacion", "operado"]:
-                        datos_turno_2["estado"] = turno_p2.get("estado")
-                    payload_upd2 = {k: v for k, v in datos_turno_2.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
-                    payload_upd2["updated_at"] = "now()"
-                    upd_res2 = supabase.table("turnos_quirofano").update(payload_upd2).eq("id", turno_p2["id"]).execute()
-                    if upd_res2.data:
-                        turnos_procesados.append(upd_res2.data[0])
+                    if turno_p2.get("estado") == "operado":
+                        # Invariante: nunca sobrescribir agenda ni estado de un turno ya operado desde Asesoramiento
+                        turnos_procesados.append(turno_p2)
+                    else:
+                        # Actualizar turno existente preservando estado si ya avanzó en quirófano
+                        if turno_p2.get("estado") in ["en_espera", "pre_quirofano", "en_operacion"]:
+                            datos_turno_2["estado"] = turno_p2.get("estado")
+                        payload_upd2 = {k: v for k, v in datos_turno_2.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
+                        payload_upd2["updated_at"] = "now()"
+                        upd_res2 = supabase.table("turnos_quirofano").update(payload_upd2).eq("id", turno_p2["id"]).execute()
+                        if upd_res2.data:
+                            turnos_procesados.append(upd_res2.data[0])
                 else:
                     c2_chk = checklist.get(f"_consentimiento_qx_{segundo_ojo}") or {}
                     if isinstance(c2_chk, dict):
@@ -12011,6 +12054,12 @@ def cambiar_estado_turno_quirofano(
             return {"success": False, "error": "Turno no encontrado"}
             
         turno_actual = t_resp.data[0]
+        if turno_actual.get("estado") == "operado" and nuevo_estado != "operado":
+            return {
+                "success": False,
+                "status_code": 409,
+                "error": "Un turno operado solo puede revertirse desde la acción autorizada 'Revertir Operado' (POST /api/turnos-quirofano/{turno_id}/revertir-operado)."
+            }
         asesoria_id = turno_actual.get("asesoria_id")
         
         # 2. Preparar payload de actualización con timestamps
@@ -12105,6 +12154,166 @@ def cambiar_estado_turno_quirofano(
     except Exception as e:
         logger.error(f"Error al cambiar estado de turno {turno_id} a {nuevo_estado}: {e}")
         return {"success": False, "error": str(e)}
+
+
+def revertir_turno_operado(
+    turno_id: str,
+    estado_destino: str,
+    motivo: str,
+    usuario_id: Optional[str] = None,
+    usuario_nombre: Optional[str] = None,
+    desvincular_geclisa: bool = False
+) -> Dict[str, Any]:
+    """
+    Ruta canónica única para revertir un turno marcado como 'operado' hacia un estado previo
+    ('programado', 'en_espera', 'pre_quirofano', 'en_operacion').
+    Limpia fin_cirugia_at (y timestamps posteriores según estado_destino), limpia parte_quirurgico_pdf_url,
+    desvincula opcionalmente de Geclisa, resincroniza asesorias_quirurgicas y registra auditoría.
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "status_code": 500, "error": "No database connection"}
+
+    estados_validos = ("programado", "en_espera", "pre_quirofano", "en_operacion")
+    if estado_destino not in estados_validos:
+        return {
+            "success": False,
+            "status_code": 400,
+            "error": f"Estado destino inválido '{estado_destino}'. Valores permitidos: {', '.join(estados_validos)}"
+        }
+
+    motivo_limpio = (motivo or "").strip()
+    if not motivo_limpio:
+        return {
+            "success": False,
+            "status_code": 400,
+            "error": "El motivo de reversión es obligatorio."
+        }
+
+    try:
+        t_resp = supabase.table("turnos_quirofano").select("*").eq("id", turno_id).limit(1).execute()
+        if not t_resp.data:
+            return {"success": False, "status_code": 404, "error": "Turno no encontrado"}
+
+        turno_actual = t_resp.data[0]
+        if turno_actual.get("estado") != "operado":
+            return {
+                "success": False,
+                "status_code": 409,
+                "error": f"El turno no está en estado 'operado' (estado actual: {turno_actual.get('estado')})."
+            }
+
+        asesoria_id = turno_actual.get("asesoria_id")
+        update_payload: Dict[str, Any] = {
+            "estado": estado_destino,
+            "parte_quirurgico_pdf_url": None,
+            "fin_cirugia_at": None,
+            "updated_at": "now()",
+        }
+
+        if estado_destino == "programado":
+            update_payload["llegada_at"] = None
+            update_payload["ingreso_pre_quirofano_at"] = None
+            update_payload["inicio_cirugia_at"] = None
+        elif estado_destino == "en_espera":
+            update_payload["ingreso_pre_quirofano_at"] = None
+            update_payload["inicio_cirugia_at"] = None
+        elif estado_destino == "pre_quirofano":
+            update_payload["inicio_cirugia_at"] = None
+
+        t_upd = supabase.table("turnos_quirofano").update(update_payload).eq("id", turno_id).execute()
+        turno_modificado = t_upd.data[0] if t_upd.data else {**turno_actual, **update_payload}
+
+        # Limpiar parte_quirurgico_pdf_url en asesorias_quirurgicas solo si no hay otro turno hermano operado
+        if asesoria_id:
+            try:
+                otros_op = (
+                    supabase.table("turnos_quirofano")
+                    .select("id")
+                    .eq("asesoria_id", asesoria_id)
+                    .eq("estado", "operado")
+                    .neq("id", turno_id)
+                    .limit(1)
+                    .execute()
+                )
+                if not otros_op.data:
+                    supabase.table("asesorias_quirurgicas").update({
+                        "parte_quirurgico_pdf_url": None,
+                        "updated_at": "now()",
+                    }).eq("id", asesoria_id).execute()
+            except Exception as e_pdf_as:
+                logger.warning(f"Aviso limpiando parte_quirurgico_pdf_url en asesoría {asesoria_id}: {e_pdf_as}")
+
+            evaluar_y_sincronizar_estado_caso_quirurgico(asesoria_id, turno_modificado, estado_destino)
+
+        advertencias: List[str] = []
+        if desvincular_geclisa and turno_actual.get("parte_quirurgico_geclisa_archivo_id"):
+            try:
+                res_g = desvincular_documento_geclisa_turno(turno_id, "parte_quirurgico")
+                if not res_g.get("success"):
+                    advertencias.append(
+                        f"El turno se revirtió en el CRM, pero no se pudo eliminar el archivo en Geclisa: {res_g.get('error') or 'Error externo'}"
+                    )
+                elif res_g.get("turno"):
+                    turno_modificado = {**turno_modificado, **res_g["turno"]}
+            except Exception as e_g:
+                advertencias.append(f"El turno se revirtió en el CRM, pero falló la desvinculación en Geclisa: {e_g}")
+
+        # Auditoría en system_logs y asesoria_evoluciones
+        op_nombre = (usuario_nombre or "Operador Quirófano").strip()
+        try:
+            supabase.table("system_logs").insert({
+                "modulo": "QUIROFANO",
+                "accion": "REVERSION_TURNO_OPERADO",
+                "detalles": {
+                    "turno_id": turno_id,
+                    "asesoria_id": asesoria_id,
+                    "paciente_id": turno_actual.get("paciente_id"),
+                    "estado_anterior": "operado",
+                    "estado_destino": estado_destino,
+                    "motivo": motivo_limpio,
+                    "usuario_id": usuario_id,
+                    "usuario_nombre": op_nombre,
+                    "desvincular_geclisa": desvincular_geclisa,
+                },
+            }).execute()
+        except Exception as e_log:
+            logger.warning(f"No se pudo registrar auditoría en system_logs para reversión {turno_id}: {e_log}")
+
+        if asesoria_id:
+            try:
+                supabase.table("asesoria_evoluciones").insert({
+                    "asesoria_id": asesoria_id,
+                    "paciente_id": turno_actual.get("paciente_id"),
+                    "usuario_nombre": op_nombre,
+                    "tipo_contacto": "SISTEMA_QUIROFANO",
+                    "contenido": f"Reversión de cirugía marcada como operada hacia '{estado_destino}'. Motivo: {motivo_limpio}",
+                }).execute()
+            except Exception as e_ev:
+                logger.warning(f"No se pudo registrar evolución de reversión en asesoría {asesoria_id}: {e_ev}")
+
+        # Enriquecer retorno con joins para preservar pacientes y quirofanos en la Pizarra
+        try:
+            res_full = (
+                supabase.table("turnos_quirofano")
+                .select("*, pacientes(id, nombre, dni, telefono, obra_social, email, fecha_nacimiento), quirofanos(id, nombre, codigo, color, duracion_slot_minutos, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(id, estado, ojo, codigo_caso, lio_calculado, lio_calculo_opciones, lente_lote, lente_serie, lente_vencimiento, indicaciones_pdf_url, observaciones_intraoperatorias)")
+                .eq("id", turno_id)
+                .limit(1)
+                .execute()
+            )
+            if res_full.data:
+                turno_modificado = res_full.data[0]
+        except Exception as e_full:
+            logger.warning(f"Aviso recuperando joins tras reversión de turno {turno_id}: {e_full}")
+
+        return {
+            "success": True,
+            "turno": turno_modificado,
+            "nuevo_estado": estado_destino,
+            "advertencias": advertencias,
+        }
+    except Exception as e:
+        logger.error(f"Error revirtiendo turno operado {turno_id}: {e}")
+        return {"success": False, "status_code": 500, "error": str(e)}
 
 def suspender_o_reprogramar_turno_quirofano(turno_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -13463,6 +13672,13 @@ def procesar_escaneo_qr_turno(
                 nuevo_estado = "operado"
             elif estado_anterior == "operado":
                 nuevo_estado = "operado"
+
+        if not solo_verificar and estado_anterior == "operado" and nuevo_estado != "operado":
+            return {
+                "success": False,
+                "status_code": 409,
+                "error": "No se puede revertir un turno operado mediante escaneo QR. Use la acción autorizada 'Revertir Operado' en la Pizarra en Vivo."
+            }
         else:
             # Cascada general por defecto
             if estado_anterior == "programado":
@@ -13475,6 +13691,13 @@ def procesar_escaneo_qr_turno(
                 nuevo_estado = "operado"
             elif estado_anterior == "operado":
                 nuevo_estado = "operado"
+
+        if not solo_verificar and estado_anterior == "operado" and nuevo_estado != "operado":
+            return {
+                "success": False,
+                "status_code": 409,
+                "error": "No se puede revertir un turno operado mediante escaneo QR. Use la acción autorizada 'Revertir Operado' en la Pizarra en Vivo."
+            }
                 
         # Actualizar en Supabase si hubo cambio de estado o registrar timestamp
         from datetime import datetime, timezone

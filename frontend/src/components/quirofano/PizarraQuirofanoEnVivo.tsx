@@ -69,6 +69,8 @@ import ModalCartelesPechoA4 from './modal/ModalCartelesPechoA4'
 import ModalEnvioAgendasPrestadores from './ModalEnvioAgendasPrestadores'
 import ModalPlanillaQuirurgicaA4 from './modal/ModalPlanillaQuirurgicaA4'
 import ModalSuspenderReprogramarTurno from './ModalSuspenderReprogramarTurno'
+import ModalRevertirOperado from './ModalRevertirOperado'
+import { usePermissions } from '@/hooks/usePermissions'
 
 interface PizarraQuirofanoEnVivoProps {
   onEditarTurno?: (turno: any) => void
@@ -148,6 +150,8 @@ export default function PizarraQuirofanoEnVivo({
 }: PizarraQuirofanoEnVivoProps) {
   const [fecha, setFecha] = useState<string>(() => getFechaHoyLocal())
   const { user } = useAuth()
+  const { can } = usePermissions()
+  const puedeRevertirOperado = can('quirofano-en-vivo', 'revertir_operado')
   const currentUserName = (user?.user_metadata?.nombre || user?.user_metadata?.full_name || '').trim()
 
   const [quirofanoFiltro, setQuirofanoFiltro] = useState<string>('todos')
@@ -169,6 +173,7 @@ export default function PizarraQuirofanoEnVivo({
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [turnoModalDetalle, setTurnoModalDetalle] = useState<any | null>(null)
   const [turnoParaPausaOms, setTurnoParaPausaOms] = useState<any | null>(null)
+  const [turnoParaRevertirOperado, setTurnoParaRevertirOperado] = useState<any | null>(null)
   const [subiendoGeclisaId, setSubiendoGeclisaId] = useState<string | null>(null)
   const [desvinculandoGeclisaId, setDesvinculandoGeclisaId] = useState<string | null>(null)
   const [subiendoConsentimientoId, setSubiendoConsentimientoId] = useState<string | null>(null)
@@ -272,7 +277,8 @@ export default function PizarraQuirofanoEnVivo({
     indicacionesModalTurno ||
     mostrarModalAgendasWA ||
     mostrarModalPlanillaA4 ||
-    turnoParaReprogramar
+    turnoParaReprogramar ||
+    turnoParaRevertirOperado
   )
 
   // Motor inteligente de escáner universal (ProSoft S224 / USB HID / Bluetooth)
@@ -1888,6 +1894,20 @@ export default function PizarraQuirofanoEnVivo({
                           <Check size={13} />
                           <span>Concluido</span>
                         </span>
+                        {puedeRevertirOperado && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setTurnoParaRevertirOperado(t)
+                            }}
+                            className="px-2.5 py-1 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-500/40 text-[11px] font-bold flex items-center gap-1 transition"
+                            title="Revertir estado operado (requiere permiso de rol y motivo)"
+                          >
+                            <Undo2 size={12} />
+                            <span>Revertir Operado</span>
+                          </button>
+                        )}
 
                         {/* Píldora de Indicaciones Médicas Postquirúrgicas por WhatsApp */}
                         {t.indicaciones_postqx_enviadas ? (
@@ -2087,6 +2107,28 @@ export default function PizarraQuirofanoEnVivo({
           }}
         />
       )}
+
+      {/* Modal de Reversión de Turno Operado (con permiso por rol) */}
+      <ModalRevertirOperado
+        isOpen={!!turnoParaRevertirOperado}
+        turno={turnoParaRevertirOperado}
+        onClose={() => setTurnoParaRevertirOperado(null)}
+        onRevertido={(turnoActualizado, advertencias) => {
+          setTurnoParaRevertirOperado(null)
+          if (turnoActualizado?.id) {
+            setTurnos((prev) =>
+              prev.map((item) => (item.id === turnoActualizado.id ? { ...item, ...turnoActualizado } : item))
+            )
+            if (turnoModalDetalle?.id === turnoActualizado.id) {
+              setTurnoModalDetalle((prev: any) => (prev ? { ...prev, ...turnoActualizado } : turnoActualizado))
+            }
+          }
+          if (advertencias && advertencias.length > 0) {
+            alert(advertencias.join('\n'))
+          }
+          fetchTurnosDia(true)
+        }}
+      />
 
       {/* 5. MODAL DE PAUSA QUIRÚRGICA OMS (CHECKLIST DE SEGURIDAD PREVIO A INCISIÓN) */}
       {turnoParaPausaOms && (
