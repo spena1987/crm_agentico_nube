@@ -6,6 +6,7 @@ import {
   formatearFechaCirugia,
   requiereLenteSemantico,
   evaluarBloqueLio,
+  obtenerClasePractica,
 } from './cartelesPechoHelpers.ts'
 
 describe('esValorPresente', () => {
@@ -68,7 +69,7 @@ describe('requiereLenteSemantico', () => {
 })
 
 describe('evaluarBloqueLio', () => {
-  it('preserves 0 D diopter and 0° incision/toric axis', () => {
+  it('preserves 0 D diopter and 0° incision/toric axis separated from T value without loteTexto', () => {
     const res = evaluarBloqueLio({
       practica_nombre: 'FACO',
       lleva_lente: true,
@@ -83,9 +84,10 @@ describe('evaluarBloqueLio', () => {
     assert.equal(res.mostrarBloque, true)
     assert.equal(res.dioptriaTexto, '0 D')
     assert.equal(res.incisionTexto, '0°')
-    assert.equal(res.toricoTexto, 'T2 @ 0°')
+    assert.equal(res.toricoValorTexto, 'T2')
+    assert.equal(res.toricoEjeTexto, '0°')
     assert.equal(res.tipoTexto, 'MONOFOCAL')
-    assert.equal(res.loteTexto, 'L123')
+    assert.equal('loteTexto' in res, false)
   })
 
   it('shows S/D for diopter when only lente_tipo is loaded', () => {
@@ -99,7 +101,7 @@ describe('evaluarBloqueLio', () => {
     assert.equal(res.dioptriaTexto, 'S/D')
   })
 
-  it('renders T{valor} without @ when axis is absent', () => {
+  it('returns toricoValorTexto without toricoEjeTexto when axis is absent', () => {
     const res = evaluarBloqueLio({
       practica_nombre: 'FACO',
       lleva_lente: true,
@@ -107,7 +109,20 @@ describe('evaluarBloqueLio', () => {
       lente_torico_valor: '4',
       lente_torico_eje: null,
     })
-    assert.equal(res.toricoTexto, 'T4')
+    assert.equal(res.toricoValorTexto, 'T4')
+    assert.equal(res.toricoEjeTexto, null)
+  })
+
+  it('returns null for toricoEjeTexto when lente_torico_valor is absent', () => {
+    const res = evaluarBloqueLio({
+      practica_nombre: 'FACO',
+      lleva_lente: true,
+      lente_dioptria: '+21.5',
+      lente_torico_valor: null,
+      lente_torico_eje: 90,
+    })
+    assert.equal(res.toricoValorTexto, null)
+    assert.equal(res.toricoEjeTexto, null)
   })
 
   it('returns NO_CALCULADA when procedure requires IOL and none is loaded', () => {
@@ -126,5 +141,31 @@ describe('evaluarBloqueLio', () => {
     })
     assert.equal(res.estado, 'OCULTO')
     assert.equal(res.mostrarBloque, false)
+  })
+})
+
+describe('obtenerClasePractica', () => {
+  it('maps <= 26 chars to lg tier and defaults formato to 3x2', () => {
+    assert.equal(obtenerClasePractica('FACOEMULSIFICACION'), 'sticker-proc-3x2-lg')
+    assert.equal(obtenerClasePractica('A'.repeat(26), '4x2'), 'sticker-proc-4x2-lg')
+  })
+
+  it('maps 27..45 chars to md tier', () => {
+    assert.equal(obtenerClasePractica('A'.repeat(27), '3x2'), 'sticker-proc-3x2-md')
+    assert.equal(obtenerClasePractica('A'.repeat(45), '4x2'), 'sticker-proc-4x2-md')
+  })
+
+  it('maps > 45 chars to sm tier', () => {
+    assert.equal(obtenerClasePractica('A'.repeat(46), '3x2'), 'sticker-proc-3x2-sm')
+    assert.equal(
+      obtenerClasePractica('CATARATA CON FACOEMULSIFICACION E IMPL.LIO PLEGABLE (EN CONVENIO)', '4x2'),
+      'sticker-proc-4x2-sm'
+    )
+  })
+
+  it('collapses extra whitespace and falls back cleanly for empty/null input', () => {
+    assert.equal(obtenerClasePractica('   VITRECTOMIA   POSTERIOR   ', '3x2'), 'sticker-proc-3x2-lg')
+    assert.equal(obtenerClasePractica(null, '4x2'), 'sticker-proc-4x2-lg')
+    assert.equal(obtenerClasePractica('   ', '3x2'), 'sticker-proc-3x2-lg')
   })
 })

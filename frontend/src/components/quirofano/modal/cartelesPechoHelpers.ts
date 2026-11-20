@@ -22,9 +22,9 @@ export interface ResultadoBloqueLio {
   mostrarBloque: boolean
   incisionTexto: string | null
   dioptriaTexto: string
-  toricoTexto: string | null
+  toricoValorTexto: string | null
+  toricoEjeTexto: string | null
   tipoTexto: string | null
-  loteTexto: string | null
 }
 
 /**
@@ -113,16 +113,14 @@ export function evaluarBloqueLio(turno: TurnoCartelLioInput): ResultadoBloqueLio
     ? `${String(turno.lente_dioptria).trim()} D`
     : 'S/D'
 
-  const toricoTexto = esValorPresente(turno.lente_torico_valor)
-    ? `T${String(turno.lente_torico_valor).trim()}${
-        esValorPresente(turno.lente_torico_eje)
-          ? ` @ ${String(turno.lente_torico_eje).trim()}°`
-          : ''
-      }`
-    : null
+  const tieneTorico = esValorPresente(turno.lente_torico_valor)
+  const toricoValorTexto = tieneTorico ? `T${String(turno.lente_torico_valor).trim()}` : null
+  const toricoEjeTexto =
+    tieneTorico && esValorPresente(turno.lente_torico_eje)
+      ? `${String(turno.lente_torico_eje).trim()}°`
+      : null
 
   const tipoTexto = esValorPresente(turno.lente_tipo) ? String(turno.lente_tipo).trim() : null
-  const loteTexto = esValorPresente(turno.lente_lote) ? String(turno.lente_lote).trim() : null
 
   return {
     tieneLioCargado,
@@ -131,8 +129,22 @@ export function evaluarBloqueLio(turno: TurnoCartelLioInput): ResultadoBloqueLio
     mostrarBloque: estado !== 'OCULTO',
     incisionTexto,
     dioptriaTexto,
-    toricoTexto,
+    toricoValorTexto,
+    toricoEjeTexto,
     tipoTexto,
-    loteTexto,
   }
+}
+
+/**
+ * Returns the CSS typography tier class for a surgical procedure name so it fits cleanly within 2 lines.
+ */
+export function obtenerClasePractica(
+  practicaNombre?: string | null,
+  formato: '3x2' | '4x2' = '3x2'
+): string {
+  const limpio = (practicaNombre || 'Cirugía Oftalmológica').trim().replace(/\s+/g, ' ')
+  const texto = limpio || 'Cirugía Oftalmológica'
+  const len = texto.length
+  const tier = len <= 26 ? 'lg' : len <= 45 ? 'md' : 'sm'
+  return `sticker-proc-${formato}-${tier}`
 }

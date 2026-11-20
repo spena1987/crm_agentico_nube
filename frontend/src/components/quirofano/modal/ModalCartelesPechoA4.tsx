@@ -10,7 +10,8 @@ import QRCode from 'qrcode'
 import {
   formatearDniClinico,
   formatearFechaCirugia,
-  evaluarBloqueLio
+  evaluarBloqueLio,
+  obtenerClasePractica
 } from './cartelesPechoHelpers'
 
 interface ModalCartelesPechoA4Props {
@@ -168,29 +169,50 @@ const SHARED_STICKER_CSS = `
     justify-content: center !important;
     flex-shrink: 0 !important;
   }
+  .etiqueta-inner-4x2 {
+    padding: 5px 10px !important;
+  }
+  .qr-quiet-zone-4x2 {
+    padding: 4px !important;
+  }
   .sticker-nombre-3x2 {
     font-size: 21px !important;
     line-height: 1.15 !important;
     font-weight: 900 !important;
   }
   .sticker-nombre-4x2 {
-    font-size: 18px !important;
-    line-height: 1.15 !important;
+    font-size: 17px !important;
+    line-height: 1.12 !important;
     font-weight: 900 !important;
   }
-  .sticker-proc-3x2 {
+  .sticker-proc-3x2-lg {
     font-size: 19px !important;
     line-height: 1.15 !important;
     font-weight: 900 !important;
   }
-  .sticker-proc-4x2 {
-    font-size: 15px !important;
+  .sticker-proc-3x2-md {
+    font-size: 16px !important;
     line-height: 1.15 !important;
     font-weight: 900 !important;
   }
-  .sticker-proc-4x2-expanded {
-    font-size: 18px !important;
-    line-height: 1.2 !important;
+  .sticker-proc-3x2-sm {
+    font-size: 14px !important;
+    line-height: 1.15 !important;
+    font-weight: 900 !important;
+  }
+  .sticker-proc-4x2-lg {
+    font-size: 16px !important;
+    line-height: 1.15 !important;
+    font-weight: 900 !important;
+  }
+  .sticker-proc-4x2-md {
+    font-size: 14px !important;
+    line-height: 1.15 !important;
+    font-weight: 900 !important;
+  }
+  .sticker-proc-4x2-sm {
+    font-size: 12px !important;
+    line-height: 1.12 !important;
     font-weight: 900 !important;
   }
   .sticker-proc-clamp-2 {
@@ -198,6 +220,43 @@ const SHARED_STICKER_CSS = `
     -webkit-line-clamp: 2 !important;
     -webkit-box-orient: vertical !important;
     overflow: hidden !important;
+  }
+  .surgeon-label {
+    display: block !important;
+    font-size: 9.5px !important;
+    line-height: 1.1 !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+  }
+  .surgeon-name-3x2 {
+    display: block !important;
+    font-size: 14px !important;
+    line-height: 1.15 !important;
+    font-weight: 900 !important;
+  }
+  .surgeon-name-4x2 {
+    display: block !important;
+    font-size: 12px !important;
+    line-height: 1.15 !important;
+    font-weight: 900 !important;
+  }
+  .lio-box-4x2 {
+    padding: 3px 6px !important;
+  }
+  .lio-grid-4 {
+    display: grid !important;
+    grid-template-columns: 1fr 1.35fr 0.85fr 0.9fr !important;
+    gap: 4px !important;
+    align-items: center !important;
+    text-align: center !important;
+  }
+  .lio-micro-header {
+    font-size: 9px !important;
+    line-height: 1.1 !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.03em !important;
+    text-transform: uppercase !important;
+    margin-bottom: 2px !important;
   }
   .lio-metric-text-3x2 {
     font-size: 17px !important;
@@ -208,6 +267,16 @@ const SHARED_STICKER_CSS = `
     font-size: 15px !important;
     line-height: 1.1 !important;
     font-weight: 900 !important;
+  }
+  .lio-tipo-3x2 {
+    font-size: 14px !important;
+    line-height: 1.15 !important;
+    font-weight: 800 !important;
+  }
+  .lio-tipo-4x2 {
+    font-size: 12px !important;
+    line-height: 1.15 !important;
+    font-weight: 800 !important;
   }
 `
 
@@ -455,8 +524,8 @@ export default function ModalCartelesPechoA4({
       ${SHARED_STICKER_CSS}
       .w-\\[22mm\\] { width: 22mm; }
       .h-\\[22mm\\] { height: 22mm; }
-      .w-\\[18mm\\] { width: 18mm; }
-      .h-\\[18mm\\] { height: 18mm; }
+      .w-\\[16mm\\] { width: 16mm; }
+      .h-\\[16mm\\] { height: 16mm; }
       /* Clases de alto contraste morfológico para tóner láser monocromático */
       .bg-black { background-color: #000000 !important; color: #ffffff !important; }
       .text-white { color: #ffffff !important; }
@@ -616,20 +685,20 @@ export default function ModalCartelesPechoA4({
         className="etiqueta-pecho-card"
         style={{ boxSizing: 'border-box' }}
       >
-        <div className={`etiqueta-inner ${formato === '3x2' ? 'etiqueta-inner-3x2' : ''} ${innerPolarityClass}`}>
+        <div className={`etiqueta-inner ${formato === '3x2' ? 'etiqueta-inner-3x2' : 'etiqueta-inner-4x2'} ${innerPolarityClass}`}>
           {/* 1. Cabecera con QR Láser + Fecha/Hora, Sala, Código de Turno y Cirujano */}
-          <div className="sticker-header flex items-center gap-2.5 pb-1 border-b">
+          <div className="sticker-header flex items-center gap-2.5 pb-0.5 border-b">
             {/* QR Vectorial con Zona Muda Blanca Garantizada */}
-            <div className="qr-quiet-zone">
+            <div className={`qr-quiet-zone ${formato === '4x2' ? 'qr-quiet-zone-4x2' : ''}`}>
               {qrUrl ? (
                 <img
                   src={qrUrl}
                   alt={`QR ${t.id}`}
-                  className={formato === '3x2' ? 'w-[22mm] h-[22mm]' : 'w-[18mm] h-[18mm]'}
+                  className={formato === '3x2' ? 'w-[22mm] h-[22mm]' : 'w-[16mm] h-[16mm]'}
                   style={{ imageRendering: 'pixelated' }}
                 />
               ) : (
-                <div className={`${formato === '3x2' ? 'w-[22mm] h-[22mm]' : 'w-[18mm] h-[18mm]'} bg-slate-100 flex items-center justify-center text-[8px] font-mono text-black`}>
+                <div className={`${formato === '3x2' ? 'w-[22mm] h-[22mm]' : 'w-[16mm] h-[16mm]'} bg-slate-100 flex items-center justify-center text-[8px] font-mono text-black`}>
                   QR...
                 </div>
               )}
@@ -646,20 +715,23 @@ export default function ModalCartelesPechoA4({
                 </span>
               </div>
 
-              <div className="flex items-center justify-between mt-1 gap-1">
+              <div className="flex items-center justify-between mt-0.5 gap-1">
                 <span className="sticker-muted font-mono text-[10px] font-bold truncate" title={`Código institucional: ${codigoTurnoMostrar}`}>
                   #{codigoTurnoMostrar}
                 </span>
               </div>
 
-              <p className="sticker-muted truncate text-[11px] font-bold mt-0.5">
-                Cirujano: <span className="font-black">{t.cirujano_nombre || 'Asignado'}</span>
-              </p>
+              <div className="mt-0.5">
+                <div className="surgeon-label sticker-muted">CIRUJANO:</div>
+                <div className={`surgeon-name-${formato} sticker-proc-clamp-2`}>
+                  {t.cirujano_nombre || 'Asignado'}
+                </div>
+              </div>
             </div>
           </div>
 
           {/* 2. Nombre del Paciente en Tipografía GIGANTE + DNI y Edad */}
-          <div className="py-0.5">
+          <div>
             <h2
               className={`uppercase tracking-tight ${
                 formato === '3x2' ? 'sticker-nombre-3x2' : 'sticker-nombre-4x2'
@@ -679,7 +751,7 @@ export default function ModalCartelesPechoA4({
 
           {/* 3. INSIGNIA DE OJO A OPERAR — POLARIDAD INVERSA TOTAL */}
           {esOD ? (
-            <div className="eye-badge-od text-center font-black py-1 px-2 text-base tracking-wider uppercase rounded-xs">
+            <div className="eye-badge-od text-center font-black py-0.5 px-2 text-base tracking-wider uppercase rounded-xs">
               ►►► OJO DERECHO (OD) ►►►
             </div>
           ) : esOI ? (
@@ -696,47 +768,53 @@ export default function ModalCartelesPechoA4({
             </div>
           )}
 
-          {/* 4. Práctica Quirúrgica Programada (Ampliada y sin truncado cuando no hay bloque LIO o en 3x2) */}
-          <div className={`leading-tight ${lio.mostrarBloque ? 'sticker-proc-border border-b pb-1' : ''}`}>
+          {/* 4. Práctica Quirúrgica Programada (Máximo 2 líneas con escalado dinámico por longitud) */}
+          <div className={`leading-tight ${lio.mostrarBloque ? 'sticker-proc-border border-b pb-0.5' : ''}`}>
             <span
-              className={`uppercase block ${
-                formato === '3x2'
-                  ? 'sticker-proc-3x2'
-                  : lio.mostrarBloque
-                    ? 'sticker-proc-4x2 sticker-proc-clamp-2'
-                    : 'sticker-proc-4x2-expanded'
-              }`}
+              className={`uppercase ${obtenerClasePractica(t.practica_nombre, formato)} sticker-proc-clamp-2`}
               style={{ wordBreak: 'break-word' }}
             >
               {t.practica_nombre || 'Cirugía Oftalmológica'}
             </span>
           </div>
 
-          {/* 5. Bloque LIO Condicional (Omitido en cirugías sin implante de LIO) */}
+          {/* 5. Bloque LIO Condicional (4 columnas fijas: INCISIÓN | DIOPTRÍA | TÓRICO | EJE, sin Lote) */}
           {lio.estado === 'CARGADO' ? (
-            <div className="lio-box p-1.5 rounded-xs leading-tight">
-              <div className={`flex items-center justify-between gap-1.5 flex-wrap ${formato === '3x2' ? 'lio-metric-text-3x2' : 'lio-metric-text-4x2'}`}>
-                {lio.incisionTexto && (
-                  <span className="lio-metric-pill px-1.5 py-0.5 rounded-xs font-mono">
-                    INC {lio.incisionTexto}
+            <div className={`lio-box rounded-xs leading-tight ${formato === '4x2' ? 'lio-box-4x2' : 'p-1.5'}`}>
+              <div className="lio-micro-header lio-grid-4 sticker-muted">
+                <span>INCISIÓN</span>
+                <span>DIOPTRÍA</span>
+                <span>TÓRICO</span>
+                <span>EJE</span>
+              </div>
+              <div className={`lio-grid-4 ${formato === '3x2' ? 'lio-metric-text-3x2' : 'lio-metric-text-4x2'}`}>
+                {lio.incisionTexto ? (
+                  <span className="lio-metric-pill px-1.5 py-0.5 rounded-xs font-mono" style={{ whiteSpace: 'nowrap' }}>
+                    {lio.incisionTexto}
                   </span>
+                ) : (
+                  <span className="sticker-muted">—</span>
                 )}
-                <span className="lio-metric-pill px-2 py-0.5 rounded-xs font-mono">
+                <span className="lio-metric-pill px-1.5 py-0.5 rounded-xs font-mono" style={{ whiteSpace: 'nowrap' }}>
                   {lio.dioptriaTexto}
                 </span>
-                {lio.toricoTexto && (
-                  <span className="lio-toric-badge px-2 py-0.5 rounded-xs font-mono uppercase">
-                    {lio.toricoTexto}
+                {lio.toricoValorTexto ? (
+                  <span className="lio-toric-badge px-1.5 py-0.5 rounded-xs font-mono uppercase" style={{ whiteSpace: 'nowrap' }}>
+                    {lio.toricoValorTexto}
                   </span>
+                ) : (
+                  <span className="sticker-muted">—</span>
+                )}
+                {lio.toricoEjeTexto ? (
+                  <span className="lio-toric-badge px-1.5 py-0.5 rounded-xs font-mono" style={{ whiteSpace: 'nowrap' }}>
+                    {lio.toricoEjeTexto}
+                  </span>
+                ) : (
+                  <span className="sticker-muted">—</span>
                 )}
               </div>
-              <div className="sticker-muted flex items-center justify-between gap-2 text-[10px] font-bold mt-1">
-                <span className="truncate flex-1">{lio.tipoTexto || 'LIO Asignado'}</span>
-                {lio.loteTexto && (
-                  <span className="font-mono" style={{ whiteSpace: 'nowrap' }}>
-                    Lote: {lio.loteTexto}
-                  </span>
-                )}
+              <div className={`lio-tipo-${formato} sticker-proc-clamp-2 mt-1`}>
+                {lio.tipoTexto || 'LIO Asignado'}
               </div>
             </div>
           ) : lio.estado === 'NO_CALCULADA' ? (
