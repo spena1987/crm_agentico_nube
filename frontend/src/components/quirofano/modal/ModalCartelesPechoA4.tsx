@@ -4,19 +4,14 @@ import React, { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Printer,
   X,
-  Check,
-  CheckCircle2,
-  Calendar,
-  Building2,
-  Search,
-  Eye,
-  SlidersHorizontal,
-  FileText,
-  RotateCcw,
-  Sparkles,
-  Barcode
+  Search
 } from 'lucide-react'
 import QRCode from 'qrcode'
+import {
+  formatearDniClinico,
+  formatearFechaCirugia,
+  evaluarBloqueLio
+} from './cartelesPechoHelpers'
 
 interface ModalCartelesPechoA4Props {
   isOpen: boolean
@@ -26,41 +21,195 @@ interface ModalCartelesPechoA4Props {
   initialTurnoId?: string | null
 }
 
-// 1. Formateador de DNI clínico argentino (elimina ceros a la izquierda y formatea con puntos: 16.038.153)
-function formatearDniClinico(dni?: string | number): string {
-  if (!dni) return 'S/D'
-  const limpio = String(dni).replace(/\D/g, '').replace(/^0+/, '')
-  if (!limpio) return 'S/D'
-  return limpio.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
-}
-
-// 2. Formateador de Fecha Quirúrgica DD/MM/AAAA
-function formatearFechaCirugia(f?: string): string {
-  if (!f) return ''
-  try {
-    const parte = f.split('T')[0]
-    const [y, m, d] = parte.split('-')
-    if (y && m && d) return `${d}/${m}/${y}`
-    return f
-  } catch {
-    return f
+const SHARED_STICKER_CSS = `
+  .etiqueta-pecho-card {
+    box-sizing: border-box !important;
+    border: 0.5pt dashed #888888 !important;
+    overflow: hidden !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 2mm !important;
+    display: flex !important;
+    flex-direction: column !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
-}
-
-// 3. Detector semántico: identifica si el procedimiento clínico exige LIO independientemente de flags de base de datos
-function requiereLenteSemantico(practicaNombre?: string, llevaLente?: boolean): boolean {
-  if (llevaLente) return true
-  if (!practicaNombre) return false
-  const p = practicaNombre.toUpperCase()
-  return (
-    p.includes('CATARATA') ||
-    p.includes('FACO') ||
-    p.includes('LIO') ||
-    p.includes('LENTE') ||
-    p.includes('ICL') ||
-    p.includes('IMPL')
-  )
-}
+  .etiqueta-inner {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    padding: 8px 10px !important;
+    border-radius: 3px !important;
+    overflow: hidden !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .etiqueta-inner-3x2 {
+    padding: 10px 12px !important;
+  }
+  .etiqueta-inner-od {
+    background-color: #000000 !important;
+    box-shadow: inset 0 0 0 9999px #000000 !important;
+    color: #ffffff !important;
+    border: 2px solid #000000 !important;
+  }
+  .etiqueta-inner-od .sticker-header,
+  .etiqueta-inner-od .sticker-proc-border {
+    border-color: rgba(255, 255, 255, 0.45) !important;
+  }
+  .etiqueta-inner-od .sticker-muted {
+    color: #e2e8f0 !important;
+  }
+  .etiqueta-inner-od .sala-pill {
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0 9999px #ffffff !important;
+    color: #000000 !important;
+  }
+  .etiqueta-inner-od .eye-badge-od {
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0 9999px #ffffff !important;
+    color: #000000 !important;
+    border: 2px solid #ffffff !important;
+  }
+  .etiqueta-inner-od .lio-box {
+    border: 1.5px solid #ffffff !important;
+    background-color: #000000 !important;
+    box-shadow: inset 0 0 0 9999px #000000 !important;
+    color: #ffffff !important;
+  }
+  .etiqueta-inner-od .lio-metric-pill {
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0 9999px #ffffff !important;
+    color: #000000 !important;
+    border: 1px solid #ffffff !important;
+  }
+  .etiqueta-inner-od .lio-toric-badge {
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0 9999px #ffffff !important;
+    color: #000000 !important;
+  }
+  .etiqueta-inner-od .lio-no-calc-box {
+    border: 2px dashed #ffffff !important;
+    background-color: #000000 !important;
+    box-shadow: inset 0 0 0 9999px #000000 !important;
+    color: #ffffff !important;
+  }
+  .etiqueta-inner-oi {
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0 9999px #ffffff !important;
+    color: #000000 !important;
+    border: 2px solid #000000 !important;
+  }
+  .etiqueta-inner-ao {
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0 9999px #ffffff !important;
+    color: #000000 !important;
+    border: 4px double #000000 !important;
+  }
+  .etiqueta-inner-light .sticker-header,
+  .etiqueta-inner-light .sticker-proc-border {
+    border-color: #000000 !important;
+  }
+  .etiqueta-inner-light .sticker-muted {
+    color: #1e293b !important;
+  }
+  .etiqueta-inner-light .sala-pill {
+    background-color: #000000 !important;
+    box-shadow: inset 0 0 0 9999px #000000 !important;
+    color: #ffffff !important;
+  }
+  .etiqueta-inner-light .eye-badge-oi {
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0 9999px #ffffff !important;
+    color: #000000 !important;
+    border: 2px solid #000000 !important;
+  }
+  .etiqueta-inner-light .eye-badge-ao {
+    background-color: #000000 !important;
+    box-shadow: inset 0 0 0 9999px #000000 !important;
+    color: #ffffff !important;
+    border: 2px solid #000000 !important;
+  }
+  .etiqueta-inner-light .lio-box {
+    border: 1.5px solid #000000 !important;
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0 9999px #ffffff !important;
+    color: #000000 !important;
+  }
+  .etiqueta-inner-light .lio-metric-pill {
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0 9999px #ffffff !important;
+    color: #000000 !important;
+    border: 1.5px solid #000000 !important;
+  }
+  .etiqueta-inner-light .lio-toric-badge {
+    background-color: #000000 !important;
+    box-shadow: inset 0 0 0 9999px #000000 !important;
+    color: #ffffff !important;
+  }
+  .etiqueta-inner-light .lio-no-calc-box {
+    border: 2px dashed #000000 !important;
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0 9999px #ffffff !important;
+    color: #000000 !important;
+  }
+  .qr-quiet-zone {
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0 9999px #ffffff !important;
+    padding: 6px !important;
+    border-radius: 3px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
+  }
+  .sticker-nombre-3x2 {
+    font-size: 21px !important;
+    line-height: 1.15 !important;
+    font-weight: 900 !important;
+  }
+  .sticker-nombre-4x2 {
+    font-size: 18px !important;
+    line-height: 1.15 !important;
+    font-weight: 900 !important;
+  }
+  .sticker-proc-3x2 {
+    font-size: 19px !important;
+    line-height: 1.15 !important;
+    font-weight: 900 !important;
+  }
+  .sticker-proc-4x2 {
+    font-size: 15px !important;
+    line-height: 1.15 !important;
+    font-weight: 900 !important;
+  }
+  .sticker-proc-4x2-expanded {
+    font-size: 18px !important;
+    line-height: 1.2 !important;
+    font-weight: 900 !important;
+  }
+  .sticker-proc-clamp-2 {
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+  }
+  .lio-metric-text-3x2 {
+    font-size: 17px !important;
+    line-height: 1.1 !important;
+    font-weight: 900 !important;
+  }
+  .lio-metric-text-4x2 {
+    font-size: 15px !important;
+    line-height: 1.1 !important;
+    font-weight: 900 !important;
+  }
+`
 
 export default function ModalCartelesPechoA4({
   isOpen,
@@ -86,7 +235,6 @@ export default function ModalCartelesPechoA4({
   
   // Mapa de QRs cacheados en data URL (base64)
   const [qrMap, setQrMap] = useState<Record<string, string>>({})
-  const [generandoQrs, setGenerandoQrs] = useState<boolean>(false)
 
   // Inicializar selección
   useEffect(() => {
@@ -115,7 +263,6 @@ export default function ModalCartelesPechoA4({
 
     let cancelado = false
     const generarQrs = async () => {
-      setGenerandoQrs(true)
       const nuevoMapa: Record<string, string> = { ...qrMap }
 
       for (const t of turnos) {
@@ -124,7 +271,7 @@ export default function ModalCartelesPechoA4({
             const payload = `MEDCRM:QX:${t.id}`
             const dataUrl = await QRCode.toDataURL(payload, {
               errorCorrectionLevel: 'M',
-              margin: 1,
+              margin: 2,
               width: 250,
               color: {
                 dark: '#000000',
@@ -142,7 +289,6 @@ export default function ModalCartelesPechoA4({
 
       if (!cancelado) {
         setQrMap(nuevoMapa)
-        setGenerandoQrs(false)
       }
     }
 
@@ -306,19 +452,11 @@ export default function ModalCartelesPechoA4({
         grid-template-columns: 105mm 105mm;
         grid-template-rows: 74.25mm 74.25mm 74.25mm 74.25mm;
       }
-      .etiqueta-pecho-card {
-        box-sizing: border-box;
-        border: 0.5pt dashed #888888;
-        overflow: hidden;
-        background: #ffffff;
-        color: #000000;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        padding: 10px 14px;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
+      ${SHARED_STICKER_CSS}
+      .w-\\[22mm\\] { width: 22mm; }
+      .h-\\[22mm\\] { height: 22mm; }
+      .w-\\[18mm\\] { width: 18mm; }
+      .h-\\[18mm\\] { height: 18mm; }
       /* Clases de alto contraste morfológico para tóner láser monocromático */
       .bg-black { background-color: #000000 !important; color: #ffffff !important; }
       .text-white { color: #ffffff !important; }
@@ -463,186 +601,149 @@ export default function ModalCartelesPechoA4({
     const fechaStr = formatearFechaCirugia(t.fecha_cirugia || t.fecha)
     const horaStr = t.hora_inicio ? t.hora_inicio.slice(0, 5) : '08:00'
 
-    // Obra Social normalizada
-    const obraSocial = (t.obra_social || pac.obra_social || 'Particular').toUpperCase()
-
-    // LIO: Detección clínica
-    const tieneLioCargado = Boolean(t.lleva_lente && (t.lente_tipo || t.lente_dioptria))
-    const exigeLioClinico = requiereLenteSemantico(t.practica_nombre, t.lleva_lente)
+    // LIO: Evaluación clínica unificada
+    const lio = evaluarBloqueLio(t)
+    const esAO = ojo === 'AO'
+    const innerPolarityClass = esOD
+      ? 'etiqueta-inner-od'
+      : esAO
+        ? 'etiqueta-inner-ao etiqueta-inner-light'
+        : 'etiqueta-inner-oi etiqueta-inner-light'
 
     return (
       <div
         key={sIdx}
-        className={`etiqueta-pecho-card p-3 sm:p-4 flex flex-col justify-between border border-dashed border-slate-400 bg-white text-black ${
-          formato === '3x2' ? 'space-y-1.5' : 'space-y-1'
-        }`}
+        className="etiqueta-pecho-card"
         style={{ boxSizing: 'border-box' }}
       >
-        {/* 1. Cabecera con QR Láser + Datos de Clínica, Sala, Turno y Fecha */}
-        <div className="flex items-center gap-2.5 pb-1 border-b border-black">
-          {/* QR Vectorial 100% Black */}
-          <div className="shrink-0 bg-white border border-black p-0.5">
-            {qrUrl ? (
-              <img
-                src={qrUrl}
-                alt={`QR ${t.id}`}
-                className={formato === '3x2' ? 'w-[24mm] h-[24mm]' : 'w-[20mm] h-[20mm]'}
-                style={{ imageRendering: 'pixelated' }}
-              />
-            ) : (
-              <div className="w-[20mm] h-[20mm] bg-slate-100 flex items-center justify-center text-[8px] font-mono">
-                QR...
-              </div>
-            )}
-          </div>
-
-          {/* Info Clínica, Sala, Código de Turno y Fecha/Hora */}
-          <div className="flex-1 min-w-0 text-[10px] leading-tight">
-            <div className="flex items-center justify-between">
-              <span className="font-black text-[11px] tracking-tight uppercase">
-                CENTROVISIÓN QUIRÚRGICO
-              </span>
-              <span className="font-mono font-black text-xs text-black" style={{ whiteSpace: 'nowrap' }}>
-                {fechaStr ? `${fechaStr} • ` : ''}{horaStr} hs
-              </span>
-            </div>
-
-            {/* Sala destacada como píldora de alto contraste + Código de Turno Completo */}
-            <div className="flex items-center justify-between mt-1 gap-1">
-              <span className="px-2 py-0.5 bg-black text-white text-[9px] font-black rounded uppercase tracking-wider" style={{ whiteSpace: 'nowrap' }}>
-                SALA {t.quirofanos?.codigo || t.quirofanos?.nombre || 'Q01'}
-              </span>
-              <span className="font-mono text-[9px] font-bold text-slate-900 truncate" title={`Código institucional: ${codigoTurnoMostrar}`}>
-                #{codigoTurnoMostrar}
-              </span>
-            </div>
-
-            <p className="truncate text-slate-800 text-[10px] font-semibold mt-0.5">
-              Cirujano: <b>{t.cirujano_nombre || 'Asignado'}</b>
-            </p>
-          </div>
-        </div>
-
-        {/* 2. Nombre del Paciente en Tipografía GIGANTE + Fila de Filiación Blindada */}
-        <div className="py-0.5">
-          <h2
-            className={`font-black uppercase tracking-tight text-black leading-none ${
-              formato === '3x2' ? 'text-xl' : 'text-base'
-            }`}
-          >
-            {pac.nombre || 'PACIENTE SIN NOMBRE'}
-          </h2>
-          <div className="flex items-center gap-2 text-[11px] font-bold text-slate-900 mt-1">
-            <span className="font-mono" style={{ whiteSpace: 'nowrap' }}>
-              DNI: {formatearDniClinico(pac.dni)}
-            </span>
-            {edadStr && (
-              <span style={{ whiteSpace: 'nowrap' }}>• {edadStr}</span>
-            )}
-            <span className="truncate max-w-[130px]" style={{ whiteSpace: 'nowrap' }}>
-              • {obraSocial}
-            </span>
-          </div>
-        </div>
-
-        {/* 3. INSIGNIA DE OJO A OPERAR — DIFERENCIACIÓN MORFOLÓGICA INVERSA */}
-        {esOD ? (
-          /* OJO DERECHO: Fondo NEGRO SÓLIDO con letras BLANCAS */
-          <div className="bg-black text-white text-center font-black py-1 px-2 text-base sm:text-lg tracking-wider uppercase my-0.5 shadow-xs">
-            ►►► OJO DERECHO (OD) ►►►
-          </div>
-        ) : esOI ? (
-          /* OJO IZQUIERDO: Fondo BLANCO PURO con RECUADRO NEGRO EXTRA-GRUESO */
-          <div
-            className="bg-white text-black text-center font-black py-0.5 px-2 text-base sm:text-lg tracking-wider uppercase my-0.5"
-            style={{ borderWidth: '3.5px', borderStyle: 'solid', borderColor: '#000000' }}
-          >
-            ◄◄◄ OJO IZQUIERDO (OI) ◄◄◄
-          </div>
-        ) : (
-          /* AMBOS OJOS: Doble Borde */
-          <div
-            className="bg-white text-black text-center font-black py-0.5 px-2 text-base sm:text-lg tracking-wider uppercase my-0.5"
-            style={{ borderWidth: '4px', borderStyle: 'double', borderColor: '#000000' }}
-          >
-            ◈◈◈ AMBOS OJOS (AO) ◈◈◈
-          </div>
-        )}
-
-        {/* 4. Práctica Quirúrgica Programada (Multilínea fluida, sin truncado por puntos) */}
-        <div className="text-[10px] leading-tight border-b border-black/40 pb-1">
-          <span className="text-[9px] font-bold text-slate-600 block uppercase">Procedimiento:</span>
-          <span
-            className="font-black text-[11px] text-black uppercase block leading-snug"
-            style={{
-              wordBreak: 'break-word',
-              display: '-webkit-box',
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden'
-            }}
-          >
-            {t.practica_nombre || 'Cirugía Oftalmológica'}
-          </span>
-        </div>
-
-        {/* 5. Bloque LIO Blindado Clínicamente */}
-        {tieneLioCargado ? (
-          <div className="border border-black p-1.5 text-[10px] leading-tight bg-white">
-            <div className="flex items-center justify-between border-b border-black/30 pb-0.5 mb-1">
-              <span className="font-black uppercase tracking-wider text-[9px]">
-                LENTE INTRAOCULAR (LIO)
-              </span>
-              <div className="flex items-center gap-1.5 font-mono font-bold text-[10px]">
-                {t.lente_incision_grados !== undefined && t.lente_incision_grados !== null && (
-                  <span className="border border-black px-1 text-[9px] bg-slate-100 font-black">
-                    Inc: {t.lente_incision_grados}°
-                  </span>
-                )}
-                <span>Lote: {t.lente_lote || 'S/D'}</span>
-              </div>
-            </div>
-            <div className="flex items-center justify-between gap-1.5">
-              <span className="font-bold text-[11px] truncate flex-1">
-                {t.lente_tipo || 'LIO Asignado'}
-              </span>
-              <div className="border-2 border-black px-2 py-0.5 font-black text-xs sm:text-sm text-black">
-                {t.lente_dioptria ? `${t.lente_dioptria} D` : 'N/D'}
-              </div>
-              {t.es_torico && (
-                <div className="bg-black text-white px-1.5 py-0.5 font-black text-[9px] uppercase">
-                  T{t.lente_torico_valor || 0} ({t.lente_torico_eje || 90}°)
+        <div className={`etiqueta-inner ${formato === '3x2' ? 'etiqueta-inner-3x2' : ''} ${innerPolarityClass}`}>
+          {/* 1. Cabecera con QR Láser + Fecha/Hora, Sala, Código de Turno y Cirujano */}
+          <div className="sticker-header flex items-center gap-2.5 pb-1 border-b">
+            {/* QR Vectorial con Zona Muda Blanca Garantizada */}
+            <div className="qr-quiet-zone">
+              {qrUrl ? (
+                <img
+                  src={qrUrl}
+                  alt={`QR ${t.id}`}
+                  className={formato === '3x2' ? 'w-[22mm] h-[22mm]' : 'w-[18mm] h-[18mm]'}
+                  style={{ imageRendering: 'pixelated' }}
+                />
+              ) : (
+                <div className={`${formato === '3x2' ? 'w-[22mm] h-[22mm]' : 'w-[18mm] h-[18mm]'} bg-slate-100 flex items-center justify-center text-[8px] font-mono text-black`}>
+                  QR...
                 </div>
               )}
             </div>
-          </div>
-        ) : exigeLioClinico ? (
-          /* Cirugía que requiere Lente pero aún no fue cargada en el sistema */
-          <div className="border-2 border-black p-1 text-[10px] leading-tight bg-white">
-            <div className="flex items-center justify-between border-b border-black pb-0.5 mb-0.5">
-              <span className="font-black uppercase tracking-wider text-[9px] text-black">
-                ⚠️ LIO REQUERIDO (CIRUGÍA CON IMPLANTE)
-              </span>
-            </div>
-            <div className="font-black text-center py-0.5 text-[10px] text-black uppercase bg-slate-100">
-              PENDIENTE DE ASIGNACIÓN BIOMÉTRICA / VER HC
-            </div>
-          </div>
-        ) : (
-          /* Cirugías menores sin lente (párpado, pterigion, botox, láser) */
-          <div className="border border-dashed border-black/50 p-1 text-[9px] text-center font-bold text-black uppercase">
-            CIRUGÍA SIN IMPLANTE DE LIO
-          </div>
-        )}
 
-        {/* 6. Checklist Manual Prequirúrgico al pie */}
-        <div
-          className="pt-1 mt-0.5 border-t border-black/40 flex items-center justify-between text-[8px] font-bold text-black uppercase"
-          style={{ whiteSpace: 'nowrap' }}
-        >
-          <span>[ ] Dilatación</span>
-          <span>[ ] Consentimiento</span>
-          <span>[ ] Alergias: _______</span>
+            {/* Info Fecha/Hora, Sala, Código de Turno y Cirujano */}
+            <div className="flex-1 min-w-0 leading-tight">
+              <div className="flex items-center justify-between gap-1">
+                <span className="font-mono font-black text-xs" style={{ whiteSpace: 'nowrap' }}>
+                  {fechaStr ? `${fechaStr} • ` : ''}{horaStr} hs
+                </span>
+                <span className="sala-pill px-2 py-0.5 text-[10px] font-black rounded uppercase tracking-wider" style={{ whiteSpace: 'nowrap' }}>
+                  SALA {t.quirofanos?.codigo || t.quirofanos?.nombre || 'Q01'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between mt-1 gap-1">
+                <span className="sticker-muted font-mono text-[10px] font-bold truncate" title={`Código institucional: ${codigoTurnoMostrar}`}>
+                  #{codigoTurnoMostrar}
+                </span>
+              </div>
+
+              <p className="sticker-muted truncate text-[11px] font-bold mt-0.5">
+                Cirujano: <span className="font-black">{t.cirujano_nombre || 'Asignado'}</span>
+              </p>
+            </div>
+          </div>
+
+          {/* 2. Nombre del Paciente en Tipografía GIGANTE + DNI y Edad */}
+          <div className="py-0.5">
+            <h2
+              className={`uppercase tracking-tight ${
+                formato === '3x2' ? 'sticker-nombre-3x2' : 'sticker-nombre-4x2'
+              }`}
+            >
+              {pac.nombre || 'PACIENTE SIN NOMBRE'}
+            </h2>
+            <div className="sticker-muted flex items-center gap-2 text-xs font-bold mt-0.5">
+              <span className="font-mono" style={{ whiteSpace: 'nowrap' }}>
+                DNI: {formatearDniClinico(pac.dni)}
+              </span>
+              {edadStr && (
+                <span style={{ whiteSpace: 'nowrap' }}>• {edadStr}</span>
+              )}
+            </div>
+          </div>
+
+          {/* 3. INSIGNIA DE OJO A OPERAR — POLARIDAD INVERSA TOTAL */}
+          {esOD ? (
+            <div className="eye-badge-od text-center font-black py-1 px-2 text-base tracking-wider uppercase rounded-xs">
+              ►►► OJO DERECHO (OD) ►►►
+            </div>
+          ) : esOI ? (
+            <div className="eye-badge-oi text-center font-black py-0.5 px-2 text-base tracking-wider uppercase rounded-xs">
+              ◄◄◄ OJO IZQUIERDO (OI) ◄◄◄
+            </div>
+          ) : esAO ? (
+            <div className="eye-badge-ao text-center font-black py-0.5 px-2 text-base tracking-wider uppercase rounded-xs">
+              ◈◈◈ AMBOS OJOS (AO) ◈◈◈
+            </div>
+          ) : (
+            <div className="eye-badge-oi text-center font-black py-0.5 px-2 text-base tracking-wider uppercase rounded-xs">
+              OJO: {ojo}
+            </div>
+          )}
+
+          {/* 4. Práctica Quirúrgica Programada (Ampliada y sin truncado cuando no hay bloque LIO o en 3x2) */}
+          <div className={`leading-tight ${lio.mostrarBloque ? 'sticker-proc-border border-b pb-1' : ''}`}>
+            <span
+              className={`uppercase block ${
+                formato === '3x2'
+                  ? 'sticker-proc-3x2'
+                  : lio.mostrarBloque
+                    ? 'sticker-proc-4x2 sticker-proc-clamp-2'
+                    : 'sticker-proc-4x2-expanded'
+              }`}
+              style={{ wordBreak: 'break-word' }}
+            >
+              {t.practica_nombre || 'Cirugía Oftalmológica'}
+            </span>
+          </div>
+
+          {/* 5. Bloque LIO Condicional (Omitido en cirugías sin implante de LIO) */}
+          {lio.estado === 'CARGADO' ? (
+            <div className="lio-box p-1.5 rounded-xs leading-tight">
+              <div className={`flex items-center justify-between gap-1.5 flex-wrap ${formato === '3x2' ? 'lio-metric-text-3x2' : 'lio-metric-text-4x2'}`}>
+                {lio.incisionTexto && (
+                  <span className="lio-metric-pill px-1.5 py-0.5 rounded-xs font-mono">
+                    INC {lio.incisionTexto}
+                  </span>
+                )}
+                <span className="lio-metric-pill px-2 py-0.5 rounded-xs font-mono">
+                  {lio.dioptriaTexto}
+                </span>
+                {lio.toricoTexto && (
+                  <span className="lio-toric-badge px-2 py-0.5 rounded-xs font-mono uppercase">
+                    {lio.toricoTexto}
+                  </span>
+                )}
+              </div>
+              <div className="sticker-muted flex items-center justify-between gap-2 text-[10px] font-bold mt-1">
+                <span className="truncate flex-1">{lio.tipoTexto || 'LIO Asignado'}</span>
+                {lio.loteTexto && (
+                  <span className="font-mono" style={{ whiteSpace: 'nowrap' }}>
+                    Lote: {lio.loteTexto}
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : lio.estado === 'NO_CALCULADA' ? (
+            <div className="lio-no-calc-box p-1.5 rounded-xs text-center font-black text-xs uppercase tracking-wide">
+              LENTE NO CALCULADA
+            </div>
+          ) : null}
         </div>
       </div>
     )
@@ -656,6 +757,8 @@ export default function ModalCartelesPechoA4({
       {/* ESTILOS DE IMPRESIÓN DIRECTA LÁSER A4 (@media print)                    */}
       {/* ========================================================================= */}
       <style jsx global>{`
+        ${SHARED_STICKER_CSS}
+
         @media screen {
           .area-imprimible-a4-laser {
             display: none !important;
@@ -733,16 +836,6 @@ export default function ModalCartelesPechoA4({
           .pagina-a4-4x2 {
             grid-template-columns: 105mm 105mm !important;
             grid-template-rows: 74.25mm 74.25mm 74.25mm 74.25mm !important;
-          }
-
-          .etiqueta-pecho-card {
-            box-sizing: border-box !important;
-            border: 0.5pt dashed #888888 !important;
-            overflow: hidden !important;
-            background: #ffffff !important;
-            color: #000000 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
           }
         }
       `}</style>
