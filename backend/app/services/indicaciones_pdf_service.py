@@ -51,14 +51,11 @@ def formatear_dni(dni_raw: Any) -> str:
     return dni_str
 
 
-def render_texto_variables(texto: str, variables: Dict[str, Any]) -> str:
-    if not texto:
-        return ""
-    resultado = texto
-    for key, val in variables.items():
-        pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", re.IGNORECASE)
-        resultado = pattern.sub(str(val or ""), resultado)
-    return resultado
+from app.services.markdown_utils import (
+    build_indicaciones_vars_dict,
+    render_texto_variables,
+    parse_markdown_to_pdf_flowables,
+)
 
 
 def generar_pdf_indicacion_medica(
@@ -111,6 +108,8 @@ def generar_pdf_indicacion_medica(
         paciente_cobertura_display = paciente_os
     paciente_afiliado = str(datos_emision.get("paciente_afiliado") or datos_emision.get("paciente_nro_afiliado") or "-").strip()
     paciente_domicilio = str(datos_emision.get("paciente_domicilio") or datos_emision.get("paciente_direccion") or "-").strip()
+    practica_nombre = str(datos_emision.get("practica_nombre") or datos_emision.get("practica") or "Cirugía Oftalmológica").strip()
+    ojo_intervenido = str(datos_emision.get("ojo_intervenido") or datos_emision.get("ojo") or "").strip()
 
     medico_id = datos_emision.get("medico_id") or datos_emision.get("medico_cirujano_id")
     medico_nombre = datos_emision.get("medico_nombre") or datos_emision.get("medico_cirujano_nombre") or "Médico Cirujano"
@@ -274,51 +273,34 @@ def generar_pdf_indicacion_medica(
                     "geclisa_im_id": m.get("geclisa_im_id")
                 })
     
-    # Si no se pasó lista de módulos estructurados, armar con datos_emision
+    # Si no se pasó lista de módulos estructurados, armar un unico documento (sin split("---"))
     if not lista_indicaciones:
         raw_cuerpo = datos_emision.get("cuerpo_indicaciones") or datos_emision.get("texto_indicaciones") or ""
-        im_ids_list = datos_emision.get("geclisa_im_ids") or []
-        # Si contiene separadores "---", dividir en hojas separadas automáticamente
-        partes_texto = [p.strip() for p in raw_cuerpo.split("---") if p.strip()]
-        if len(partes_texto) > 1:
-            for idx, p_txt in enumerate(partes_texto):
-                m_im_id = im_ids_list[idx] if idx < len(im_ids_list) else geclisa_im_id
-                lista_indicaciones.append({
-                    "titulo": f"INDICACIÓN #{idx + 1}",
-                    "cuerpo": p_txt,
-                    # Solo la primera lleva medicamentos/cuidados si estaban globales
-                    "medicamentos": datos_emision.get("medicamentos") if idx == 0 else [],
-                    "cuidados": datos_emision.get("cuidados_generales") if idx == 0 else "",
-                    "alarmas": datos_emision.get("pautas_alarma") if idx == 0 else "",
-                    "geclisa_im_id": m_im_id
-                })
-        else:
-            lista_indicaciones.append({
-                "titulo": "INDICACIÓN MÉDICA",
-                "cuerpo": raw_cuerpo,
-                "medicamentos": datos_emision.get("medicamentos") or [],
-                "cuidados": datos_emision.get("cuidados_generales") or "",
-                "alarmas": datos_emision.get("pautas_alarma") or "",
-                "geclisa_im_id": geclisa_im_id
-            })
+        lista_indicaciones.append({
+            "titulo": "INDICACIÓN MÉDICA",
+            "cuerpo": raw_cuerpo,
+            "medicamentos": datos_emision.get("medicamentos") or [],
+            "cuidados": datos_emision.get("cuidados_generales") or "",
+            "alarmas": datos_emision.get("pautas_alarma") or "",
+            "geclisa_im_id": geclisa_im_id
+        })
 
-    # Diccionario de reemplazo de variables
-    vars_dict = {
-        "paciente": paciente_nombre,
+    # Diccionario canonico de reemplazo de variables
+    vars_dict = build_indicaciones_vars_dict({
         "paciente_nombre": paciente_nombre,
-        "dni": paciente_dni,
-        "cobertura": paciente_cobertura_display,
-        "obra_social": paciente_os,
-        "plan": paciente_plan,
-        "plan_cobertura": paciente_plan,
-        "afiliado": paciente_afiliado,
-        "domicilio": paciente_domicilio,
-        "cirujano": medico_nombre,
-        "medico": medico_nombre,
-        "matricula": medico_matricula,
+        "paciente_dni": paciente_dni,
+        "paciente_obra_social": paciente_os,
+        "paciente_plan": paciente_plan,
+        "paciente_afiliado": paciente_afiliado,
+        "paciente_domicilio": paciente_domicilio,
+        "medico_nombre": medico_nombre,
+        "medico_matricula": medico_matricula,
+        "medico_especialidad": medico_especialidad,
+        "practica_nombre": practica_nombre,
+        "ojo_intervenido": ojo_intervenido,
         "fecha": fecha_emision,
         "hora": hora_emision,
-    }
+    })
 
     # Iniciar construcción del documento ReportLab
     buffer = io.BytesIO()
@@ -383,6 +365,55 @@ def generar_pdf_indicacion_medica(
             leading=9.2 if es_alta_densidad else (10.5 if is_compact else 12.0),
             textColor=c_alerta_texto
         )
+
+        # Diccionarios de estilos Markdown escalados segun densidad de hoja
+        md_styles = {
+            "h1": ParagraphStyle(
+                f'MdH1_{page_idx}',
+                parent=styles['Heading1'],
+                fontName='Helvetica-Bold',
+                fontSize=10.5 if es_alta_densidad else (11.5 if is_compact else 13.0),
+                leading=13.5 if es_alta_densidad else (15.0 if is_compact else 17.0),
+                textColor=c_primario,
+            ),
+            "h2": ParagraphStyle(
+                f'MdH2_{page_idx}',
+                parent=styles['Heading2'],
+                fontName='Helvetica-Bold',
+                fontSize=9.5 if es_alta_densidad else (10.5 if is_compact else 11.5),
+                leading=12.5 if es_alta_densidad else (14.0 if is_compact else 15.5),
+                textColor=c_primario,
+            ),
+            "h3": ParagraphStyle(
+                f'MdH3_{page_idx}',
+                parent=styles['Heading3'],
+                fontName='Helvetica-Bold',
+                fontSize=8.8 if es_alta_densidad else (9.8 if is_compact else 10.8),
+                leading=12.0 if es_alta_densidad else (13.5 if is_compact else 15.0),
+                textColor=colors.HexColor("#0F172A"),
+            ),
+            "cuerpo": p_cuerpo_style,
+            "bullet": ParagraphStyle(
+                f'MdBullet_{page_idx}',
+                parent=p_cuerpo_style,
+                leftIndent=10,
+                firstLineIndent=-8,
+            ),
+            "quote": ParagraphStyle(
+                f'MdQuote_{page_idx}',
+                parent=p_cuerpo_style,
+                fontName='Helvetica-Oblique',
+                textColor=colors.HexColor("#92400E"),
+            ),
+        }
+        md_alerta_styles = {
+            "cuerpo": p_alerta_style,
+            "h1": ParagraphStyle(f'MdAlH1_{page_idx}', parent=p_alerta_style, fontName='Helvetica-Bold'),
+            "h2": ParagraphStyle(f'MdAlH2_{page_idx}', parent=p_alerta_style, fontName='Helvetica-Bold'),
+            "h3": ParagraphStyle(f'MdAlH3_{page_idx}', parent=p_alerta_style, fontName='Helvetica-Bold'),
+            "bullet": ParagraphStyle(f'MdAlBul_{page_idx}', parent=p_alerta_style, leftIndent=8, firstLineIndent=-6),
+            "quote": ParagraphStyle(f'MdAlQt_{page_idx}', parent=p_alerta_style, fontName='Helvetica-Bold'),
+        }
 
         raw_lower = cuerpo_txt.lower()
         es_orden = "solicito:" in raw_lower or "solicito " in raw_lower or "pedido" in raw_lower
@@ -459,17 +490,15 @@ def generar_pdf_indicacion_medica(
         story.append(card_table)
         story.append(Spacer(1, 3 if es_alta_densidad else (5 if is_compact else 8)))
 
-        # 3. TEXTO DEL CUERPO DE LA INDICACIÓN / SOLICITUD
+        # 3. TEXTO DEL CUERPO DE LA INDICACIÓN / SOLICITUD (Markdown + Variables)
         if cuerpo_txt.strip():
-            for parrafo in cuerpo_txt.split('\n'):
-                p_limpio = parrafo.strip()
-                if p_limpio:
-                    p_lower = p_limpio.lower()
-                    if p_lower.startswith("solicito:") or p_lower.startswith("diagnóstico:") or p_lower.startswith("diagnostico:"):
-                        story.append(Paragraph(f"<b>{p_limpio}</b>", p_cuerpo_bold))
-                    else:
-                        story.append(Paragraph(p_limpio, p_cuerpo_style))
-                    story.append(Spacer(1, 1.5 if es_alta_densidad else (3 if is_compact else 4)))
+            cuerpo_flowables = parse_markdown_to_pdf_flowables(
+                item_ind["cuerpo"],
+                md_styles,
+                content_width=content_width,
+                vars_dict=vars_dict,
+            )
+            story.extend(cuerpo_flowables)
             story.append(Spacer(1, 3 if es_alta_densidad else (5 if is_compact else 8)))
 
         # 4. ESQUEMA DE MEDICACIÓN Y COLIRIOS (SOLO SI TIENE FÁRMACOS)
@@ -536,22 +565,30 @@ def generar_pdf_indicacion_medica(
             story.append(golden_table)
             story.append(Spacer(1, 4 if is_compact else 8))
 
-        # 5. PAUTAS DE REPOSO Y CUIDADOS (SOLO SI TIENE CONTENIDO)
+        # 5. PAUTAS DE REPOSO Y CUIDADOS (Markdown + Variables)
         if cuid_txt.strip():
             story.append(Paragraph("PAUTAS DE REPOSO Y CUIDADOS", p_section_heading))
-            for linea in cuid_txt.split('\n'):
-                linea_limpia = linea.strip()
-                if linea_limpia:
-                    story.append(Paragraph(f"• {linea_limpia.lstrip('•-* ')}", p_cuerpo_style))
-                    story.append(Spacer(1, 1.2 if es_alta_densidad else 1.5))
+            cuid_flowables = parse_markdown_to_pdf_flowables(
+                item_ind["cuidados"],
+                md_styles,
+                content_width=content_width,
+                vars_dict=vars_dict,
+            )
+            story.extend(cuid_flowables)
             story.append(Spacer(1, 2.5 if es_alta_densidad else (4 if is_compact else 6)))
 
-        # 6. PAUTAS DE ALARMA (GUARDIA 24 HS) (SOLO SI TIENE CONTENIDO)
+        # 6. PAUTAS DE ALARMA (GUARDIA 24 HS) (Markdown + Variables)
         if alar_txt.strip():
             story.append(Paragraph("PAUTAS DE ALARMA (GUARDIA 24 HS)", p_section_heading))
+            alar_flowables = parse_markdown_to_pdf_flowables(
+                item_ind["alarmas"],
+                md_alerta_styles,
+                content_width=content_width - 10,
+                vars_dict=vars_dict,
+            )
             alerta_content = [
                 Paragraph("<b>¡ATENCIÓN! SIGNOS DE ALERTA MÉDICA:</b>", ParagraphStyle(f'ABold_{page_idx}', parent=p_alerta_style, fontName='Helvetica-Bold')),
-                Paragraph(alar_txt, p_alerta_style),
+                *alar_flowables,
                 Paragraph(f"<b>Guardia Oftalmológica {nombre_institucion}:</b> Urgencias disponible las 24 horas.", p_alerta_style)
             ]
             alerta_table = Table([[alerta_content]], colWidths=[content_width])

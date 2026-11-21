@@ -45,6 +45,7 @@ interface SeccionIndicacionesExpedienteProps {
   practicaNombre?: string | null
   practicaCodigo?: string | null
   practicaId?: string | null
+  ojo?: string | null
   medicoNombre?: string | null
   medicoId?: number | string | null
   pacienteNombre?: string | null
@@ -66,6 +67,7 @@ export default function SeccionIndicacionesExpediente({
   practicaNombre,
   practicaCodigo,
   practicaId,
+  ojo,
   medicoNombre,
   medicoId,
   pacienteNombre,
@@ -1300,6 +1302,14 @@ export default function SeccionIndicacionesExpediente({
                   onChange={setModulosEditables}
                   variant="light"
                   disabled={emitiendo}
+                  previewContext={{
+                    paciente: pacienteNombre || '',
+                    dni: pacienteDni || '',
+                    cirujano: medicoNombre || '',
+                    practica: practicaNombre || '',
+                    ojo_intervenido: ojo || '',
+                    fecha: new Date().toLocaleDateString('es-AR'),
+                  }}
                 />
               </div>
 
@@ -1373,7 +1383,7 @@ export default function SeccionIndicacionesExpediente({
       {/* Modal de Reedición */}
       {modalReedicionOpen && emisionParaReeditar && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4">
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3">
               <div>
                 <h3 className="font-bold text-sm text-[var(--foreground)]">
@@ -1429,6 +1439,16 @@ export default function SeccionIndicacionesExpediente({
                 onChange={setModulosReedicion}
                 variant="light"
                 disabled={guardandoReedicion}
+                previewContext={{
+                  paciente: pacienteNombre || '',
+                  dni: pacienteDni || '',
+                  cirujano: medicoNombre || '',
+                  practica: emisionParaReeditar.practica_nombre || practicaNombre || '',
+                  ojo_intervenido: ojo || '',
+                  fecha: fechaReedicion
+                    ? fechaReedicion.split('-').reverse().join('/')
+                    : new Date().toLocaleDateString('es-AR'),
+                }}
               />
             </div>
 

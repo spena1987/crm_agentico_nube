@@ -80,6 +80,7 @@ export default function ModalIndicacionesMedicasCaso({
             practicaId={caso.practica_id || caso.nomenclador_practica_id}
             practicaNombre={caso.practica_nombre}
             practicaCodigo={caso.practica_codigo}
+            ojo={caso.ojo}
             medicoNombre={caso.medico_cirujano_nombre}
             medicoId={caso.medico_cirujano_id}
             pacienteNombre={pacNombre}

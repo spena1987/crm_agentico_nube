@@ -16,6 +16,7 @@ from app.db import (
 )
 from app.services.geclisa_client import geclisa_client
 from app.services.indicaciones_pdf_service import generar_pdf_indicacion_medica
+from app.services.markdown_utils import build_indicaciones_vars_dict, markdown_to_plain_text
 from app.whatsapp import whatsapp_manager
 from app.services.phone_normalizer import normalize_phone_number
 
@@ -1281,46 +1282,73 @@ def emitir_indicaciones_expediente(
             logger.warning(f"No se pudo consultar ficha por DNI en Geclisa: {e_dni}")
 
     items_a_emitir = _normalizar_lista_modulos(modulos) if modulos else _normalizar_lista_modulos(sug_data.get("modulos_asignados"))
-    if not items_a_emitir:
-        partes_txt = [p.strip() for p in (texto_final or "").split("---") if p.strip()]
-        if len(partes_txt) > 1:
-            items_a_emitir = [
-                _normalizar_modulo_clinico({
-                    "cuerpo_indicaciones": p,
-                    "titulo": f"Indicación #{i+1}",
-                    "medicamentos": (meds_final or []) if i == 0 else [],
-                    "cuidados_generales": (cuidados_final or "") if i == 0 else "",
-                    "pautas_alarma": (alarmas_final or "") if i == 0 else ""
-                })
-                for i, p in enumerate(partes_txt)
-            ]
-        elif texto_final or meds_final or cuidados_final or alarmas_final:
-            items_a_emitir = [
-                _normalizar_modulo_clinico({
-                    "cuerpo_indicaciones": texto_final or "",
-                    "titulo": practica_nombre,
-                    "medicamentos": meds_final or [],
-                    "cuidados_generales": cuidados_final or "",
-                    "pautas_alarma": alarmas_final or ""
-                })
-            ]
+    if not items_a_emitir and (texto_final or meds_final or cuidados_final or alarmas_final):
+        items_a_emitir = [
+            _normalizar_modulo_clinico({
+                "cuerpo_indicaciones": texto_final or "",
+                "titulo": practica_nombre,
+                "medicamentos": meds_final or [],
+                "cuidados_generales": cuidados_final or "",
+                "pautas_alarma": alarmas_final or ""
+            })
+        ]
 
     if items_a_emitir:
         texto_final, meds_final, cuidados_final, alarmas_final = _agregar_resumen_modulos(items_a_emitir)
 
     fue_modificada, campos_modificados = _calcular_diff_indicaciones(baseline_modulos, items_a_emitir)
 
-    # Si tenemos ficha y médico cirujano preId, asentamos en Geclisa cada indicación por separado
+    # Resolver fecha de emisión documental antes de construir variables de Geclisa y PDF
+    fecha_pdf = None
+    fecha_db = None
+    if fecha_emision:
+        try:
+            s_f = str(fecha_emision).strip()
+            if "-" in s_f:
+                p = s_f.split("T")[0].split("-")
+                if len(p) == 3:
+                    fecha_db = f"{p[0]}-{p[1]}-{p[2]}"
+                    fecha_pdf = f"{p[2]}/{p[1]}/{p[0]}"
+            elif "/" in s_f:
+                p = s_f.split("/")
+                if len(p) == 3:
+                    fecha_pdf = f"{p[0]}/{p[1]}/{p[2]}"
+                    fecha_db = f"{p[2]}-{p[1]}-{p[0]}"
+        except Exception as e_f:
+            logger.warning(f"Error interpretando fecha_emision {fecha_emision}: {e_f}")
+
+    if not fecha_db:
+        fecha_db = datetime.now().strftime("%Y-%m-%d")
+    if not fecha_pdf:
+        fecha_pdf = datetime.now().strftime("%d/%m/%Y")
+
+    vars_dict_geclisa = build_indicaciones_vars_dict({
+        "paciente_nombre": paciente_nombre,
+        "paciente_dni": paciente_dni,
+        "paciente_obra_social": paciente_os,
+        "paciente_plan": paciente_plan,
+        "paciente_afiliado": paciente_afiliado,
+        "paciente_domicilio": paciente_domicilio,
+        "medico_nombre": medico_nombre,
+        "medico_matricula": medico_matricula,
+        "medico_especialidad": medico_especialidad,
+        "practica_nombre": practica_nombre,
+        "ojo_intervenido": asesoria.get("ojo") or "OD",
+        "fecha": fecha_pdf,
+    })
+
+    # Si tenemos ficha y médico cirujano preId, asentamos en Geclisa cada indicación por separado (texto plano limpio)
     if ficha_id_geclisa and medico_id and items_a_emitir:
         for item in items_a_emitir:
             mod_texto = item.get("cuerpo_indicaciones") or item.get("texto_indicaciones") or item.get("texto") or texto_final or ""
-            if not mod_texto.strip():
+            texto_plano_geclisa = markdown_to_plain_text(mod_texto, vars_dict=vars_dict_geclisa)
+            if not texto_plano_geclisa:
                 continue
             try:
                 g_res = geclisa_client.emitir_indicacion_medica_geclisa(
                     ficha_id=int(ficha_id_geclisa),
                     pre_id=int(medico_id),
-                    texto_indicacion=mod_texto.strip(),
+                    texto_indicacion=texto_plano_geclisa,
                     es_internado=False,
                     usu_alta=usu_alta,
                     os_plan=paciente_os,
@@ -1364,30 +1392,6 @@ def emitir_indicaciones_expediente(
                 titulo_documento = "INDICACIONES PREQUIRÚRGICAS"
             else:
                 titulo_documento = "INDICACIONES POSTQUIRÚRGICAS"
-
-    # Resolver fecha de emisión documental (permite fecha actual o posdatada a futuro / día de cirugía)
-    fecha_pdf = None
-    fecha_db = None
-    if fecha_emision:
-        try:
-            s_f = str(fecha_emision).strip()
-            if "-" in s_f:
-                p = s_f.split("T")[0].split("-")
-                if len(p) == 3:
-                    fecha_db = f"{p[0]}-{p[1]}-{p[2]}"
-                    fecha_pdf = f"{p[2]}/{p[1]}/{p[0]}"
-            elif "/" in s_f:
-                p = s_f.split("/")
-                if len(p) == 3:
-                    fecha_pdf = f"{p[0]}/{p[1]}/{p[2]}"
-                    fecha_db = f"{p[2]}-{p[1]}-{p[0]}"
-        except Exception as e_f:
-            logger.warning(f"Error interpretando fecha_emision {fecha_emision}: {e_f}")
-
-    if not fecha_db:
-        fecha_db = datetime.now().strftime("%Y-%m-%d")
-    if not fecha_pdf:
-        fecha_pdf = datetime.now().strftime("%d/%m/%Y")
 
     # 4. Generar el PDF Institucional con ReportLab
     datos_emision_pdf = {

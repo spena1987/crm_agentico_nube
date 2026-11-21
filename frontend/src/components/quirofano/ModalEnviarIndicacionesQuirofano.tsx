@@ -486,6 +486,14 @@ export default function ModalEnviarIndicacionesQuirofano({
                 onChange={setModulosEditables}
                 variant="dark"
                 disabled={loading || enviando}
+                previewContext={{
+                  paciente: datos?.paciente?.nombre || '',
+                  dni: datos?.paciente?.dni || '',
+                  cirujano: datos?.cirujano?.nombre || '',
+                  practica: datos?.cirugia?.practica || '',
+                  ojo_intervenido: datos?.cirugia?.ojo || '',
+                  fecha: new Date().toLocaleDateString('es-AR'),
+                }}
               />
 
               {/* Teléfono de Destino WhatsApp */}

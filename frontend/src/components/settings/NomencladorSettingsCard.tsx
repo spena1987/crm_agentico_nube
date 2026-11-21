@@ -33,6 +33,7 @@ import {
 } from 'lucide-react'
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 import { RichConsentEditor } from './RichConsentEditor'
+import RichMarkdownEditor from '../shared/RichMarkdownEditor'
 
 interface ModeloLioFamilia {
   id: string
@@ -3887,7 +3888,7 @@ export default function NomencladorSettingsCard() {
       {/* MODAL CREAR / EDITAR PLANTILLA DE INDICACIÓN MÉDICA */}
       {isIndicacionModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl w-full max-w-2xl p-5 shadow-2xl max-h-[90vh] flex flex-col overflow-hidden">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl w-full max-w-4xl p-5 shadow-2xl max-h-[90vh] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between border-b border-[var(--border)] pb-3 shrink-0">
               <h3 className="text-sm font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
                 <Pill className="text-rose-600" size={18} />
@@ -3972,13 +3973,13 @@ export default function NomencladorSettingsCard() {
 
               <div>
                 <label className="font-bold text-slate-500 block mb-1">Cuerpo de Indicaciones Médicas (Texto Oficial)</label>
-                <textarea
-                  rows={4}
-                  required
+                <RichMarkdownEditor
                   value={indicacionForm.cuerpo_indicaciones}
-                  onChange={(e) => setIndicacionForm({ ...indicacionForm, cuerpo_indicaciones: e.target.value })}
+                  onChange={(val) => setIndicacionForm({ ...indicacionForm, cuerpo_indicaciones: val })}
                   placeholder="Instilar colirios según esquema. Uso de protector ocular..."
-                  className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono text-[11px] outline-none focus:ring-2 focus:ring-rose-500 leading-relaxed"
+                  minHeight="280px"
+                  previewTitle="Vista Previa de Indicaciones (con variables simuladas)"
+                  variant="light"
                 />
               </div>
 
@@ -4055,23 +4056,27 @@ export default function NomencladorSettingsCard() {
                 ))}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold text-slate-500 block mb-1">Pautas de Reposo y Cuidados</label>
-                  <textarea
-                    rows={2}
+                  <RichMarkdownEditor
                     value={indicacionForm.cuidados_generales}
-                    onChange={(e) => setIndicacionForm({ ...indicacionForm, cuidados_generales: e.target.value })}
-                    className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono text-[11px]"
+                    onChange={(val) => setIndicacionForm({ ...indicacionForm, cuidados_generales: val })}
+                    placeholder="Reposo relativo, evitar frotar el ojo, usar gafas oscuras..."
+                    compact={true}
+                    previewTitle="Vista Previa Cuidados"
+                    variant="light"
                   />
                 </div>
                 <div>
                   <label className="font-bold text-slate-500 block mb-1">Pautas de Alarma (Guardia 24 hs)</label>
-                  <textarea
-                    rows={2}
+                  <RichMarkdownEditor
                     value={indicacionForm.pautas_alarma}
-                    onChange={(e) => setIndicacionForm({ ...indicacionForm, pautas_alarma: e.target.value })}
-                    className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono text-[11px]"
+                    onChange={(val) => setIndicacionForm({ ...indicacionForm, pautas_alarma: val })}
+                    placeholder="Dolor intenso, pérdida brusca de visión, secreción purulenta..."
+                    compact={true}
+                    previewTitle="Vista Previa Alarma"
+                    variant="light"
                   />
                 </div>
               </div>

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useId } from 'react'
 import { Plus, Trash2, RotateCcw, AlertTriangle, Pill, FileText, ShieldAlert, Sparkles } from 'lucide-react'
+import RichMarkdownEditor from '../shared/RichMarkdownEditor'
 
 export interface MedicamentoEditable {
   droga: string
@@ -28,6 +29,7 @@ export interface EditorIndicacionesClinicasProps {
   onChange: (modulos: ModuloIndicacionEditable[]) => void
   variant?: 'dark' | 'light'
   disabled?: boolean
+  previewContext?: Record<string, string>
 }
 
 const FRECUENCIAS_SUGERIDAS = [
@@ -126,7 +128,8 @@ export default function EditorIndicacionesClinicas({
   snapshotOriginal,
   onChange,
   variant = 'dark',
-  disabled = false
+  disabled = false,
+  previewContext
 }: EditorIndicacionesClinicasProps) {
   const datalistId = useId()
   const activos = modulos.filter((m) => m.activo)
@@ -282,13 +285,15 @@ export default function EditorIndicacionesClinicas({
       {/* 1. Cuerpo de indicaciones */}
       <div className="space-y-1">
         <label className={cls.label}>Cuerpo de la Indicación:</label>
-        <textarea
-          rows={4}
-          disabled={disabled}
+        <RichMarkdownEditor
           value={moduloActual.cuerpo_indicaciones}
-          onChange={(e) => updateModulo((m) => ({ ...m, cuerpo_indicaciones: e.target.value }))}
+          onChange={(val) => updateModulo((m) => ({ ...m, cuerpo_indicaciones: val }))}
           placeholder="Escriba aquí el cuerpo de las indicaciones, horarios de control o aclaraciones puntuales..."
-          className={cls.input}
+          minHeight="240px"
+          previewTitle={previewContext ? 'Vista Previa con Datos del Paciente' : 'Vista Previa de Indicaciones'}
+          variant={variant}
+          disabled={disabled}
+          previewContext={previewContext}
         />
       </div>
 
@@ -379,13 +384,15 @@ export default function EditorIndicacionesClinicas({
       {/* 3. Cuidados generales */}
       <div className="space-y-1">
         <label className={cls.label}>Cuidados Generales y Reposo:</label>
-        <textarea
-          rows={3}
-          disabled={disabled}
+        <RichMarkdownEditor
           value={moduloActual.cuidados_generales}
-          onChange={(e) => updateModulo((m) => ({ ...m, cuidados_generales: e.target.value }))}
+          onChange={(val) => updateModulo((m) => ({ ...m, cuidados_generales: val }))}
           placeholder="Cuidados de higiene, reposo, uso de protector ocular..."
-          className={cls.input}
+          compact={true}
+          previewTitle="Vista Previa Cuidados"
+          variant={variant}
+          disabled={disabled}
+          previewContext={previewContext}
         />
       </div>
 
@@ -395,13 +402,15 @@ export default function EditorIndicacionesClinicas({
           <ShieldAlert size={12} className="text-amber-400" />
           <span>Pautas de Alarma:</span>
         </label>
-        <textarea
-          rows={2}
-          disabled={disabled}
+        <RichMarkdownEditor
           value={moduloActual.pautas_alarma}
-          onChange={(e) => updateModulo((m) => ({ ...m, pautas_alarma: e.target.value }))}
+          onChange={(val) => updateModulo((m) => ({ ...m, pautas_alarma: val }))}
           placeholder="Signos de alarma por los cuales acudir a guardia..."
-          className={cls.alarmBox}
+          compact={true}
+          previewTitle="Vista Previa Alarma"
+          variant={variant}
+          disabled={disabled}
+          previewContext={previewContext}
         />
       </div>
     </div>
