@@ -104,8 +104,8 @@ Se define una lista local `COLUMNS` de tuplas `(header, width, align)` dentro de
    * Respetar `lleva_lente is False` como anulación explícita; ignorar el string `"Sin LIO"` en `lente_tipo` y usar comprobación `not in (None, "")` para preservar `0 D` y `0°`.
    * Solo cuando `lleva_lio` es verdadero se incluyen `inc_val` (`lente_incision_grados`), `tor_eje` (`lente_torico_eje` cuando `es_tor` es verdadero) y `[PENDIENTE DE CÁLCULO]`.
    * En filas `Sin LIO`, `practica_nombre` (con fallback a `asesorias_quirurgicas.practica_nombre` y `"Sin LIO"`) se escapa contra XML y se envuelve en `Paragraph(..., style_cell_left)`. Si `obs_med` (`observaciones_quirofano` / `observaciones` / `observaciones_medicas`, acotado a `100` chars) está vacío, se aplica `SPAN` `(6..8)` con `""` en las celdas cubiertas; si tiene texto, `SPAN` `(6..7)` con `""` en col `7` y `Paragraph` escapado en col `8`.
-3. **Calibración a ~10 filas/hoja**:
-   * En `~490 pt` netos debajo del encabezado de tabla en Página 1 (~`523 pt` en Página 2+), elevar `TOPPADDING`/`BOTTOMPADDING` a `10.5 pt` (`21 pt` verticales) con fuentes `8–9.5 pt` (y `size=7.5` en los tags inline de `DNI` y `T{val}`) lleva una fila estándar de 2 líneas a `~42.5–45 pt` (~10–11 filas estándar/hoja, ~9–12 según wrapping). Con `turnos == []`, se renderiza la tabla con la fila de encabezados.
+3. **Calibración a ~10 filas/hoja y jerarquía tipográfica ampliada**:
+   * En `~490 pt` netos debajo del encabezado de tabla en Página 1 (~`523 pt` en Página 2+), se reduce `TOPPADDING`/`BOTTOMPADDING` a `7 pt` (`14 pt` verticales) para canjear espacio en blanco por tipografía mayor sin perder ~10 filas/hoja: `Fecha` / `H. CIR.` / `HC` (`11 pt`, `leading=13`), `N°` (`13 pt` Bold, `leading=14`), `OJO` (`10 pt` Bold), `PACIENTE` (`9.5 pt` + `DNI` a `8 pt`, `leading=11.5`), `LENTE / PRÁCTICA` y `ANESTESIA` (`10 pt`, `leading=12`), `DIOPTRIA` (`10.5 pt` Bold + `T` a `9 pt`) y `OBSERVACIONES / LIO` (`10.5 pt`, `leading=12.5`), manteniendo `Cirujano` y `DERIVADOR` en `8.5 pt`. Con `turnos == []`, se renderiza la tabla con la fila de encabezados.
 
 ### 4. Actualización del Modal Frontend (`ModalPlanillaQuirurgicaA4.tsx`)
 

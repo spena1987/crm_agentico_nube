@@ -133,14 +133,25 @@ class TestPlanillaQuirofanoPDF(unittest.TestCase):
         self.assertTrue(any(c[0] == "BACKGROUND" and c[1] == (5, 1) for c in cmds))
         self.assertTrue(any(c[0] == "BACKGROUND" and c[1] == (5, 2) for c in cmds))
 
-        # Row 1: 0 D, 0°, nro_hc 421201, tipo_anestesia without anestesiologo
+        # Row 1: 0 D, 0°, nro_hc 421201, tipo_anestesia without anestesiologo, and enlarged font tiers
         row1 = captured["data"][1]
+        self.assertEqual(row1[0].style.fontSize, 11)
+        self.assertEqual(row1[1].style.fontSize, 11)
         self.assertEqual(row1[2].text, "421201")
+        self.assertEqual(row1[2].style.fontSize, 11)
+        self.assertEqual(row1[3].style.fontSize, 9.5)
+        self.assertEqual(row1[4].style.fontSize, 13)
+        self.assertEqual(row1[5].style.fontSize, 10)
+        self.assertEqual(row1[6].style.fontSize, 10)
         self.assertIn("0 D", row1[7].text)
+        self.assertEqual(row1[7].style.fontSize, 10.5)
         self.assertIn("Inc:</b> 0°", row1[8].text)
         self.assertIn("EJE:</b> 0°", row1[8].text)
+        self.assertEqual(row1[8].style.fontSize, 10.5)
         self.assertEqual(row1[11].text, "Local Asistida + Sedación")
+        self.assertEqual(row1[11].style.fontSize, 10)
         self.assertNotIn("Estelrich", row1[11].text)
+        self.assertIn(("TOPPADDING", (0, 0), (-1, -1), 7), cmds)
 
         # Row 2: missing nro_hc -> "-", missing tipo_anestesia -> "-", 3-col SPAN (6..8)
         row2 = captured["data"][2]

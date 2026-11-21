@@ -2359,39 +2359,54 @@ def generar_pdf_planilla_quirofano_diaria(
         textColor=colors.HexColor('#1E293B'),
         alignment=0  # Left
     )
-    style_cell_left_bold = ParagraphStyle(
-        'PlanillaCellLeftBold',
-        parent=style_normal,
-        fontName='Helvetica-Bold',
-        fontSize=9,
-        leading=11,
-        textColor=colors.HexColor('#0F172A'),
-        alignment=0  # Left
+    style_cell_compact = ParagraphStyle(
+        'PlanillaCellCompact',
+        parent=style_cell_center,
+        fontSize=11,
+        leading=13,
     )
-    style_eye_od = ParagraphStyle(
-        'EyeOD',
-        parent=style_normal,
-        fontName='Helvetica-Bold',
-        fontSize=9.5,
-        leading=11,
-        textColor=colors.white,
-        alignment=1
+    style_cell_compact_bold = ParagraphStyle(
+        'PlanillaCellCompactBold',
+        parent=style_cell_center_bold,
+        fontSize=11,
+        leading=13,
     )
-    style_eye_oi = ParagraphStyle(
-        'EyeOI',
-        parent=style_normal,
-        fontName='Helvetica-Bold',
-        fontSize=9.5,
-        leading=11,
-        textColor=colors.white,
-        alignment=1
+    style_cell_num_bold = ParagraphStyle(
+        'PlanillaCellNumBold',
+        parent=style_cell_center_bold,
+        fontSize=13,
+        leading=14,
     )
-    style_eye_gen = ParagraphStyle(
-        'EyeGen',
+    style_cell_paciente = ParagraphStyle(
+        'PlanillaCellPaciente',
+        parent=style_cell_left,
+        fontSize=9.5,
+        leading=11.5,
+    )
+    style_cell_lente = ParagraphStyle(
+        'PlanillaCellLente',
+        parent=style_cell_left,
+        fontSize=10,
+        leading=12,
+    )
+    style_cell_diop = ParagraphStyle(
+        'PlanillaCellDiop',
+        parent=style_cell_center_bold,
+        fontSize=10.5,
+        leading=12.5,
+    )
+    style_cell_obs = ParagraphStyle(
+        'PlanillaCellObs',
+        parent=style_cell_left,
+        fontSize=10.5,
+        leading=12.5,
+    )
+    style_eye = ParagraphStyle(
+        'EyeBadge',
         parent=style_normal,
         fontName='Helvetica-Bold',
-        fontSize=9.5,
-        leading=11,
+        fontSize=10,
+        leading=12,
         textColor=colors.white,
         alignment=1
     )
@@ -2464,8 +2479,8 @@ def generar_pdf_planilla_quirofano_diaria(
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')]),
-        ('TOPPADDING', (0, 0), (-1, -1), 10.5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 10.5),
+        ('TOPPADDING', (0, 0), (-1, -1), 7),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
         ('LEFTPADDING', (0, 0), (-1, -1), 2.5),
         ('RIGHTPADDING', (0, 0), (-1, -1), 2.5),
         ('LEFTPADDING', (IDX_NRO, 0), (IDX_OJO, -1), 1.5),
@@ -2531,7 +2546,7 @@ def generar_pdf_planilla_quirofano_diaria(
             or "-"
         )
         p_dni_fmt = xml_escape(formatear_dni(p_dni) if p_dni != "-" else "-")
-        p_celda = f"<b>{p_nom}</b><br/><font color='#64748B' size=7.5>DNI: {p_dni_fmt}</font>"
+        p_celda = f"<b>{p_nom}</b><br/><font color='#64748B' size=8>DNI: {p_dni_fmt}</font>"
 
         # 5. Número (Secuencia 1, 2, U)
         pac_id = str(t.get("paciente_id") or "")
@@ -2544,13 +2559,11 @@ def generar_pdf_planilla_quirofano_diaria(
 
         if ojo_val == "OD":
             table_style_commands.append(('BACKGROUND', (IDX_OJO, row_idx), (IDX_OJO, row_idx), colors.HexColor('#DC2626')))
-            eye_style = style_eye_od
         elif ojo_val == "OI":
             table_style_commands.append(('BACKGROUND', (IDX_OJO, row_idx), (IDX_OJO, row_idx), colors.HexColor('#16A34A')))
-            eye_style = style_eye_oi
         else:
             table_style_commands.append(('BACKGROUND', (IDX_OJO, row_idx), (IDX_OJO, row_idx), colors.HexColor('#2563EB')))
-            eye_style = style_eye_gen
+        eye_style = style_eye
 
         # 7. Evaluación de LIO (respetando lleva_lente is False y valores 0 D / 0°)
         lente_tipo_raw = str(t.get("lente_tipo") or "").strip()
@@ -2591,9 +2604,9 @@ def generar_pdf_planilla_quirofano_diaria(
             if es_tor and tor_val not in (None, ""):
                 tor_str = str(tor_val).strip()
                 prefix_t = f"T{tor_str}" if tor_str.isdigit() else tor_str
-                dioptria_lines.append(f"<font color='#0284C7' size=7.5>{xml_escape(prefix_t)}</font>")
+                dioptria_lines.append(f"<font color='#0284C7' size=9>{xml_escape(prefix_t)}</font>")
 
-            diop_cell = Paragraph("<br/>".join(dioptria_lines) if dioptria_lines else "-", style_cell_center)
+            diop_cell = Paragraph("<br/>".join(dioptria_lines) if dioptria_lines else "-", style_cell_diop)
 
             obs_parts = []
             inc_val = t.get("lente_incision_grados")
@@ -2610,19 +2623,19 @@ def generar_pdf_planilla_quirofano_diaria(
             if obs_med:
                 obs_parts.append(xml_escape(obs_med))
 
-            lente_cell = Paragraph(lente_mod, style_cell_left)
-            obs_cell = Paragraph(" · ".join(obs_parts) if obs_parts else "-", style_cell_left)
+            lente_cell = Paragraph(lente_mod, style_cell_lente)
+            obs_cell = Paragraph(" · ".join(obs_parts) if obs_parts else "-", style_cell_obs)
         else:
             # Sin LIO: mostrar práctica quirúrgica con SPAN en LENTE + DIOPTRIA (+ OBS si está vacía)
             practica_txt = (
                 str(t.get("practica_nombre") or (t.get("asesorias_quirurgicas") or {}).get("practica_nombre") or "").strip()
                 or "Sin LIO"
             )
-            lente_cell = Paragraph(xml_escape(practica_txt), style_cell_left)
+            lente_cell = Paragraph(xml_escape(practica_txt), style_cell_lente)
             diop_cell = ""
             if obs_med:
                 table_style_commands.append(('SPAN', (IDX_LENTE, row_idx), (IDX_DIOP, row_idx)))
-                obs_cell = Paragraph(xml_escape(obs_med), style_cell_left)
+                obs_cell = Paragraph(xml_escape(obs_med), style_cell_obs)
             else:
                 table_style_commands.append(('SPAN', (IDX_LENTE, row_idx), (IDX_OBS, row_idx)))
                 obs_cell = ""
@@ -2646,18 +2659,18 @@ def generar_pdf_planilla_quirofano_diaria(
 
         # Ensamblado de fila (12 columnas)
         fila = [
-            Paragraph(f_disp, style_cell_center),
-            Paragraph(f"<b>{h_cir}</b>", style_cell_center_bold),
-            Paragraph(xml_escape(hc_val), style_cell_center),
-            Paragraph(p_celda, style_cell_left),
-            Paragraph(f"<b>{sec_val}</b>", style_cell_center_bold),
+            Paragraph(f_disp, style_cell_compact),
+            Paragraph(f"<b>{h_cir}</b>", style_cell_compact_bold),
+            Paragraph(xml_escape(hc_val), style_cell_compact),
+            Paragraph(p_celda, style_cell_paciente),
+            Paragraph(f"<b>{sec_val}</b>", style_cell_num_bold),
             Paragraph(ojo_val, eye_style),
             lente_cell,
             diop_cell,
             obs_cell,
             Paragraph(xml_escape(cirujano_str), style_cell_left),
             Paragraph(xml_escape(derivador_str), style_cell_left),
-            Paragraph(xml_escape(anestesia_str), style_cell_left),
+            Paragraph(xml_escape(anestesia_str), style_cell_lente),
         ]
         tabla_data.append(fila)
 
