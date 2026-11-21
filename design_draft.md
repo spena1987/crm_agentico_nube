@@ -1,208 +1,109 @@
-# Planilla Quirúrgica Operativa Diaria de Quirófano (A4 Landscape)
+# Redesign of A4 Surgical Chest Stickers (`ModalCartelesPechoA4`)
 
 *   **Author:** malko
 *   **Status:** Draft
-*   **Date:** 2026-11-09
+*   **Date:** 2026-11-20
 
 --------------------------------------------------------------------------------
 
 ## Overview
 
-Este documento de diseño define la especificación técnica y el plan de implementación para la **Planilla Quirúrgica Operativa Diaria** en formato A4 apaisado (Landscape), orientada al personal de quirófano (enfermería, instrumentación y anestesiología).
-
-El sistema sustituye la confección manual en papel por una generación determinística de alta densidad visual desde el CRM. Integra tres capacidades críticas:
-1. **Sistematización de la Hora del Paciente (`H. PAC.`):** Incorporación de un nuevo campo persistido en base de datos con cálculo automático sugerido en la agenda (T - 50m / T - 30m / T - 60m según prestación) y edición manual flexible.
-2. **Inferencia Algorítmica de Secuencia Bilateral (`Numero`):** Rotulado inequívoco de lateralidad (`1` = Primer ojo, `2` = Segundo ojo contralateral, `U` = Unilateral / Ojo único) para mitigar el riesgo de error de sitio quirúrgico.
-3. **Control y Seguridad Visual de Implantes (LIO):** Extracción condensada de datos de lente intraocular, poder, toricidad, eje e incisión, alertas clínicas intraquirúrgicas prioritarias ("NO DILATAR", cuidados posturales) y señalética cromática estricta para lateralidad (`OD` fondo rojo / `OI` fondo verde manzana).
-4. **Filtros Operativos en Pizarra en Vivo:** Botón de emisión inmediata en `PizarraQuirofanoEnVivo` con filtros por sala quirúrgica (Todas / Quirófano 1 / Quirófano 2) y tipo de procedimiento (Todas / Con LIO / Sin LIO).
+`ModalCartelesPechoA4.tsx` generates printable A4 sheets (`3x2` 6-up and `4x2` 8-up) of chest identification stickers worn by surgical patients. This design redefines the sticker layout to maximize readability of critical operating-room identifiers—patient name, surgical procedure, incision degrees, intraocular lens (`LIO`) diopter, and toric `T` + axis—by removing non-essential institutional and administrative labels and introducing full-card black/white polarity inversion by operative eye (`OD` vs `OI`).
 
 ## The Problem
 
-En la rutina actual de quirófano de Centrovisión se identificaron tres cuellos de botella y riesgos operativos:
-
-1. **Desacople entre Hora Quirúrgica y Hora de Citación:** El sistema únicamente programa la hora de inicio quirúrgico (`hora_inicio`). El horario de ingreso del paciente a prequirófano para dilatación pupilar y anestesia tópica se calcula verbalmente o de forma dispersa. Esto produce llegadas tardías de pacientes o aglomeraciones en la sala de dilatación.
-2. **Ausencia de Indicador Rápido de Secuencia Bilateral:** En pacientes sometidos a cirugías bilaterales escalonadas (facoemulsificación de ambos ojos en días consecutivos o semanas alternas), el equipo de quirófano debe revisar manualmente el historial para saber si el paciente entra a su primer ojo o al segundo ojo, elevando el riesgo cognitivo en sala.
-3. **Dispersión de Datos del LIO en Mesa Quirúrgica:** El equipo de instrumentación requiere una hoja impresa en soporte físico resistente de 14 columnas para cotejar el lente físico extraído de la caja con la programación médica antes de abrir el blister estéril. La falta de este reporte obligaba a depender de pantallas interactivas o planillas manuscritas paralelas propensas a errores de transcripción.
+1. **Low-value clutter restricts typography:** Fixed text (`"CENTROVISIÓN QUIRÚRGICO"`, `obraSocial`, `"LENTE INTRAOCULAR (LIO)"`, `"CIRUGÍA SIN IMPLANTE DE LIO"`, and the 3-item bottom checklist `[ ] Dilatación`, `[ ] Consentimiento`, `[ ] Alergias`) occupies roughly 35–40% of each sticker's vertical space, forcing `Procedimiento` into a 2-line clamp and shrinking incision, diopter, and toric values.
+2. **Eye laterality contrast is limited to one mid-card strip:** Both `OD` and `OI` stickers currently share a white card background, slowing at-a-glance differentiation in the operating room.
+3. **Print engine and clinical value bugs:** `handleImprimir()` injects a manual `cssA4` stylesheet into a print `iframe` where `.etiqueta-pecho-card` hardcodes `background: #ffffff !important; color: #000000 !important;`, which would override black `OD` styling. Additionally, `lente_torico_eje || 90` turns a `0°` axis into `90°`, `lente_dioptria ? ... : 'N/D'` hides `0 D` lenses, and `p.includes('IMPL')` falsely flags non-IOL implants as requiring an IOL.
 
 ## Goals
 
-*   **G1 - Persistencia de Citación Prequirúrgica:** Añadir el campo `hora_citacion_paciente` en la tabla `turnos_quirofano` con sugerencia automática reactiva (`hora_inicio - 50 min` para cataratas) editable en la agenda.
-*   **G2 - Inferencia de Secuencia Bilateral:** Implementar un algoritmo que compare los turnos programados e históricos del paciente para calcular automáticamente `1`, `2` o `U`, permitiendo anulación manual en la ficha del turno.
-*   **G3 - Generador PDF A4 Landscape de Alta Fidelidad:** Crear un generador ReportLab en orientación apaisada (297 × 210 mm, 794 pt útiles) que replique la estructura de 14 columnas de la planilla física institucional con badges cromáticos (`[OD]` rojo / `[OI]` verde) y condensación de LIO.
-*   **G4 - Acceso y Filtros en Pizarra en Vivo:** Incorporar el botón de descarga/impresión directa en la barra de herramientas de `PizarraQuirofanoEnVivo.tsx`, permitiendo filtrar por sala/quirófano y por tipo de procedimiento (todas vs solo con LIO).
-*   **G5 - Tiempo de Generación Sub-segundo:** La generación y entrega del stream PDF debe completarse en menos de 800 ms para jornadas completas de hasta 40 pacientes.
+*   Remove `"CENTROVISIÓN QUIRÚRGICO"`, `obraSocial`, `"CIRUGÍA SIN IMPLANTE DE LIO"`, `"LENTE INTRAOCULAR (LIO)"`, and the bottom checklist (`Dilatación`, `Consentimiento`, `Alergias`) from both `3x2` and `4x2` layouts.
+*   Preserve `Fecha • Hora`, `SALA`, `#CódigoTurno`, `Cirujano`, `Nombre del Paciente`, `DNI`, `Edad`, and—when an IOL is assigned—`lente_tipo` and `Lote`.
+*   Significantly enlarge `Nombre`, `Procedimiento` (removing the 2-line clamp when space allows), `Incisión`, `Dioptría`, and toric `T` + `eje`.
+*   Omit the IOL block completely for non-IOL surgeries (`!exigeLioClinico && !tieneLioCargado`), and display `"LENTE NO CALCULADA"` when the procedure requires an IOL and no lens is assigned.
+*   Apply full-card polarity inversion: `OD` with full black background and white text (preserving a white QR quiet zone and `2mm` outer white cut margin), `OI` with white background and black text, and `AO` with a distinct double-line frame.
+*   Ensure 100% print/preview CSS parity (`print-color-adjust: exact`) and fix `0°` / `0 D` and non-IOL keyword false-positive bugs.
 
 ## Non-Goals
 
-*   **NG1:** No reemplaza el Libro Oficial de Quirófano ni el Parte Quirúrgico individual de la historia clínica digital.
-*   **NG2:** No modifica la mensajería ni las plantillas de WhatsApp enviadas a los médicos prestadores (`agenda_quirurgica_prestador`).
-*   **NG3:** No interfiere con el flujo de recordatorios automáticos de pacientes, salvo para garantizar que el recordatorio informe la hora de citación (`H. PAC.`) y no la hora de cirugía.
+*   Modifying thermal wristband printing (`ModalImprimirPulsera`) or A4 daily surgical schedules (`ModalPlanillaQuirurgicaA4`).
+*   Removing either `3x2` (6-up) or `4x2` (8-up) layout modes.
+*   Altering backend database schemas or turno APIs.
 
 ## Open Questions
 
-*   **Question 1:** ¿El intervalo sugerido por defecto para `H. PAC.` debe ser idéntico para todos los cirujanos (50 min) o se requiere una configuración diferenciada por profesional? *(Resuelto: 50 minutos por defecto general para cataratas, 30 min para inyecciones, 60 min para vitrectomías/complejas, con edición manual libre).*
-*   **Question 2:** ¿La numeración secuencial de cirugías del día (# Orden 1, 2, 3...) debe reiniciar por cada sala o ser correlativa para todo el centro médico? *(Resuelto: correlativa por orden de hora de inicio en el reporte unificado, o numerada por sala cuando el filtro por sala está activo).*
+*   None. All layout, polarity, LIO detection, and print requirements are resolved.
 
 ## Critical User Journeys (CUJs)
 
-### CUJ 1: Programación de Turno con Citación Sugerida en Agenda
-*   **Given**: La secretaria quirúrgica abre la pantalla de *Programación Quirúrgica* o el modal de alta de turno.
-*   **When**: Selecciona la fecha `2026-11-10` y la hora de cirugía `09:00 hs` para una facoemulsificación.
-*   **Then**: El campo `hora_citacion_paciente` se completa automáticamente con `08:10 hs` (50 min antes). La secretaria puede aceptar dicho horario o modificarlo a `08:00 hs` con un clic antes de guardar.
+### CUJ 1: Printing `OD` vs `OI` vs `AO` Chest Stickers in `3x2` and `4x2`
+*   **Given**: A list of scheduled surgical turns for `OD`, `OI`, and `AO` eyes in `ModalCartelesPechoA4`.
+*   **When**: Staff previews and prints in either `3x2` or `4x2` format.
+*   **Then**: `OD` cards render with a full black body and white text (and a scannable white-framed QR code inside a `2mm` outer cut margin), `OI` cards render with a white body and black text, and `AO` cards render with a double-line outer frame and solid black eye strip.
 
-### CUJ 2: Emisión de la Planilla Quirúrgica en Pizarra en Vivo
-*   **Given**: La instrumentadora quirúrgica ingresa a las 07:15 hs a la *Pizarra de Quirófano en Vivo*.
-*   **When**: Hace clic en el botón `[Planilla Diaria A4]`, selecciona su quirófano asignado ("Quirófano 1") y presiona "Descargar PDF".
-*   **Then**: El sistema genera y abre inmediatamente el PDF en A4 apaisado con las 14 columnas completas, identificando lateralidad con colores vivos, pacientes de segundo ojo con `[2]`, y los modelos/dioptrías exactas de los lentes para preparar las mesas quirúrgicas.
-
---------------------------------------------------------------------------------
+### CUJ 2: Non-IOL vs Uncalculated-IOL vs Calculated-IOL Procedures
+*   **Given**: Three turns: (a) eyelid/intravitreal surgery without IOL, (b) cataract surgery with no IOL assigned, and (c) toric cataract surgery with `0 D` or `21.5 D`, `0°` or `180°` axis, and incision degrees assigned.
+*   **When**: Staff opens `ModalCartelesPechoA4` and prints.
+*   **Then**: Case (a) omits the IOL block entirely and expands `Procedimiento`; Case (b) displays `"LENTE NO CALCULADA"`; Case (c) omits `"LENTE INTRAOCULAR (LIO)"` and renders enlarged `Incisión`, `Dioptría` (including `0 D`), and `T + eje` (including `0°`) alongside `lente_tipo` and `Lote`.
 
 ## Technical Plan (Architecture)
 
-### 1. Diagrama de Flujo del Sistema (Data Flow)
+### 1. Semantic Print-Safe Styling & Polarity Inversion (`ModalCartelesPechoA4.tsx`)
+*   **Shared Print Stylesheet Parity:** Replace scattered Tailwind color/border classes inside `renderEtiqueta()` with explicit semantic CSS classes (`.etiqueta-inner-od`, `.etiqueta-inner-oi`, `.etiqueta-inner-ao`, `.qr-quiet-zone`, `.sala-pill`, `.lio-box`, `.lio-metric-pill`, `.lio-toric-badge`, `.lio-no-calc-box`) defined identically in both `<style jsx global>` (`@media print`) and the `cssA4` string injected by `handleImprimir()`.
+*   **Remove White-Override Trap:** Remove hardcoded `background: #ffffff !important; color: #000000 !important;` from `.etiqueta-pecho-card` in both `cssA4` and `@media print`, and enable `-webkit-print-color-adjust: exact !important; print-color-adjust: exact !important;` so `OD` black backgrounds print faithfully.
+*   **Hardware Margins & QR Quiet Zone:** Each `.etiqueta-pecho-card` keeps a `2mm` white outer safety margin inside the dashed cut border. Inside that cut margin:
+    *   `OD` renders `.etiqueta-inner-od` (`background: #000000; color: #ffffff`), inverting `SALA`, borders, and `Incisión`/`Toric` badges to white-on-black or black-on-white, and wrapping the QR in `.qr-quiet-zone` (`background: #ffffff; padding: 6px;`) with `margin: 2` in `QRCode.toDataURL`.
+    *   `OI` renders `.etiqueta-inner-oi` (`background: #ffffff; color: #000000; border: 2px solid #000000`).
+    *   `AO` renders `.etiqueta-inner-ao` (`background: #ffffff; color: #000000; border: 4px double #000000`) with a solid black `AMBOS OJOS (AO)` eye strip.
+*   **Unified Padding:** Use identical padding (`8px 10px` for `4x2`, `10px 12px` for `3x2`) in both preview and `cssA4` so layout proportions match 1-to-1.
+
+### 2. Content Simplification & Enlarged Typography
+*   **Header Row:** Keep QR + `Fecha • Hora`, `SALA`, `#CódigoTurno`, and `Cirujano` (removing `"CENTROVISIÓN QUIRÚRGICO"`).
+*   **Patient Row:** Keep `Nombre` (enlarged), `DNI`, and `Edad` (removing `obraSocial`).
+*   **Eye Strip & Procedure:** Keep the eye laterality strip (`OJO DERECHO (OD)`, `OJO IZQUIERDO (OI)`, `AMBOS OJOS (AO)`), and enlarge `Procedimiento` without the 2-line `-webkit-line-clamp` so multi-word procedures remain readable and expand when the IOL block is omitted.
+*   **Bottom Checklist Removed:** Delete `[ ] Dilatación`, `[ ] Consentimiento`, and `[ ] Alergias: _______`.
+
+### 3. Conditional IOL Block & Clinical Bug Fixes
+*   **Precision IOL Requirement Detection (`requiereLenteSemantico`):** Narrow keyword matching to genuine intraocular-lens procedures (`CATARATA`, `FACO`, `FACOEMULSIFICACION`, `LIO`, `LENTE`, `ICL`, `ARTISAN`, `RECAMBIO`, `EXTRACAPSULAR`, `IMPLANTACION SECUNDARIA`, `IMPLANTE DE LIO`, `IMPLANTE LIO`) rather than generic `IMPL`, avoiding false positives on glaucoma valves or stromal implants.
+*   **Explicit Null/Empty Checks:**
+    *   `tieneDioptria = t.lente_dioptria !== null && t.lente_dioptria !== undefined && String(t.lente_dioptria).trim() !== ''` (preserves `0` / `0 D`).
+    *   `tieneEje = t.lente_torico_eje !== null && t.lente_torico_eje !== undefined && String(t.lente_torico_eje).trim() !== ''` (preserves `0°` without defaulting to `90°`).
+    *   `tieneIncision = t.lente_incision_grados !== null && t.lente_incision_grados !== undefined && String(t.lente_incision_grados).trim() !== ''` (preserves `0°`).
+    *   `tieneLioCargado = Boolean((t.lente_tipo && String(t.lente_tipo).trim() !== '') || tieneDioptria)` (avoids hiding an assigned lens if `lleva_lente` was unset).
+*   **Three Render States:**
+    1. `tieneLioCargado`: Render IOL box (without `"LENTE INTRAOCULAR (LIO)"` header) with enlarged **Row 1** (`Inc: {grados}°`, large `Dioptría`, large `T{valor} ({eje}°)` badge) and **Row 2** (`lente_tipo` + `Lote: ...`).
+    2. `!tieneLioCargado && exigeLioClinico`: Render high-contrast `"LENTE NO CALCULADA"` alert box.
+    3. `!tieneLioCargado && !exigeLioClinico`: Omit the IOL block completely.
 
 ```mermaid
 flowchart TD
-    subgraph UI ["Frontend (Next.js)"]
-        PQV["PizarraQuirofanoEnVivo.tsx<br/>Botón: 'Planilla Diaria A4'"]
-        MPQ["ModalPlanillaFiltros.tsx<br/>Filtros: Fecha, Sala, Tipo LIO"]
-        FTM["FichaTurnoModal.tsx / Programacion<br/>Carga H. PAC. (T - 50m auto)"]
-    end
-
-    subgraph Backend ["Backend (FastAPI)"]
-        EP["GET /api/quirofanos/planilla-diaria-pdf<br/>Params: fecha, quirofano_id, tipo_filtro"]
-        SVC["PlanillaQuirofanoService<br/>Lógica de inferencia y agrupación"]
-        PDF["PDFService.generar_pdf_planilla_quirofano_diaria<br/>ReportLab Landscape A4"]
-    end
-
-    subgraph DB ["Base de Datos (Supabase / Postgres)"]
-        TQ[("turnos_quirofano<br/>+ hora_citacion_paciente<br/>+ secuencia_ojo")]
-        PAC[("pacientes<br/>nombre, nro_hc, dni, obra_social")]
-        QUI[("quirofanos<br/>nombre, codigo")]
-    end
-
-    FTM -->|Guarda hora_citacion| TQ
-    PQV -->|Abre| MPQ
-    MPQ -->|Invoca stream| EP
-    EP --> SVC
-    SVC -->|Consulta turnos + joins| TQ
-    TQ --- PAC
-    TQ --- QUI
-    SVC -->|Inferir secuencia 1, 2, U| SVC
-    SVC -->|Formatear LIO e incisiones| PDF
-    PDF -->|Retorna binario PDF A4 Landscape| EP
-    EP -->|StreamingResponse application/pdf| MPQ
+    A["Render Sticker (3x2 or 4x2)"] --> B{"Eye Laterality"}
+    B -- OD --> C["2mm white cut margin + Full Black body / White text + White QR quiet-zone"]
+    B -- OI --> D["White body / Black text + 2px black border"]
+    B -- AO --> E["White body + 4px double border + Black AO strip"]
+    A --> F{"IOL State"}
+    F -- tieneLioCargado --> G["Enlarged Incision, Diopter (incl. 0 D), T + Axis (incl. 0°) + Tipo & Lote"]
+    F -- exigeLioClinico --> H["Box: LENTE NO CALCULADA"]
+    F -- non-IOL --> I["Omit IOL block; Procedure expands"]
 ```
-
-### 2. Modificaciones de Esquema en Base de Datos
-
-Migración SQL incremental e idempotente:
-
-```sql
--- Adición de columna para hora de citación prequirúrgica
-ALTER TABLE public.turnos_quirofano 
-  ADD COLUMN IF NOT EXISTS hora_citacion_paciente TIME;
-
--- Adición de columna para override manual de secuencia ocular ('1', '2', 'U')
-ALTER TABLE public.turnos_quirofano 
-  ADD COLUMN IF NOT EXISTS secuencia_ojo VARCHAR(5) DEFAULT NULL;
-
--- Índice compuesto para acelerar la consulta cronológica diaria de planilla
-CREATE INDEX IF NOT EXISTS idx_turnos_quirofano_planilla_diaria 
-  ON public.turnos_quirofano(fecha_cirugia, hora_inicio);
-```
-
-### 3. Algoritmo de Inferencia de Secuencia Ocular (`Numero`: 1, 2, U)
-
-El campo `secuencia_ojo` en la planilla se resuelve mediante la siguiente regla clínica determinística:
-
-1. **Override Manual:** Si `turno.secuencia_ojo` posee un valor explícito (`1`, `2` o `U`), se utiliza dicho valor de forma prioritaria.
-2. **Inferencia Automática:**
-   - Si el turno posee `turno_par_id` o el paciente tiene dos turnos para la misma patología/asesoría:
-     - El turno con `fecha_cirugia` y `hora_inicio` menor se cataloga como `1` (Primer ojo).
-     - El turno con fecha/hora mayor se cataloga como `2` (Segundo ojo bilateral).
-   - Si el paciente tiene una cirugía previa completada en el ojo contralateral (`estado IN ('operado', 'finalizado')`): se asigna automáticamente `2`.
-   - Si el procedimiento es típicamente bilateral escalonado (catarata, LIO, faco, ICL) pero no se detecta antecedente contralateral: se asigna `1`.
-   - Si el procedimiento es unilateral monocular o patología uniojo (trauma, retina específica, inyección aislada): se asigna `U`.
-
-### 4. Especificación del Layout PDF (ReportLab - A4 Landscape)
-
-* **Dimensiones de Página:** A4 Horizontal (`landscape(A4)` = 841.89 pt × 595.27 pt).
-* **Márgenes:** Izquierdo: 24 pt, Derecho: 24 pt, Superior: 24 pt, Inferior: 24 pt.
-* **Ancho Imprimible Útil:** 793.89 pt $\approx$ **794 pt**.
-
-#### Distribución Exacta de Anchos de Columna (14 Columnas):
-
-| # | Columna | Ancho (pt) | Alineación | Formateo y Reglas Visuales |
-| :-: | :--- | :-: | :-: | :--- |
-| 1 | `Fecha` | 42 | Centro | `DD/MM/AA` (ej: `10/11/26`) |
-| 2 | `H. PAC.` | 38 | Centro | `HH:MM` negrita (ej: `08:10`) |
-| 3 | `H. CIR.` | 38 | Centro | `HH:MM` negrita (ej: `09:00`) |
-| 4 | `HC` | 44 | Centro | Número de HC / Ficha Geclisa (ej: `462289`) |
-| 5 | `PACIENTE` | 112 | Izquierda | Nombre completo en mayúsculas negrita |
-| 6 | `Número` | 20 | Centro | `1`, `2` o `U` centrado en negrita |
-| 7 | `OJO` | 24 | Centro | Badge fondo rojo `#EF4444` (`OD`) o verde `#16A34A` (`OI`) con texto blanco |
-| 8 | `LENTE` | 70 | Izquierda | Denominación clínica (ej: `CLAREON VIVITY T`, `ICL`, `SIN LENTE`) |
-| 9 | `DIOPTRIA` | 52 | Centro | Poder y código tórico (ej: `T2 19,5`, `27`, `-8`) |
-| 10 | `OBS` | 105 | Izquierda | Incisión axial (`X 180° EJE 88°`, `X 116° 2,8`) y advertencias destacadas |
-| 11 | `Cirujano` | 75 | Izquierda | Nombre del cirujano (ej: `DR. LABAT`) |
-| 12 | `DERIVADOR` | 65 | Izquierda | Oftalmólogo remitente o `----------------` |
-| 13 | `ANESTESISTA` | 55 | Izquierda | Anestesiólogo interviniente |
-| 14 | `OBRA SOCIAL` | 54 | Centro | Sigla de cobertura (ej: `OSDE`, `DAMSU`) |
-| **Total** | | **794 pt** | | *Ajuste exacto sin desborde de página* |
-
-### 5. Contrato de la API Backend
-
-```http
-GET /api/quirofanos/planilla-diaria-pdf?fecha=2026-11-10&quirofano_id=all&tipo_filtro=todos
-```
-
-* **Query Parameters:**
-  - `fecha` (string, requerido, formato `YYYY-MM-DD`): Fecha de la jornada quirúrgica.
-  - `quirofano_id` (string, opcional, default: `all`): Identificador del quirófano para filtrar o `all` para consolidar todas las salas.
-  - `tipo_filtro` (string, opcional, default: `todos`): `todos` (todas las cirugías), `con_lio` (solo implantes LIO), `sin_lio` (procedimientos menores/retina).
-* **Response:**
-  - Status `200 OK`
-  - Headers: `Content-Type: application/pdf`, `Content-Disposition: inline; filename="Planilla_Quirofano_2026-11-10.pdf"`
-  - Body: Flujo binario directo de bytes ReportLab.
-
---------------------------------------------------------------------------------
-
-## Alternatives Considered
-
-### Alternative A: Cálculo en Memoria de H. PAC. sin Columna en Base de Datos
-*   **Pros**: No requiere migración de esquema SQL ni cambios en el modelo de persistencia.
-*   **Cons**: No permite guardar horarios de citación especiales para pacientes que requieren dilataciones complejas (sinequias, pseudoexfoliación), anestesia general o traslados en ambulancia. La recepción del centro médico y quirófano pierden consistencia auditada.
-*   **Reason for Rejection**: *Rejected by author*: El horario de ingreso al centro médico es un dato operativo y asistencial que debe quedar registrado y sistematizado en el turno quirúrgico.
-
-### Alternative B: Carga Manual Obligatoria del Número de Ojo (1, 2, U)
-*   **Pros**: Cero lógica algorítmica de inferencia en el backend.
-*   **Cons**: Aumenta la carga administrativa de las secretarias y multiplica el riesgo de error humano al tipear la lateralidad, comprometiendo la seguridad de sitio quirúrgico.
-*   **Reason for Rejection**: *Rejected by author*: El sistema ya posee los antecedentes y la programación de ambos ojos del paciente; la inferencia automática garantiza coherencia y reserva la selección manual únicamente para excepciones de cirugías contralaterales realizadas en centros externos.
-
-### Alternative C: Formato Vertical Estándar (A4 Portrait)
-*   **Pros**: Reutiliza la configuración geométrica básica de otros reportes del CRM.
-*   **Cons**: La planilla clínica exige 14 columnas de información crítica. En 547 pt de ancho imprimible útil, cada columna dispondría en promedio de apenas 39 pt, forzando tipografías microscópicas (< 6 pt) que impiden la lectura rápida a distancia requerida por el personal con vestimenta estéril.
-*   **Reason for Rejection**: *Rejected by author*: La orientación horizontal apaisada (Landscape, 794 pt útiles) es el estándar ergonómico indispensable para la legibilidad en la mesa y pared de quirófano.
-
-### Alternative D: Vista Digital Interactiva Exclusiva (Sin Generación de PDF Físico)
-*   **Pros**: Ahorro de papel y actualización en tiempo real en monitores.
-*   **Cons**: Dentro del quirófano, durante la preparación de campos e instrumental estéril, la instrumentadora y el cirujano no pueden tocar pantallas táctiles ni mouses de computadora. El soporte físico en papel continúa siendo obligatorio en el protocolo de acreditación y seguridad quirúrgica.
-*   **Reason for Rejection**: *Rejected by author*: La rutina institucional y la esterilidad exigen contar con el documento físico impreso al iniciar la jornada.
-
---------------------------------------------------------------------------------
 
 ## Non-Functional Requirements
 
-*   **Seguridad y Privacidad (PHI):**
-    - La planilla contiene nombres, DNI y coberturas médicas. Su acceso está restringido a usuarios autenticados con rol de Quirófano, Médico o Administrador mediante tokens JWT de Supabase.
-    - Se prohíbe el indexado público o almacenamiento en buckets abiertos; la generación es efímera en memoria (streaming directo).
-*   **Rendimiento y Tiempo de Respuesta:**
-    - Generación en memoria con ReportLab en menos de 800 ms para listas de hasta 40 cirugías diarias.
-    - La consulta de base de datos realiza joins optimizados sobre `turnos_quirofano`, `pacientes` y `quirofanos` utilizando el índice compuesto `(fecha_cirugia, hora_inicio)`.
-*   **Compatibilidad y Fidelidad de Impresión:**
-    - Cumplimiento estricto de las dimensiones físicas A4 Landscape en cualquier lector de PDF e impresora institucional (Brother, HP, Epson).
-    - Tipografía incrustada estándar (Helvetica / Helvetica-Bold) para garantizar cero dependencias de fuentes externas o problemas de visualización en offline.
+*   **Print & Optical Readability:** QR codes on black `OD` cards must maintain a minimum `6px` white quiet zone (`margin: 2` in `QRCode.toDataURL`) and `print-color-adjust: exact` so laser printers and S224/camera scanners read reliably without clipping.
+*   **Clinical Data Fidelity:** Never coerce `0` diopters or `0°` toric/incision angles to fallback strings or `90°`.
+
+## Alternatives Considered
+
+### Alternative A: Banner-only eye differentiation (keep white background on `OD`)
+*   **Pros**: Uses less laser toner and avoids `cssA4` polarity inversion rules.
+*   **Cons**: Slower visual distinction between right-eye and left-eye patients in the operating room when scanning a patient's chest sticker from a distance.
+*   **Reason for Rejection**: Rejected by author: full-card black background with white text for `OD` vs. white background with black text for `OI` is required for immediate visual identification.
+
+### Alternative B: Remove `lente_tipo`, `Lote`, `Edad`, or `#CódigoTurno`
+*   **Pros**: Frees minor extra horizontal space on `4x2` stickers.
+*   **Cons**: Removes useful surgical verification metadata (`lente_tipo`, `Lote`) and patient/turn identification (`Edad`, `#CódigoTurno`).
+*   **Reason for Rejection**: Rejected by author: existing header metadata and lens model/lot fields must remain alongside enlarged clinical metrics.
 
 --------------------------------------------------------------------------------
 
@@ -210,81 +111,31 @@ GET /api/quirofanos/planilla-diaria-pdf?fecha=2026-11-10&quirofano_id=all&tipo_f
 
 ### Target Files to Create/Modify
 
-#### 1. `database/migrations/20261109_add_hora_citacion_secuencia_quirofano.sql` (Create)
-*   **Type / Scope**: Database Migration Script (PostgreSQL / Supabase).
+#### 1. `frontend/src/components/quirofano/modal/ModalCartelesPechoA4.tsx` (Modify)
+*   **Type / Scope**: React A4 Print Modal Component (`3x2` and `4x2` stickers, preview + iframe `cssA4` + `@media print`).
 *   **Proposed Changes**:
-    - DDL `ALTER TABLE public.turnos_quirofano ADD COLUMN IF NOT EXISTS hora_citacion_paciente TIME;`
-    - DDL `ALTER TABLE public.turnos_quirofano ADD COLUMN IF NOT EXISTS secuencia_ojo VARCHAR(5) DEFAULT NULL;`
-    - DDL `CREATE INDEX IF NOT EXISTS idx_turnos_quirofano_planilla_diaria ON public.turnos_quirofano(fecha_cirugia, hora_inicio);`
-*   **Rationale**: Persistir el horario sistematizado de citación prequirúrgica y el selector de secuencia ocular en la base de datos sin downtime.
-
-#### 2. `backend/app/schemas/quirofano.py` (Modify)
-*   **Type / Scope**: Pydantic Data Models.
-*   **Proposed Changes**:
-    - Incorporar `hora_citacion_paciente: Optional[str] = None` y `secuencia_ojo: Optional[str] = None` en los esquemas `TurnoQuirofanoBase`, `TurnoQuirofanoCreate`, `TurnoQuirofanoUpdate`, y `TurnoQuirofanoResponse`.
-*   **Rationale**: Validar y serializar los nuevos campos en las operaciones de lectura, creación y actualización de turnos.
-
-#### 3. `backend/app/services/pdf_service.py` (Modify)
-*   **Type / Scope**: ReportLab PDF Generator Service.
-*   **Proposed Changes**:
-    - Implementar la función `generar_pdf_planilla_quirofano_diaria(turnos: List[Dict], fecha_str: str, sala_filtro: Optional[str], config_override: Optional[Dict]) -> bytes`.
-    - Configurar documento A4 Landscape (`pagesize=landscape(A4)`), anchos exactos de 14 columnas sumando 794 pt, celda `OJO` con badges rojo/verde (`#EF4444` / `#16A34A`), formateo condensado de LIO (tipo, dioptría, tórico, eje, incisión) y advertencias clínicas en `OBS`.
-*   **Rationale**: Es el motor generador del artefacto físico y digital exigido por el personal de quirófano.
-
-#### 4. `backend/app/routers/quirofano.py` (Modify)
-*   **Type / Scope**: FastAPI REST Controller.
-*   **Proposed Changes**:
-    - Crear endpoint `GET /api/quirofanos/planilla-diaria-pdf` recibiendo `fecha: str`, `quirofano_id: Optional[str] = "all"`, `tipo_filtro: Optional[str] = "todos"`.
-    - Consulta turnos activos con join a `pacientes` y `quirofanos`.
-    - Aplica la inferencia de secuencia `1` / `2` / `U` y el filtrado por sala/procedimiento.
-    - Retorna `StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf")`.
-*   **Rationale**: Punto de entrada HTTP seguro consumido por el frontend para emitir o descargar la planilla.
-
-#### 5. `backend/tests/test_planilla_quirofano_pdf.py` (Create)
-*   **Type / Scope**: Pytest Test Suite.
-*   **Proposed Changes**:
-    - Test de inferencia de secuencia bilateral (`1`, `2`, `U`).
-    - Test de renderizado ReportLab Landscape A4 (dimensiones de página, 14 columnas, cabecera PDF `%PDF-`).
-    - Test de formateo condicional de LIO y advertencias clínicas en `OBS`.
-    - Test de endpoint REST con filtros por sala y tipo de procedimiento.
-*   **Rationale**: Garantizar cobertura de pruebas y verificación de que no existan regresiones clínicas.
-
-#### 6. `frontend/src/components/quirofano/PizarraQuirofanoEnVivo.tsx` (Modify)
-*   **Type / Scope**: React Client Component.
-*   **Proposed Changes**:
-    - Agregar botón `[Planilla Diaria A4]` en la barra de herramientas superior junto a la fecha activa.
-    - Conectar el botón al modal de filtros `ModalPlanillaQuirurgicaA4`.
-*   **Rationale**: Acceso directo y visible desde la pantalla que el personal de quirófano mantiene abierta durante toda la jornada.
-
-#### 7. `frontend/src/components/quirofano/modal/ModalPlanillaQuirurgicaA4.tsx` (Create)
-*   **Type / Scope**: React Modal Component.
-*   **Proposed Changes**:
-    - Modal emergente con selector de Sala (Todas / Quirófano 1 / Quirófano 2) y Tipo de Procedimiento (Todas / Solo con LIO / Sin LIO).
-    - Botones de acción: "Previsualizar en Nueva Pestaña" y "Descargar PDF".
-*   **Rationale**: Proveer una interfaz limpia y ergonómica para personalizar la emisión de la planilla según la necesidad del operador.
-
-#### 8. `frontend/src/components/quirofano/FichaTurnoModal.tsx` (Modify)
-*   **Type / Scope**: React Modal Component.
-*   **Proposed Changes**:
-    - Agregar campo de entrada `hora_citacion_paciente` (H. PAC.).
-    - Agregar botón auxiliar `[↻ Sugerir (T - 50m)]` que autocompleta restando 50 min a `hora_inicio`.
-    - Agregar selector de `secuencia_ojo` (`Automático`, `1 (Primer Ojo)`, `2 (Segundo Ojo)`, `U (Ojo Único)`).
-*   **Rationale**: Permitir a enfermería o secretaría médica ajustar y persistir el horario real de citación de cada paciente.
-
-#### 9. `frontend/src/components/quirofano/ProgramacionQuirurgicaModal.tsx` (Modify)
-*   **Type / Scope**: React Modal Component.
-*   **Proposed Changes**:
-    - Replicar el cálculo automático reactivo de `hora_citacion_paciente` al momento de asignar o modificar la hora quirúrgica inicial.
-*   **Rationale**: Asegurar que los turnos nuevos se programen con su horario de citación desde el primer momento.
-
----
+    *   **Shared Print CSS (`cssA4` in `handleImprimir()` and `<style jsx global>` `@media print`)**:
+        *   Remove hardcoded `background: #ffffff !important; color: #000000 !important;` from `.etiqueta-pecho-card`; add `padding: 2mm;` outer white cut-margin and `-webkit-print-color-adjust: exact !important; print-color-adjust: exact !important;` on `*` inside print styles.
+        *   Define semantic classes `.etiqueta-inner-od` (black background, white text, inverted borders/pills), `.etiqueta-inner-oi` (white background, black text, `2px` black border), `.etiqueta-inner-ao` (white background, black text, `4px double` black border), `.qr-quiet-zone` (white background, `6px` padding), `.lio-box`, `.lio-metric-pill`, `.lio-toric-badge`, and `.lio-no-calc-box` identically in both `cssA4` and preview/print styles, with unified padding across preview and print.
+    *   **QR Code Generation**: Set `margin: 2` in `QRCode.toDataURL(...)` so the QR has a clean quiet zone inside `.qr-quiet-zone` on black `OD` stickers.
+    *   **IOL Detection & Safe Formatting**:
+        *   Refine `requiereLenteSemantico` to match IOL procedures (`CATARATA`, `FACO`, `FACOEMULSIFICACION`, `LIO`, `LENTE`, `ICL`, `ARTISAN`, `RECAMBIO`, `EXTRACAPSULAR`, `IMPLANTACION SECUNDARIA`, `IMPLANTE DE LIO`, `IMPLANTE LIO`) instead of generic `IMPL`.
+        *   Use explicit null/empty checks (`!== null && !== undefined && String(val).trim() !== ''`) for `lente_dioptria`, `lente_torico_eje`, `lente_torico_valor`, and `lente_incision_grados` so `0 D` and `0°` render accurately instead of falling back to `'N/D'` or `90°` (omit axis or show `S/D` if `lente_torico_eje` is absent).
+        *   Compute `tieneLioCargado` from `(lente_tipo || tieneDioptria)` without requiring `lleva_lente` to be pre-flagged.
+    *   **Sticker Content & Typography (`renderEtiqueta`)**:
+        *   Remove `"CENTROVISIÓN QUIRÚRGICO"`, `obraSocial`, `"CIRUGÍA SIN IMPLANTE DE LIO"`, `"LENTE INTRAOCULAR (LIO)"`, and the bottom 3-item checklist (`Dilatación`, `Consentimiento`, `Alergias`).
+        *   Keep `Fecha • Hora`, `SALA`, `#CódigoTurno`, `Cirujano`, `Nombre` (enlarged), `DNI`, `Edad`, and the eye indicator strip (`OJO DERECHO (OD)`, `OJO IZQUIERDO (OI)`, `AMBOS OJOS (AO)`).
+        *   Enlarge `Procedimiento` and remove the 2-line `-webkit-line-clamp`.
+        *   When `tieneLioCargado`: render enlarged Row 1 (`Incisión`, `Dioptría`, `T + eje`) and Row 2 (`lente_tipo`, `Lote`).
+        *   When `!tieneLioCargado && exigeLioClinico`: render `"LENTE NO CALCULADA"`.
+        *   When `!tieneLioCargado && !exigeLioClinico`: omit the IOL block completely.
+    *   **Cleanup**: Remove unused icon imports and unused `generandoQrs` state.
 
 ### Verification Plan
 
-*   **Compilación Frontend**:
-    - `npm --prefix frontend run build` (debe compilar con código 0 y sin errores de TypeScript).
-*   **Pruebas Unitarias Backend**:
-    - `pytest backend/tests/test_planilla_quirofano_pdf.py -v` (todos los casos pasando al 100%).
-    - `pytest backend/tests/` (verificación de regresión sobre los 272 tests existentes del sistema).
-*   **Prueba de Generación Real**:
-    - Ejecutar script de prueba para generar la planilla de las cirugías del `10-11-2026` y `11-11-2026` y comparar su estructura visual contra la planilla de referencia enviada por el usuario.
+*   **Compilation/Build**: `cd frontend && npx tsc --noEmit` and `npm run build`.
+*   **Manual / Visual Print Check**: Preview and print-to-PDF from `/programacion-quirurgica` and `/quirofano-en-vivo` in both `3x2` and `4x2` modes covering: (a) `OD` full-black card with scannable white-framed QR, (b) `OI` white card, (c) `AO` double-bordered card, (d) non-IOL procedure without any IOL box, (e) IOL-required procedure without lens showing `"LENTE NO CALCULADA"`, and (f) toric IOL with `0°` / `0 D` values.
+
+--------------------------------------------------------------------------------
+
+*Drafted with EGM*

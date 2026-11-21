@@ -101,7 +101,7 @@ export default function ModalPlanillaQuirurgicaA4({
                 </span>
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                14 columnas de alta densidad visual para enfermería, instrumentación y anestesiología
+                12 columnas optimizadas para lectura rápida en quirófano (enfermería, instrumentación y anestesiología)
               </p>
             </div>
           </div>
@@ -228,7 +228,7 @@ export default function ModalPlanillaQuirurgicaA4({
               Garantías operativas incluidas en esta planilla:
             </span>
             <ul className="grid grid-cols-2 gap-x-2 gap-y-1 pl-4 list-disc text-[10.5px]">
-              <li><b>H. PAC.:</b> Hora de citación prequirúrgica (T-50m).</li>
+              <li><b>ANESTESIA:</b> Tipo de anestesia planificado en el turno.</li>
               <li><b>Número (1, 2, U):</b> Secuencia bilateral automática.</li>
               <li><b>Lateralidad OJO:</b> Badge cromático rojo (OD) o verde (OI).</li>
               <li><b>LIO Condensado:</b> Modelo, dioptría, eje e incisión en mesa.</li>

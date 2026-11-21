@@ -91,6 +91,7 @@ export default function ModalIndicacionesMedicasCaso({
             indicacionGeclisaImId={caso.indicacion_geclisa_im_id}
             indicacionesEmitidasAt={caso.indicaciones_emitidas_at}
             indicacionesPdfUrl={caso.indicaciones_pdf_url}
+            desplegadoInicial={true}
             onIndicacionEmitida={(res) => {
               if (onIndicacionEmitida) onIndicacionEmitida(res)
             }}

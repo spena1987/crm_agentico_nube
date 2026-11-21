@@ -33,6 +33,12 @@ import {
 import { BACKEND_URL as API_BASE_URL, apiFetch } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { formatDateArg } from '@/lib/dateUtils'
+import EditorIndicacionesClinicas, {
+  ModuloIndicacionEditable,
+  normalizarModulo,
+  legacyEmisionAModulos,
+  modulosTienenCambios
+} from './EditorIndicacionesClinicas'
 
 interface SeccionIndicacionesExpedienteProps {
   asesoriaId?: string | null
@@ -94,12 +100,10 @@ export default function SeccionIndicacionesExpediente({
   
   const [plantillaSeleccionada, setPlantillaSeleccionada] = useState<any>(null)
   const [infoResolucion, setInfoResolucion] = useState<{ origen?: string; cirujano?: string; mensaje?: string } | null>(null)
-  const [textoIndicaciones, setTextoIndicaciones] = useState<string>('')
-  const [medicamentos, setMedicamentos] = useState<any[]>([])
-  const [cuidadosGenerales, setCuidadosGenerales] = useState<string>('')
-  const [pautasAlarma, setPautasAlarma] = useState<string>('')
+  const [modulosEditables, setModulosEditables] = useState<ModuloIndicacionEditable[]>([])
+  const [snapshotOriginal, setSnapshotOriginal] = useState<ModuloIndicacionEditable[]>([])
   
-  // Módulos activos para asignaciones 1 a N del Nomenclador
+  // Módulos activos para asignaciones 1 a N del Nomenclador (ids sincronizados con modulosEditables)
   const [modulosSeleccionadosIds, setModulosSeleccionadosIds] = useState<string[]>([])
   
   const [geclisaImId, setGeclisaImId] = useState<number | null>(indicacionGeclisaImId || null)
@@ -119,7 +123,12 @@ export default function SeccionIndicacionesExpediente({
   // Modal de reedición
   const [modalReedicionOpen, setModalReedicionOpen] = useState<boolean>(false)
   const [emisionParaReeditar, setEmisionParaReeditar] = useState<any | null>(null)
-  const [textoReedicion, setTextoReedicion] = useState<string>('')
+  const [modulosReedicion, setModulosReedicion] = useState<ModuloIndicacionEditable[]>([])
+  const [snapshotReedicion, setSnapshotReedicion] = useState<ModuloIndicacionEditable[]>([])
+  const [expectedVersionReedicion, setExpectedVersionReedicion] = useState<number | undefined>(undefined)
+  const [versionesAbiertasId, setVersionesAbiertasId] = useState<string | null>(null)
+  const [versionesPorEmision, setVersionesPorEmision] = useState<Record<string, any[]>>({})
+  const [cargandoVersionesId, setCargandoVersionesId] = useState<string | null>(null)
   const [fechaReedicion, setFechaReedicion] = useState<string>('')
   const [reenviarWaReedicion, setReenviarWaReedicion] = useState<boolean>(true)
   const [guardandoReedicion, setGuardandoReedicion] = useState<boolean>(false)
@@ -219,11 +228,6 @@ export default function SeccionIndicacionesExpediente({
         const sug = data.sugerencia
         if (sug) {
           setPlantillaSeleccionada(sug)
-          const txt = sug.texto_indicaciones || sug.cuerpo_indicaciones || ''
-          setTextoIndicaciones(txt)
-          setMedicamentos(sug.medicamentos || [])
-          setCuidadosGenerales(sug.cuidados_generales || '')
-          setPautasAlarma(sug.pautas_alarma || '')
           setInfoResolucion({
             origen: data.origen_resolucion,
             cirujano: (sug.cirujano_nombre || medicoNombre) || undefined,
@@ -234,14 +238,34 @@ export default function SeccionIndicacionesExpediente({
             setTipoDocumento(sug.tipo_fase)
           }
 
+          let modsBase: ModuloIndicacionEditable[] = []
           if (Array.isArray(sug.modulos_asignados) && sug.modulos_asignados.length > 0) {
-            setModulosSeleccionadosIds(sug.modulos_asignados.map((m: any) => m.id))
+            modsBase = sug.modulos_asignados.map((m: any, idx: number) => normalizarModulo(m, idx))
+            setModulosSeleccionadosIds(modsBase.map((m) => m.id))
           } else {
+            modsBase = [
+              normalizarModulo(
+                {
+                  id: sug.crm_plantilla_id || sug.plantilla_id || 'sug-0',
+                  titulo: sug.titulo || practicaNombre || 'Indicaciones Médicas',
+                  cuerpo_indicaciones: sug.texto_indicaciones || sug.cuerpo_indicaciones || '',
+                  medicamentos: sug.medicamentos || [],
+                  cuidados_generales: sug.cuidados_generales || '',
+                  pautas_alarma: sug.pautas_alarma || ''
+                },
+                0
+              )
+            ]
             setModulosSeleccionadosIds([])
           }
+          setSnapshotOriginal(modsBase)
+          setModulosEditables(modsBase.map((m) => ({ ...m, medicamentos: m.medicamentos.map((x) => ({ ...x })) })))
         } else {
           setPlantillaSeleccionada(null)
           setModulosSeleccionadosIds([])
+          const vacio = [normalizarModulo({ id: 'custom-0', titulo: practicaNombre || 'Indicaciones Médicas', cuerpo_indicaciones: '' }, 0)]
+          setSnapshotOriginal(vacio)
+          setModulosEditables(vacio.map((m) => ({ ...m, medicamentos: [] })))
           setInfoResolucion({
             origen: data.origen_resolucion,
             cirujano: medicoNombre || undefined,
@@ -260,40 +284,19 @@ export default function SeccionIndicacionesExpediente({
     resolverSugerencia()
   }, [resolverSugerencia])
 
-  // Alternar módulos en caso de 1 a N
+  // Alternar módulos en caso de 1 a N protegiendo ediciones manuales
   const handleToggleModulo = (moduloId: string) => {
-    if (!plantillaSeleccionada || !Array.isArray(plantillaSeleccionada.modulos_asignados)) return
-    
-    let nuevosIds: string[]
-    if (modulosSeleccionadosIds.includes(moduloId)) {
-      nuevosIds = modulosSeleccionadosIds.filter((id) => id !== moduloId)
-    } else {
-      nuevosIds = [...modulosSeleccionadosIds, moduloId]
+    const target = modulosEditables.find((m) => m.id === moduloId)
+    if (!target) return
+    if (target.activo && modulosTienenCambios([target], snapshotOriginal)) {
+      const ok = window.confirm(
+        `El módulo "${target.titulo}" tiene cambios manuales. Si lo desactivas no se incluirá en el PDF. ¿Continuar?`
+      )
+      if (!ok) return
     }
-    setModulosSeleccionadosIds(nuevosIds)
-
-    const modulosFiltrados = plantillaSeleccionada.modulos_asignados.filter((m: any) =>
-      nuevosIds.includes(m.id)
-    )
-
-    const textos = modulosFiltrados.map((m: any) => m.cuerpo_indicaciones).filter(Boolean)
-    setTextoIndicaciones(textos.join('\n\n---\n\n'))
-
-    const todosMeds: any[] = []
-    modulosFiltrados.forEach((m: any) => {
-      ;(m.medicamentos || []).forEach((med: any) => {
-        if (!todosMeds.some((x) => x.droga === med.droga)) {
-          todosMeds.push(med)
-        }
-      })
-    })
-    setMedicamentos(todosMeds)
-
-    const todosCuidados = modulosFiltrados.map((m: any) => m.cuidados_generales).filter(Boolean)
-    setCuidadosGenerales(todosCuidados.join('\n'))
-
-    const todasAlarmas = modulosFiltrados.map((m: any) => m.pautas_alarma).filter(Boolean)
-    setPautasAlarma(todasAlarmas.join('\n'))
+    const next = modulosEditables.map((m) => (m.id === moduloId ? { ...m, activo: !m.activo } : m))
+    setModulosEditables(next)
+    setModulosSeleccionadosIds(next.filter((m) => m.activo).map((m) => m.id))
   }
 
   // Cambio manual de categoría de documento con resolución jerárquica
@@ -314,8 +317,13 @@ export default function SeccionIndicacionesExpediente({
     await resolverSugerencia(cat)
   }
 
-  // Selector unificado agrupado
+  // Selector unificado agrupado con protección de cambios manuales
   const handleSelectPlantilla = (valor: string) => {
+    if (modulosTienenCambios(modulosEditables, snapshotOriginal)) {
+      const ok = window.confirm('Tiene cambios manuales; si cambia de plantilla se reemplazarán. ¿Continuar?')
+      if (!ok) return
+    }
+
     if (valor === 'nomenclador') {
       resolverSugerencia()
       return
@@ -335,10 +343,19 @@ export default function SeccionIndicacionesExpediente({
           origen: 'biblioteca_crm',
           geclisa_pim_id: match.geclisa_pim_id || null
         })
-        setTextoIndicaciones(match.cuerpo_indicaciones || '')
-        setMedicamentos(match.medicamentos || [])
-        setCuidadosGenerales(match.cuidados_generales || '')
-        setPautasAlarma(match.pautas_alarma || '')
+        const mod = normalizarModulo(
+          {
+            id: match.id,
+            titulo: match.titulo || 'Indicaciones Médicas',
+            cuerpo_indicaciones: match.cuerpo_indicaciones || '',
+            medicamentos: match.medicamentos || [],
+            cuidados_generales: match.cuidados_generales || '',
+            pautas_alarma: match.pautas_alarma || ''
+          },
+          0
+        )
+        setSnapshotOriginal([mod])
+        setModulosEditables([{ ...mod, medicamentos: mod.medicamentos.map((x) => ({ ...x })) }])
         setModulosSeleccionadosIds([])
 
         if (match.tipo_fase) {
@@ -365,10 +382,16 @@ export default function SeccionIndicacionesExpediente({
           pautas_alarma: '',
           origen: 'geclisa_manual'
         })
-        setTextoIndicaciones(match.pimTexto || '')
-        setMedicamentos([])
-        setCuidadosGenerales('')
-        setPautasAlarma('')
+        const mod = normalizarModulo(
+          {
+            id: `geclisa-${match.pimId}`,
+            titulo: match.pimNombre || 'Indicaciones Médicas',
+            cuerpo_indicaciones: match.pimTexto || ''
+          },
+          0
+        )
+        setSnapshotOriginal([mod])
+        setModulosEditables([{ ...mod, medicamentos: [] }])
         setModulosSeleccionadosIds([])
       }
       return
@@ -379,18 +402,26 @@ export default function SeccionIndicacionesExpediente({
         titulo: 'Texto Personalizado Libre',
         origen: 'personalizado'
       })
+      const mod = normalizarModulo({ id: 'custom-0', titulo: 'Indicaciones Personalizadas', cuerpo_indicaciones: '' }, 0)
+      setSnapshotOriginal([mod])
+      setModulosEditables([{ ...mod, medicamentos: [] }])
       setModulosSeleccionadosIds([])
     }
   }
 
-  // Previsualizar PDF con ReportLab
+  const modulosActivos = modulosEditables.filter((m) => m.activo)
+  const hasContenidoValido = modulosActivos.some(
+    (m) =>
+      m.cuerpo_indicaciones.trim().length > 0 ||
+      m.medicamentos.length > 0 ||
+      m.cuidados_generales.trim().length > 0 ||
+      m.pautas_alarma.trim().length > 0
+  )
+
+  // Previsualizar PDF con ReportLab (mismo arreglo modulos[] editado)
   const handlePreviewPdf = async () => {
     setGenerandoPreview(true)
     try {
-      const modulosActivos = (plantillaSeleccionada?.modulos_asignados || []).filter((m: any) =>
-        modulosSeleccionadosIds.includes(m.id)
-      )
-
       const fechaParts = fechaEmision ? fechaEmision.split('-') : null
       const fechaFormateada = fechaParts && fechaParts.length === 3 ? `${fechaParts[2]}/${fechaParts[1]}/${fechaParts[0]}` : undefined
       const datosPayload: any = {
@@ -402,20 +433,13 @@ export default function SeccionIndicacionesExpediente({
         practica_nombre: practicaNombre || 'Cirugía Oftalmológica',
         medico_nombre: medicoNombre || 'Médico Cirujano',
         medico_id: medicoId,
-        cuerpo_indicaciones: textoIndicaciones,
-        medicamentos: medicamentos,
-        cuidados_generales: cuidadosGenerales,
-        pautas_alarma: pautasAlarma,
+        modulos: modulosActivos,
         geclisa_im_id: geclisaImId,
         asesoria_id: asesoriaId,
         tipo_documento: tipoDocumento,
         titulo_documento: tituloDocumento,
         fecha: fechaFormateada,
         fecha_emision: fechaEmision
-      }
-
-      if (modulosActivos.length > 0) {
-        datosPayload.modulos = modulosActivos
       }
 
       const res = await apiFetch('/api/indicaciones/preview-pdf', {
@@ -453,19 +477,11 @@ export default function SeccionIndicacionesExpediente({
     setMensajeError(null)
 
     try {
-      const modulosActivos = (plantillaSeleccionada?.modulos_asignados || []).filter((m: any) =>
-        modulosSeleccionadosIds.includes(m.id)
-      )
-
       const res = await apiFetch(`/api/expediente-quirurgico/${asesoriaId}/emitir-indicaciones`, {
         method: 'POST',
         body: JSON.stringify({
           enviar_whatsapp: true,
-          texto_indicaciones: textoIndicaciones,
-          medicamentos: medicamentos,
-          cuidados_generales: cuidadosGenerales,
-          pautas_alarma: pautasAlarma,
-          modulos: modulosActivos.length > 0 ? modulosActivos : undefined,
+          modulos: modulosActivos,
           tipo_documento: tipoDocumento,
           titulo_documento: tituloDocumento,
           fecha_emision: fechaEmision,
@@ -538,24 +554,55 @@ export default function SeccionIndicacionesExpediente({
     }
   }
 
-  // Abrir modal de reedición
+  // Consultar historial de versiones de una emisión
+  const handleToggleVersiones = async (emisionId: string) => {
+    if (versionesAbiertasId === emisionId) {
+      setVersionesAbiertasId(null)
+      return
+    }
+    setVersionesAbiertasId(emisionId)
+    if (versionesPorEmision[emisionId]) return
+    setCargandoVersionesId(emisionId)
+    try {
+      const res = await apiFetch(`/api/indicaciones/emisiones/${emisionId}/versiones`)
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setVersionesPorEmision((prev) => ({ ...prev, [emisionId]: data.versiones || [] }))
+      }
+    } catch (e) {
+      console.error('Error cargando versiones:', e)
+    } finally {
+      setCargandoVersionesId(null)
+    }
+  }
+
+  // Abrir modal de reedición (precargando última versión emitida)
   const handleAbrirReedicion = (em: any) => {
     setEmisionParaReeditar(em)
-    setTextoReedicion(em.texto_indicaciones || '')
+    const mods = legacyEmisionAModulos(em, em.practica_nombre || practicaNombre || 'Indicaciones Médicas')
+    setModulosReedicion(mods)
+    setSnapshotReedicion(mods.map((m) => ({ ...m, medicamentos: m.medicamentos.map((x) => ({ ...x })) })))
+    setExpectedVersionReedicion(em.version_actual || 1)
     setFechaReedicion(em.fecha_emision ? String(em.fecha_emision).slice(0, 10) : new Date().toISOString().slice(0, 10))
     setReenviarWaReedicion(true)
     setModalReedicionOpen(true)
   }
 
-  // Guardar reedición
+  // Guardar reedición (crea nueva versión sin sobrescribir)
   const handleGuardarReedicion = async () => {
     if (!emisionParaReeditar) return
+    const modsActivosRe = modulosReedicion.filter((m) => m.activo)
+    if (modsActivosRe.length === 0) {
+      setMensajeError('Debe mantener al menos un módulo activo.')
+      return
+    }
     setGuardandoReedicion(true)
     try {
       const res = await apiFetch(`/api/indicaciones/emisiones/${emisionParaReeditar.id}/reeditar`, {
         method: 'PUT',
         body: JSON.stringify({
-          texto_indicaciones: textoReedicion,
+          modulos: modsActivosRe,
+          expected_version: expectedVersionReedicion,
           reenviar_whatsapp: reenviarWaReedicion,
           fecha_emision: fechaReedicion || undefined,
           operador_id: operadorId,
@@ -565,8 +612,13 @@ export default function SeccionIndicacionesExpediente({
       })
       const data = await res.json()
       if (res.ok && data.success) {
-        setMensajeExito('Documento reeditado y actualizado exitosamente.')
+        setMensajeExito(`Documento reeditado (v${data.version_numero || (expectedVersionReedicion || 1) + 1}) y actualizado exitosamente.`)
         setModalReedicionOpen(false)
+        setVersionesPorEmision((prev) => {
+          const copy = { ...prev }
+          delete copy[emisionParaReeditar.id]
+          return copy
+        })
         cargarHistorial()
       } else {
         setMensajeError(data.detail || data.error || 'Error al guardar reedición.')
@@ -730,7 +782,7 @@ export default function SeccionIndicacionesExpediente({
                     return (
                       <div
                         key={em.id || idx}
-                        className="p-3 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:border-blue-500/40 transition flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs"
+                        className="p-3 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:border-blue-500/40 transition flex flex-col md:flex-row md:flex-wrap md:items-center justify-between gap-3 shadow-xs"
                       >
                         {/* Datos principales del documento */}
                         <div className="space-y-1 flex-1">
@@ -762,6 +814,26 @@ export default function SeccionIndicacionesExpediente({
                             {em.geclisa_im_id && (
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-200 border border-slate-700">
                                 Geclisa #{em.geclisa_im_id}
+                              </span>
+                            )}
+
+                            {/* Badge de Versión y Auditoría de Edición */}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleVersiones(em.id)}
+                              className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-500/30 hover:bg-blue-500/20 flex items-center gap-1 transition"
+                              title="Ver historial de versiones de auditoría"
+                            >
+                              <History size={10} />
+                              <span>v{em.version_actual || 1}</span>
+                            </button>
+
+                            {em.fue_modificada && (
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                                title={em.operador_nombre ? `Modificada por ${em.operador_nombre}` : 'Modificada manualmente'}
+                              >
+                                Editada {em.operador_nombre ? `• ${em.operador_nombre}` : ''}
                               </span>
                             )}
 
@@ -838,6 +910,58 @@ export default function SeccionIndicacionesExpediente({
                             <span>Reeditar</span>
                           </button>
                         </div>
+
+                        {versionesAbiertasId === em.id && (
+                          <div className="w-full basis-full mt-2 pt-2 border-t border-[var(--border-color)] space-y-1.5">
+                            <div className="text-[10.5px] font-bold text-[var(--secondary)] flex items-center gap-1.5">
+                              <History size={12} className="text-blue-500" />
+                              <span>Historial de Versiones (Auditoría):</span>
+                            </div>
+                            {cargandoVersionesId === em.id ? (
+                              <div className="flex items-center gap-1.5 text-[11px] text-[var(--secondary)]">
+                                <Loader2 size={12} className="animate-spin" />
+                                <span>Cargando versiones...</span>
+                              </div>
+                            ) : (versionesPorEmision[em.id] || []).length === 0 ? (
+                              <p className="text-[11px] text-[var(--secondary)]">Sin historial detallado registrado para esta emisión.</p>
+                            ) : (
+                              <div className="space-y-1">
+                                {(versionesPorEmision[em.id] || []).map((v: any) => (
+                                  <div
+                                    key={v.id}
+                                    className="p-2 rounded-lg bg-[var(--background)] border border-[var(--border-color)] flex items-center justify-between gap-2 text-[10.5px]"
+                                  >
+                                    <div className="space-y-0.5">
+                                      <div className="flex items-center gap-2 font-bold text-[var(--foreground)]">
+                                        <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-500">v{v.version_numero}</span>
+                                        <span>{v.operador_nombre || 'Operador'}</span>
+                                        <span className="font-normal text-[var(--secondary)]">
+                                          • {v.created_at ? new Date(v.created_at).toLocaleString('es-AR') : ''}
+                                        </span>
+                                        {v.fue_modificada && (
+                                          <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[9.5px]">
+                                            Modificada ({Array.isArray(v.campos_modificados) ? v.campos_modificados.join(', ') : ''})
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-[var(--secondary)] font-mono line-clamp-1">{v.texto_indicaciones}</p>
+                                    </div>
+                                    {v.pdf_url && (
+                                      <a
+                                        href={`${API_BASE_URL}${v.pdf_url}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="px-2 py-1 rounded bg-slate-800 text-white font-semibold shrink-0 hover:bg-slate-700"
+                                      >
+                                        PDF v{v.version_numero}
+                                      </a>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )
                   })}
@@ -1118,20 +1242,20 @@ export default function SeccionIndicacionesExpediente({
               </div>
 
               {/* Panel Interactivo de Módulos 1 a N del Nomenclador (si aplica) */}
-              {plantillaSeleccionada?.modulos_asignados && plantillaSeleccionada.modulos_asignados.length > 1 && (
+              {modulosEditables.length > 1 && (
                 <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-[11px] text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
                       <Sparkles size={13} className="text-blue-500" />
-                      Módulos Asignados a la Práctica ({plantillaSeleccionada.modulos_asignados.length}):
+                      Módulos Asignados a la Práctica ({modulosEditables.length}):
                     </span>
                     <span className="text-[10px] text-slate-500">
                       Marque o desmarque los protocolos u órdenes para este paciente
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {plantillaSeleccionada.modulos_asignados.map((m: any, mIdx: number) => {
-                      const isActivo = modulosSeleccionadosIds.includes(m.id)
+                    {modulosEditables.map((m, mIdx) => {
+                      const isActivo = m.activo
                       return (
                         <button
                           key={m.id || mIdx}
@@ -1154,15 +1278,12 @@ export default function SeccionIndicacionesExpediente({
                 </div>
               )}
 
-              {/* Título y Texto de las Indicaciones */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="font-bold text-[var(--foreground)] flex items-center gap-2">
-                    <span>Texto del Documento (Se asentará en Geclisa):</span>
-                    <span className="text-[10px] font-normal text-slate-400">
-                      (Editable libremente antes de emitir)
-                    </span>
-                  </label>
+              {/* Editor Clínico Completo (cuerpo, medicamentos, dosis/frecuencias, cuidados y alarmas) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[var(--foreground)] text-[11px]">
+                    Indicaciones Clínicas (el cuerpo se asienta en Geclisa; los cambios aplican solo a este paciente):
+                  </span>
                   <button
                     type="button"
                     onClick={() => resolverSugerencia()}
@@ -1173,38 +1294,14 @@ export default function SeccionIndicacionesExpediente({
                     <span>Re-analizar sugerencia</span>
                   </button>
                 </div>
-                <textarea
-                  rows={6}
-                  value={textoIndicaciones}
-                  onChange={(e) => setTextoIndicaciones(e.target.value)}
-                  className="w-full p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-mono text-[11px] leading-relaxed outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Redacte aquí las indicaciones, orden médica o certificado..."
+                <EditorIndicacionesClinicas
+                  modulos={modulosEditables}
+                  snapshotOriginal={snapshotOriginal}
+                  onChange={setModulosEditables}
+                  variant="light"
+                  disabled={emitiendo}
                 />
               </div>
-
-              {/* Fármacos y Gotas estructurados (si aplica) */}
-              {medicamentos.length > 0 && (
-                <div className="space-y-1.5">
-                  <label className="font-bold text-[var(--foreground)] block">
-                    Colirios y Gotas Programadas ({medicamentos.length}):
-                  </label>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {medicamentos.map((m, idx) => (
-                      <div key={idx} className="p-2 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] flex items-center justify-between">
-                        <div>
-                          <span className="font-bold text-blue-600 block">{m.droga}</span>
-                          <span className="text-[10px] text-[var(--secondary)]">{m.dosis} • {m.frecuencia} • {m.duracion}</span>
-                        </div>
-                        {m.instrucciones && (
-                          <span className="text-[10px] italic text-[var(--secondary)] max-w-[120px] truncate" title={m.instrucciones}>
-                            {m.instrucciones}
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Acciones principales de emisión */}
               <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-blue-500/10">
@@ -1212,8 +1309,8 @@ export default function SeccionIndicacionesExpediente({
                   <button
                     type="button"
                     onClick={handlePreviewPdf}
-                    disabled={generandoPreview}
-                    className="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--hover-bg)] font-semibold text-[var(--foreground)] flex items-center gap-1.5 transition"
+                    disabled={generandoPreview || !hasContenidoValido}
+                    className="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--hover-bg)] font-semibold text-[var(--foreground)] flex items-center gap-1.5 transition disabled:opacity-50"
                   >
                     {generandoPreview ? <Loader2 size={13} className="animate-spin" /> : <Eye size={13} />}
                     <span>Ver PDF Previo</span>
@@ -1234,7 +1331,7 @@ export default function SeccionIndicacionesExpediente({
                   <button
                     type="button"
                     onClick={handleEmitirIndicaciones}
-                    disabled={emitiendo || !asesoriaId}
+                    disabled={emitiendo || !asesoriaId || !hasContenidoValido}
                     className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1.5 shadow-sm transition disabled:opacity-50"
                   >
                     {emitiendo ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
@@ -1325,15 +1422,13 @@ export default function SeccionIndicacionesExpediente({
               </div>
             </div>
 
-            <div>
-              <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
-                Texto de Indicaciones / Orden Médica:
-              </label>
-              <textarea
-                rows={6}
-                value={textoReedicion}
-                onChange={(e) => setTextoReedicion(e.target.value)}
-                className="w-full p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-mono text-xs leading-relaxed outline-none focus:ring-2 focus:ring-blue-500"
+            <div className="max-h-[58vh] overflow-y-auto pr-1">
+              <EditorIndicacionesClinicas
+                modulos={modulosReedicion}
+                snapshotOriginal={snapshotReedicion}
+                onChange={setModulosReedicion}
+                variant="light"
+                disabled={guardandoReedicion}
               />
             </div>
 

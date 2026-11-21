@@ -1,95 +1,48 @@
-# Reporte Diario de Control de Quirófano e Implantes de LIO (Planilla A4 Landscape)
+# Redesign of A4 Surgical Chest Stickers (`ModalCartelesPechoA4`)
 
 * **Author:** malko
-* **Date:** 2026-11-09
-* **Mode:** BRAINSTORM
-* **Status:** Swarm Review Completed (7 Lenses)
+* **Date:** 2026-11-20
 
 ## Overview
 
-Planificación e ingeniería de la Planilla Quirúrgica Operativa Diaria en formato A4 apaisado (Landscape), diseñada específicamente para la dinámica de enfermería, instrumentación quirúrgica y anestesiología en mesa de operaciones. 
+`ModalCartelesPechoA4.tsx` generates printable A4 sheets (`3x2` 6-up and `4x2` 8-up) of chest identification stickers used in the operating room. Currently, fixed institutional labels (`CENTROVISIÓN QUIRÚRGICO`), `obraSocial`, `"LENTE INTRAOCULAR (LIO)"`, `"CIRUGÍA SIN IMPLANTE DE LIO"`, and a 3-item bottom checklist (`Dilatación`, `Consentimiento`, `Alergias`) consume vertical space needed for larger procedure names and intraocular lens (`IOL`) metrics, while eye laterality (`OD` vs `OI`) relies on a single mid-card banner rather than full-card contrast.
 
-El sistema resuelve tres fricciones críticas:
-1. **Desacople Horario:** Diferenciación operativa entre la hora de citación y preparación pupilar (`H. PAC.`) y la hora de inicio de intervención (`H. CIR.`), incorporando un cálculo automático sugerido (T - 50m / T - 30m / T - 60m según prestación) configurable en la agenda.
-2. **Inferencia de Secuencia Bilateral (`Numero`):** Detección algorítmica de lateralidad secuencial (`1` = Primer ojo, `2` = Segundo ojo contralateral, `U` = Unilateral / Ojo único), mitigando riesgos de error de sitio quirúrgico.
-3. **Control y Seguridad Visual de Implantes (LIO):** Formato condensado de alta densidad para lente, dioptría, toricidad y eje, incisión axial/milimétrica, observaciones clínicas de preparación ("NO DILATAR", cuidados posturales) y contraste cromático estricto para lateralidad (`OD` rojo / `OI` verde).
+This redesign removes those low-value labels, maximizes font sizes for the patient name, procedure, incision degrees, diopter, and toric `T` + axis, shows `"LENTE NO CALCULADA"` only when a lens is clinically required and missing, and applies full-card polarity inversion (`OD` black background / white text; `OI` white background / black text; `AO` distinct double-framed treatment).
 
----
+## Analysis
 
-## Analysis & Multi-Lens Findings
+### 1. Print Engine CSS Mismatch & `@media print` Override Risk
+* **Objection from Codebase Audit:** `handleImprimir()` in `ModalCartelesPechoA4.tsx` clones `innerHTML` into an isolated `iframe` styled by a hand-written CSS subset (`cssA4`) rather than Tailwind. Both `cssA4` and `@media print` hardcode `background: #ffffff !important; color: #000000 !important;` on `.etiqueta-pecho-card`. Any new Tailwind classes omitted from `cssA4` will render in preview and disappear on print, and the `!important` white background rule would revert `OD` cards to white when printed.
+* **Resolution:** Replace ad-hoc color/border utilities in `renderEtiqueta` with explicit semantic classes (`.etiqueta-od`, `.etiqueta-oi`, `.etiqueta-ao`, `.qr-quiet-zone`, `.lio-box`, etc.) defined identically in both `<style jsx global>` and `cssA4`, with `-webkit-print-color-adjust: exact !important; print-color-adjust: exact !important;` enabled. Unify preview and print padding so `4x2` (`74.25mm` height) never clips unexpectedly.
 
-### 1. UX & Ergonomía Visual (`egm-design`)
-* **Retícula A4 Landscape (297 × 210 mm):** Descontando márgenes de impresión seguros de 6-8 mm, se dispone de 283 mm (aprox. 800 pt) útiles. La tabla alberga entre 15 y 22 cirugías por página con altura compacta de fila (8 mm) evitando saltos huérfanos.
-* **Seguridad de Lateralidad Dual:** No depender exclusivamente del color para personas con discromatopsia; combinar badge monoespaciado en negrita (`[OD]`, `[OI]`) con fondo rojo (#EF4444) y verde (#16A34A).
-* **Acceso Rápido:** Botón primario en la barra de herramientas de `PizarraQuirofanoEnVivo.tsx` con popover de filtros inmediatos (por sala y por tipo de práctica) y botón de impresión directa.
+### 2. Full-Card Black `OD` vs. QR Quiet Zone & Laser Printer Hardware Margins
+* **Contradiction:** Full-bleed black `#000000` to the `0mm` paper edge gets clipped unevenly by 3–5mm laser printer margins, and placing a QR code directly on black without sufficient white margin breaks optical reading by S224/camera scanners.
+* **Resolution:** Keep a thin `2mm` white outer safety margin inside each dashed cut cell wrapping the full-black `OD` inner surface, and wrap the QR code in a white quiet-zone container (`6px` padding + `margin: 2` in `QRCode.toDataURL`). Invert all nested badges/borders inside `OD` (`SALA`, `Dioptría`, `Toric`, `Incisión` → white background / black text or white borders). Differentiate `AO` (Ambos Ojos) from `OI` using a thick double-line outer frame plus a solid black eye strip.
 
-### 2. Arquitectura de Código & Persistencia (`egm-codebase-details`)
-* **Base de Datos (Supabase / PostgreSQL):**
-  - Adición idempotente en `public.turnos_quirofano`:
-    - `hora_citacion_paciente TIME`: Hora sugerida o editada para el ingreso del paciente.
-    - `secuencia_ojo VARCHAR(5) DEFAULT 'U'`: Selector `['1', '2', 'U']` inferido o forzado manualmente.
-* **Backend (FastAPI):**
-  - Endpoint `GET /api/quirofanos/planilla-diaria-pdf?fecha=YYYY-MM-DD&quirofano_id=...&tipo_procedimiento=...` generando el stream PDF en memoria mediante ReportLab.
-  - Actualización de schemas Pydantic de turnos para aceptar `hora_citacion_paciente` y `secuencia_ojo`.
-* **Frontend (Next.js):**
-  - Componente `ModalPlanillaQuirurgicaA4.tsx` accesible desde la Pizarra en Vivo.
-  - Edición y cálculo sugerido en `FichaTurnoModal.tsx` al modificar `hora_inicio` o la prestación.
-
-### 3. Trazabilidad de Flujo & Recordatorios (`egm-zoom-out`)
-* **Alineación con Mensajería Externa:** El recordatorio por WhatsApp enviado al paciente debe citar exclusivamente la `H. PAC.`, mientras que la planilla interna de quirófano muestra ambas horas (`H. PAC.` y `H. CIR.`) para que el equipo asistencial conozca el tiempo de dilatación transcurrido.
-
-### 4. Seguridad Quirúrgica & Carga Cognitiva (`egm-comprehension`)
-* Cumplimiento de metas internacionales de seguridad del paciente (OMS / Joint Commission):
-  - `1`: Primer ojo programado de un esquema bilateral.
-  - `2`: Segundo ojo programado. Permite al equipo verificar la historia clínica y técnica del primer ojo antes de iniciar.
-  - `U`: Procedimiento unilateral puro / paciente monocular.
-
-### 5. Casos Borde y Factibilidad (`egm-implementation-readiness`)
-* **Cirugía Contralateral Externa:** Paciente operado del 1er ojo en otra institución. El sistema debe permitir override manual en la ficha para setear `2` con nota explicativa.
-* **Bilateral Inmediata Simultánea:** Si ambos ojos se operan en el mismo día, se muestran dos filas consecutivas con `1` y `2` y borde delimitador unificado.
-
-### 6. Contradicciones TRIZ & Patrones Innovadores (`egm-inventive-catalyst`)
-* **Densidad vs Legibilidad:** Resolución mediante micro-formato LIO: modelo resumido en primera línea, poder y toricidad condensada en segunda línea, incisión y eje en columna de observaciones.
-* **Papel vs Estado Digital:** Inclusión de micro código QR por paciente en el margen de la fila para escaneo rápido con pistola láser/móvil que actualice el estado a "En Preparación" o "En Sala".
-
----
+### 3. Clinical LIO Logic & Typography Allocation
+* **Objection from Codebase Audit:** Existing LIO rendering contains unsafe falsy fallbacks: `t.lente_torico_eje || 90` silently converts a `0°` axis into `90°`, and `t.lente_dioptria ? ... : 'N/D'` treats `0 D` as `'N/D'`. Also, `requiereLenteSemantico` matches `p.includes('IMPL')`, which can trigger `"LENTE NO CALCULADA"` on non-IOL implants (e.g., valve or stromal implants).
+* **Resolution:** Use explicit null/empty checks (`!== null && !== undefined && !== ''`) for `lente_dioptria` and `lente_torico_eje` (rendering `S/D` or omitting axis rather than fabricating `90°`), refine `requiereLenteSemantico` to avoid non-IOL false positives, omit the IOL block completely when `!exigeLioClinico && !tieneLioCargado`, show `"LENTE NO CALCULADA"` when `exigeLioClinico && !tieneLioCargado`, and place enlarged `Incisión`, `Dioptría`, and `T + eje` on the primary IOL row with `lente_tipo` and `Lote` below. Remove the 2-line clamp on `Procedimiento` so it expands when the IOL block is omitted.
 
 ## Goals vs. Non-Goals
 
 * **In-Scope Goals:**
-  * Migración de esquema en `turnos_quirofano` (`hora_citacion_paciente`, `secuencia_ojo`).
-  * Sugerencia automática de `H. PAC.` en la pantalla de agenda al asignar horario de cirugía.
-  * Selector manual y algoritmo de inferencia automática para `1`, `2`, `U`.
-  * Generador de PDF ReportLab en A4 Landscape con 14 columnas exactas y badges de color.
-  * Botón en `PizarraQuirofanoEnVivo` con filtros por Sala (Todas / Q1 / Q2) y Tipo de Procedimiento (Todos / Con LIO / Sin LIO).
+  * Remove `"CENTROVISIÓN QUIRÚRGICO"`, `obraSocial`, `"CIRUGÍA SIN IMPLANTE DE LIO"`, `"LENTE INTRAOCULAR (LIO)"`, and `[ ] Dilatación / [ ] Consentimiento / [ ] Alergias` from both `3x2` and `4x2` stickers.
+  * Keep `Fecha • Hora`, `SALA`, `#CódigoTurno`, `Cirujano`, `Nombre`, `DNI`, `Edad`, and (when applicable) `lente_tipo` + `Lote` alongside enlarged `Procedimiento`, `Incisión`, `Dioptría`, and `T + eje`.
+  * Render full black card / white text for `OD` (with white QR quiet zone), white card / black text for `OI`, and distinct double-border styling for `AO`.
+  * Omit the IOL block for non-IOL surgeries and show `"LENTE NO CALCULADA"` when IOL is required but unassigned.
+  * Fix `cssA4` / `@media print` parity and `0°` / `0 D` falsy clinical bugs.
 * **Out-of-Scope Non-Goals:**
-  * No reemplaza el Parte Quirúrgico individual ni el Libro Oficial de Quirófano.
-  * No altera las notificaciones por WhatsApp de agendas a los médicos prestadores.
-
----
+  * Changing patient wristband printing (`ModalImprimirPulsera`) or surgical schedule PDFs.
+  * Removing `3x2` or `4x2` layout options (both remain supported).
 
 ## Alternatives Weighed
 
-* *Calcular H. PAC. solo en memoria sin campo en base de datos:* Descartado; quirófano requiere persistir horarios reales acordados para pacientes con condiciones especiales (dilatación difícil, traslados en ambulancia).
-* *Excluir pacientes de retina o inyecciones de la planilla:* Descartado; la instrumentadora y anestesista preparan la sala para toda la jornada completa y requieren ver el cronograma integral.
-
----
+* **Banner-only eye differentiation (keep white background on `OD`):** Rejected by author — full-card black vs. white contrast provides faster visual identification in the operating room.
+* **Removing `lente_tipo` / `Lote` or header metadata (`#CódigoTurno`, `Edad`):** Rejected by author — all remaining header, patient, and LIO fields must be preserved.
 
 ## Key Decisions & Staging for Next Steps
 
-* **Distribución de Anchos (794 pt disponibles en A4 Landscape con márgenes de 24 pt):**
-  - `Fecha`: 45 pt
-  - `H. PAC.`: 38 pt
-  - `H. CIR.`: 38 pt
-  - `HC`: 42 pt
-  - `PACIENTE`: 110 pt
-  - `Número`: 20 pt
-  - `OJO`: 24 pt (Fondo Rojo OD / Verde OI)
-  - `LENTE`: 70 pt
-  - `DIOPTRIA`: 52 pt
-  - `OBS`: 105 pt
-  - `Cirujano`: 75 pt
-  - `DERIVADOR`: 65 pt
-  - `ANESTESISTA`: 55 pt
-  - `OBRA SOCIAL`: 55 pt
-* **Siguiente Paso:** Pasar a `/egm-draft` para generar el documento de especificación técnica formal y plan de ejecución detallado.
+1. Use semantic print-safe classes across `<style jsx global>` and `handleImprimir()` `cssA4` with `print-color-adjust: exact` and a `2mm` outer white margin on cut cells.
+2. Wrap the QR code in an explicit white quiet zone (`margin: 2` + `6px` white padding) so `OD` black cards scan reliably.
+3. Fix `0°` toric axis and `0 D` diopter falsy checks and refine `requiereLenteSemantico` to prevent false `"LENTE NO CALCULADA"` warnings on non-IOL implants.
+4. Allocate freed vertical space to enlarged `Procedimiento` and primary-row `Incisión`, `Dioptría`, and `T + eje` scaled cleanly for both `3x2` and `4x2`.

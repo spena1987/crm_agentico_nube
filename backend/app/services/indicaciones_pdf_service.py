@@ -64,7 +64,8 @@ def render_texto_variables(texto: str, variables: Dict[str, Any]) -> str:
 def generar_pdf_indicacion_medica(
     datos_emision: Dict[str, Any],
     config_diseno: Optional[Dict[str, Any]] = None,
-    guardar_en_disco: bool = True
+    guardar_en_disco: bool = True,
+    filename_override: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Genera el PDF oficial de Indicaciones Médicas Quirúrgicas u Órdenes Médicas.
@@ -257,6 +258,8 @@ def generar_pdf_indicacion_medica(
 
     if isinstance(modulos_raw, list) and len(modulos_raw) > 0:
         for m in modulos_raw:
+            if m.get("activo", True) is False:
+                continue
             txt = m.get("cuerpo_indicaciones") or m.get("texto_indicaciones") or ""
             meds = m.get("medicamentos") or []
             cuid = m.get("cuidados_generales") or ""
@@ -649,7 +652,8 @@ def generar_pdf_indicacion_medica(
     buffer.close()
 
     # Guardar en disco para distribución pública / WhatsApp si corresponde
-    filename = f"indicacion_{emision_id}.pdf"
+    raw_override = filename_override or datos_emision.get("filename_override")
+    filename = os.path.basename(str(raw_override)) if raw_override else f"indicacion_{emision_id}.pdf"
     filepath = os.path.join(STATIC_DIR, filename)
     url_publica = f"/static/{filename}"
 

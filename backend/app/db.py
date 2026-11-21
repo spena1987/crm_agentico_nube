@@ -8368,7 +8368,7 @@ _TURNOS_QUIROFANO_LIST_COLS = (
     "lio_calculado, lio_calculado_at, lio_calculado_por, lio_calculo_opciones, "
     "lio_stock_reservado, lio_stock_reservado_at, lio_stock_observaciones, lio_opcion_implantada_id, codigo_turno"
 )
-_PACIENTES_RESUMEN_COLS = "id, nombre, dni, telefono, email, obra_social, plan_cobertura, geclisa_ficha_id, fecha_nacimiento"
+_PACIENTES_RESUMEN_COLS = "id, nombre, dni, telefono, email, obra_social, plan_cobertura, geclisa_ficha_id, fecha_nacimiento, nro_hc"
 
 
 def get_turnos_quirofano(

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Tuple
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form, BackgroundTasks, Query, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -642,14 +642,38 @@ def servir_archivo_estatico(filename: str, regenerar: Optional[bool] = False):
             except Exception as e:
                 logger.error(f"Error regenerando PDF de parte quirurgico on-demand ({safe_filename}): {e}")
         elif safe_filename.startswith("indicacion_") and safe_filename.endswith(".pdf"):
-            emision_id = safe_filename.replace("indicacion_", "").replace(".pdf", "")
+            import re as _re_ind
+            m_ind = _re_ind.match(r"^indicacion_([0-9a-fA-F-]+?)(?:_v(\d+))?\.pdf$", safe_filename)
+            emision_id = m_ind.group(1) if m_ind else safe_filename.replace("indicacion_", "").replace(".pdf", "")
+            version_solicitada = int(m_ind.group(2)) if (m_ind and m_ind.group(2)) else None
             try:
-                if supabase:
-                    e_resp = supabase.table("emisiones_indicaciones_geclisa").select("*, asesorias_quirurgicas(*, pacientes(*))").eq("id", emision_id).limit(1).execute()
+                if supabase and is_valid_uuid(emision_id):
+                    e_resp = (
+                        supabase.table("emisiones_indicaciones_geclisa")
+                        .select("*, pacientes(*), asesorias_quirurgicas(*, pacientes(*))")
+                        .eq("id", emision_id)
+                        .limit(1)
+                        .execute()
+                    )
                     if e_resp.data:
                         emision_item = e_resp.data[0]
                         asesoria_item = emision_item.get("asesorias_quirurgicas") or {}
-                        paciente_item = asesoria_item.get("pacientes") or {}
+                        paciente_item = asesoria_item.get("pacientes") or emision_item.get("pacientes") or {}
+
+                        version_item = None
+                        if version_solicitada is not None:
+                            v_resp = (
+                                supabase.table("emisiones_indicaciones_versiones")
+                                .select("*")
+                                .eq("emision_id", emision_id)
+                                .eq("version_numero", version_solicitada)
+                                .limit(1)
+                                .execute()
+                            )
+                            if v_resp.data:
+                                version_item = v_resp.data[0]
+
+                        fuente = version_item or emision_item
                         
                         # Resolver cirujano
                         med_id = emision_item.get("geclisa_pre_id") or asesoria_item.get("medico_cirujano_id")
@@ -677,11 +701,11 @@ def servir_archivo_estatico(filename: str, regenerar: Optional[bool] = False):
                             if emision_item.get("medico_nombre") in (None, "Médico Cirujano", "A designar"):
                                 debe_regenerar_indicacion = True
 
-                        if debe_regenerar_indicacion:
+                        if debe_regenerar_indicacion and (version_solicitada is None or version_item is not None):
                             fecha_db_raw = emision_item.get("fecha_emision")
                             fecha_pdf_fmt = None
                             if fecha_db_raw and "-" in str(fecha_db_raw):
-                                pts = str(fecha_db_raw).split("-")
+                                pts = str(fecha_db_raw).split("T")[0].split("-")
                                 if len(pts) == 3:
                                     fecha_pdf_fmt = f"{pts[2]}/{pts[1]}/{pts[0]}"
 
@@ -702,11 +726,15 @@ def servir_archivo_estatico(filename: str, regenerar: Optional[bool] = False):
                                 "firma_url": prest_info.get("firma_url") if prest_info else None,
                                 "tipo_documento": emision_item.get("tipo_documento"),
                                 "titulo_documento": emision_item.get("titulo_documento"),
-                                "cuerpo_indicaciones": emision_item.get("texto_indicaciones") or "",
-                                "geclisa_im_id": emision_item.get("geclisa_im_id"),
+                                "cuerpo_indicaciones": fuente.get("texto_indicaciones") or "",
+                                "medicamentos": fuente.get("medicamentos") or [],
+                                "cuidados_generales": fuente.get("cuidados_generales") or "",
+                                "pautas_alarma": fuente.get("pautas_alarma") or "",
+                                "modulos": fuente.get("modulos_emitidos_json") or [],
+                                "geclisa_im_id": fuente.get("geclisa_im_id") or emision_item.get("geclisa_im_id"),
                                 "fecha": fecha_pdf_fmt
                             }
-                            generar_pdf_indicacion_medica(datos_rec, guardar_en_disco=True)
+                            generar_pdf_indicacion_medica(datos_rec, guardar_en_disco=True, filename_override=safe_filename)
             except Exception as e:
                 logger.error(f"Error regenerando PDF de indicación on-demand ({safe_filename}): {e}")
 
@@ -4277,20 +4305,45 @@ def preview_pdf_indicacion_api(payload: Dict[str, Any] = Body(...)):
         logger.error(f"Error generando preview de PDF de indicación: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+def _resolver_operador_autenticado(request: Request) -> Tuple[str, str]:
+    """Extrae operador_id y operador_nombre de forma confiable desde el JWT en request.state.user."""
+    user = getattr(request.state, "user", None)
+    if not isinstance(user, dict) or not user.get("sub") or str(user.get("role") or "").lower() == "anon":
+        raise HTTPException(
+            status_code=401,
+            detail="Sesión de usuario autenticado requerida para emitir o editar indicaciones."
+        )
+    op_id = str(user.get("sub"))
+    meta = user.get("user_metadata") or {}
+    op_nombre = meta.get("nombre_completo") or meta.get("full_name") or meta.get("nombre")
+    if not op_nombre and supabase:
+        try:
+            u_res = supabase.table("usuarios").select("nombre, apellido, nombre_completo").eq("id", op_id).limit(1).execute()
+            if u_res.data:
+                u = u_res.data[0]
+                op_nombre = u.get("nombre_completo") or f"{u.get('nombre') or ''} {u.get('apellido') or ''}".strip()
+        except Exception:
+            pass
+    if not op_nombre:
+        op_nombre = user.get("email") or op_id
+    return op_id, str(op_nombre)
+
+
 @app.post("/api/expediente-quirurgico/{asesoria_id}/emitir-indicaciones")
-def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any] = Body(default={})):
+def emitir_indicaciones_expediente_api(asesoria_id: str, request: Request, payload: Dict[str, Any] = Body(default={})):
     """
     Emite la indicación médica oficial en Geclisa (POST /api/IndicacionesMedicas) bajo el médico seleccionado
     por la asesora, genera el PDF institucional y opcionalmente envía el mensaje por WhatsApp al paciente.
     """
     try:
         from app.services.indicaciones_service import emitir_indicaciones_expediente
+        operador_id, operador_nombre = _resolver_operador_autenticado(request)
         enviar_wa = payload.get("enviar_whatsapp", True)
         texto_override = payload.get("texto_indicaciones")
         meds_override = payload.get("medicamentos")
         cuidados_override = payload.get("cuidados_generales")
         alarmas_override = payload.get("pautas_alarma")
-        usu_alta = payload.get("usu_alta", "asesora_crm")
+        usu_alta = payload.get("usu_alta") or operador_nombre
 
         modulos = payload.get("modulos")
         tipo_documento = payload.get("tipo_documento")
@@ -4300,8 +4353,6 @@ def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any]
         medico_nombre = payload.get("medico_nombre")
         practica_nombre = payload.get("practica_nombre")
         practica_codigo = payload.get("practica_codigo")
-        operador_id = payload.get("operador_id")
-        operador_nombre = payload.get("operador_nombre")
         resultado = emitir_indicaciones_expediente(
             asesoria_id=asesoria_id,
             enviar_whatsapp=enviar_wa,
@@ -4366,23 +4417,57 @@ def get_todas_emisiones_indicaciones_api(limit: int = 50, offset: int = 0):
         logger.error(f"Error listando todas las emisiones de indicaciones: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/api/indicaciones/emisiones/{emision_id}/reeditar")
-def reeditar_indicacion_api(emision_id: str, payload: Dict[str, Any] = Body(...)):
+@app.get("/api/indicaciones/emisiones/{emision_id}/versiones")
+def get_versiones_emision_indicacion_api(emision_id: str):
     """
-    Permite reeditar una indicación médica emitida: modifica fármacos/texto, genera nuevo PDF y opcionalmente reenvía por WhatsApp.
+    Lista el historial versionado e inmutable de una emisión de indicaciones médicas.
+    """
+    if not supabase or not is_valid_uuid(emision_id):
+        raise HTTPException(status_code=400, detail="Identificador de emisión inválido.")
+    try:
+        em_check = supabase.table("emisiones_indicaciones_geclisa").select("id, version_actual").eq("id", emision_id).limit(1).execute()
+        if not em_check.data:
+            raise HTTPException(status_code=404, detail="Emisión no encontrada.")
+        v_res = (
+            supabase.table("emisiones_indicaciones_versiones")
+            .select("*")
+            .eq("emision_id", emision_id)
+            .order("version_numero", desc=True)
+            .execute()
+        )
+        return {
+            "success": True,
+            "emision_id": emision_id,
+            "version_actual": em_check.data[0].get("version_actual") or 1,
+            "versiones": v_res.data or []
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error consultando versiones de indicación {emision_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/indicaciones/emisiones/{emision_id}/reeditar")
+def reeditar_indicacion_api(emision_id: str, request: Request, payload: Dict[str, Any] = Body(...)):
+    """
+    Permite reeditar una indicación médica emitida: modifica fármacos/texto/módulos, crea una nueva versión auditada, genera PDF versionado y opcionalmente reenvía por WhatsApp.
     """
     try:
         from app.services.indicaciones_service import reeditar_emision_indicaciones
+        operador_id, operador_nombre = _resolver_operador_autenticado(request)
         texto = payload.get("texto_indicaciones") or payload.get("cuerpo_indicaciones")
-        if not texto:
-            raise HTTPException(status_code=400, detail="El texto o protocolo de indicaciones es obligatorio.")
+        modulos = payload.get("modulos")
+        if not texto and not modulos:
+            raise HTTPException(status_code=400, detail="Debe incluir al menos un módulo o texto de indicaciones.")
         
         meds = payload.get("medicamentos")
         cuidados = payload.get("cuidados_generales")
         alarmas = payload.get("pautas_alarma")
         reenviar_wa = payload.get("reenviar_whatsapp", True)
-        usu = payload.get("usu_modificacion", "asesora_crm")
+        usu = payload.get("usu_modificacion") or operador_nombre
         fecha_emision = payload.get("fecha_emision")
+        expected_version = payload.get("expected_version")
 
         res = reeditar_emision_indicaciones(
             emision_id=emision_id,
@@ -4393,11 +4478,14 @@ def reeditar_indicacion_api(emision_id: str, payload: Dict[str, Any] = Body(...)
             reenviar_whatsapp=reenviar_wa,
             usu_modificacion=usu,
             fecha_emision=fecha_emision,
-            operador_id=payload.get("operador_id"),
-            operador_nombre=payload.get("operador_nombre")
+            operador_id=operador_id,
+            operador_nombre=operador_nombre,
+            modulos=modulos,
+            expected_version=expected_version
         )
         if not res.get("success"):
-            raise HTTPException(status_code=400, detail=res.get("error", "Error reeditando indicación."))
+            status_err = res.get("status_code") or (409 if res.get("conflict") else 400)
+            raise HTTPException(status_code=status_err, detail=res.get("error", "Error reeditando indicación."))
         return res
     except HTTPException:
         raise
@@ -7890,13 +7978,14 @@ def preparar_indicaciones_postqx_api(turno_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/turnos-quirofano/{turno_id}/enviar-indicaciones-postqx")
-def enviar_indicaciones_postqx_api(turno_id: str, payload: Dict[str, Any] = Body(default={})):
+def enviar_indicaciones_postqx_api(turno_id: str, request: Request, payload: Dict[str, Any] = Body(default={})):
     """
     Emite formalmente las indicaciones postquirúrgicas oficiales con firma digital del cirujano,
     las envía por WhatsApp al paciente y actualiza la tarjeta de la Pizarra de Quirófano en tiempo real.
     """
     try:
         from app.services.indicaciones_service import emitir_indicaciones_turno_quirofano
+        operador_id, operador_nombre = _resolver_operador_autenticado(request)
         res = emitir_indicaciones_turno_quirofano(
             turno_id=turno_id,
             telefono_override=payload.get("telefono_override"),
@@ -7905,11 +7994,13 @@ def enviar_indicaciones_postqx_api(turno_id: str, payload: Dict[str, Any] = Body
             cuidados_override=payload.get("cuidados_generales"),
             pautas_alarma_override=payload.get("pautas_alarma"),
             modulos=payload.get("modulos"),
-            operador_id=payload.get("operador_id"),
-            operador_nombre=payload.get("operador_nombre")
+            operador_id=operador_id,
+            operador_nombre=operador_nombre,
+            expected_version=payload.get("expected_version")
         )
         if not res.get("success"):
-            raise HTTPException(status_code=400, detail=res.get("error", "Error enviando indicaciones"))
+            status_err = res.get("status_code") or (409 if res.get("conflict") else 400)
+            raise HTTPException(status_code=status_err, detail=res.get("error", "Error enviando indicaciones"))
         return res
     except HTTPException:
         raise

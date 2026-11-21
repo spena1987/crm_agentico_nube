@@ -2254,26 +2254,26 @@ def generar_pdf_planilla_quirofano_diaria(
 ) -> tuple[bytes, str]:
     """
     Genera la Planilla Quirúrgica Operativa Diaria en formato A4 Landscape (793.8 pt útiles)
-    con la estructura exacta de 14 columnas requerida por el personal de quirófano de Centrovisión.
+    con estructura de 12 columnas optimizada para lectura rápida en quirófano (~10 filas/hoja).
 
     Estructura de Columnas (Total: 793.8 pt):
-    1.  Fecha (42 pt)
-    2.  H. PAC. (38 pt)
-    3.  H. CIR. (38 pt)
-    4.  HC (44 pt)
-    5.  PACIENTE (112 pt)
-    6.  Número (20 pt)
-    7.  OJO (24 pt) - con badge cromático rojo (OD) o verde (OI)
-    8.  LENTE (70 pt)
-    9.  DIOPTRIA (52 pt)
-    10. OBS (105 pt) - Incisión, eje tórico, alertas clínicas y [PENDIENTE DE CÁLCULO]
-    11. Cirujano (75 pt)
-    12. DERIVADOR (65 pt)
-    13. ANESTESISTA (55 pt)
-    14. OBRA SOCIAL (53.8 pt)
+    0.  Fecha (44 pt)
+    1.  H. CIR. (40 pt)
+    2.  HC (52 pt) - Número real de Historia Clínica (nro_hc)
+    3.  PACIENTE / DNI (115 pt)
+    4.  N° (22 pt)
+    5.  OJO (28 pt) - con badge cromático rojo (OD) o verde (OI)
+    6.  LENTE / PRÁCTICA (102 pt) - Modelo LIO o práctica quirúrgica en Sin LIO
+    7.  DIOPTRIA (64 pt)
+    8.  OBSERVACIONES / LIO (135 pt) - Incisión, eje tórico, alertas clínicas y observaciones
+    9.  Cirujano (72 pt)
+    10. DERIVADOR (60 pt)
+    11. ANESTESIA (59.8 pt) - Tipo de anestesia planificado
 
     Retorna (pdf_bytes, sha256_hash).
     """
+    from xml.sax.saxutils import escape as xml_escape
+
     settings = config_override or load_settings()
     nombre_inst = settings.get("nombre_institucion", "Centrovisión - Cirugía Oftalmológica")
     buffer = io.BytesIO()
@@ -2327,8 +2327,8 @@ def generar_pdf_planilla_quirofano_diaria(
         'PlanillaTH',
         parent=style_normal,
         fontName='Helvetica-Bold',
-        fontSize=7,
-        leading=8.5,
+        fontSize=8,
+        leading=9.5,
         textColor=colors.white,
         alignment=1  # Centered
     )
@@ -2336,8 +2336,8 @@ def generar_pdf_planilla_quirofano_diaria(
         'PlanillaCellCenter',
         parent=style_normal,
         fontName='Helvetica',
-        fontSize=7,
-        leading=8.5,
+        fontSize=8.5,
+        leading=10.5,
         textColor=colors.HexColor('#1E293B'),
         alignment=1  # Centered
     )
@@ -2345,8 +2345,8 @@ def generar_pdf_planilla_quirofano_diaria(
         'PlanillaCellCenterBold',
         parent=style_normal,
         fontName='Helvetica-Bold',
-        fontSize=7.5,
-        leading=9,
+        fontSize=9,
+        leading=11,
         textColor=colors.HexColor('#0F172A'),
         alignment=1  # Centered
     )
@@ -2354,8 +2354,8 @@ def generar_pdf_planilla_quirofano_diaria(
         'PlanillaCellLeft',
         parent=style_normal,
         fontName='Helvetica',
-        fontSize=6.8,
-        leading=8.2,
+        fontSize=8.5,
+        leading=10.5,
         textColor=colors.HexColor('#1E293B'),
         alignment=0  # Left
     )
@@ -2363,8 +2363,8 @@ def generar_pdf_planilla_quirofano_diaria(
         'PlanillaCellLeftBold',
         parent=style_normal,
         fontName='Helvetica-Bold',
-        fontSize=7.2,
-        leading=8.5,
+        fontSize=9,
+        leading=11,
         textColor=colors.HexColor('#0F172A'),
         alignment=0  # Left
     )
@@ -2372,8 +2372,8 @@ def generar_pdf_planilla_quirofano_diaria(
         'EyeOD',
         parent=style_normal,
         fontName='Helvetica-Bold',
-        fontSize=8,
-        leading=9,
+        fontSize=9.5,
+        leading=11,
         textColor=colors.white,
         alignment=1
     )
@@ -2381,8 +2381,8 @@ def generar_pdf_planilla_quirofano_diaria(
         'EyeOI',
         parent=style_normal,
         fontName='Helvetica-Bold',
-        fontSize=8,
-        leading=9,
+        fontSize=9.5,
+        leading=11,
         textColor=colors.white,
         alignment=1
     )
@@ -2390,8 +2390,8 @@ def generar_pdf_planilla_quirofano_diaria(
         'EyeGen',
         parent=style_normal,
         fontName='Helvetica-Bold',
-        fontSize=8,
-        leading=9,
+        fontSize=9.5,
+        leading=11,
         textColor=colors.white,
         alignment=1
     )
@@ -2433,26 +2433,29 @@ def generar_pdf_planilla_quirofano_diaria(
     story.append(t_header)
     story.append(Spacer(1, 6))
 
-    # 2. Definición de Columnas de la Tabla
-    # Total ancho imprimible: 793.8 pt
-    col_widths = [42, 38, 38, 44, 112, 20, 24, 70, 52, 105, 75, 65, 55, 53.8]
-
-    headers = [
-        Paragraph("Fecha", style_th),
-        Paragraph("H. PAC.", style_th),
-        Paragraph("H. CIR.", style_th),
-        Paragraph("HC", style_th),
-        Paragraph("PACIENTE / DNI", style_th),
-        Paragraph("N°", style_th),
-        Paragraph("OJO", style_th),
-        Paragraph("LENTE", style_th),
-        Paragraph("DIOPTRIA", style_th),
-        Paragraph("OBSERVACIONES / LIO", style_th),
-        Paragraph("Cirujano", style_th),
-        Paragraph("DERIVADOR", style_th),
-        Paragraph("ANESTESIA", style_th),
-        Paragraph("OBRA SOCIAL", style_th),
+    # 2. Definición de Columnas de la Tabla (12 columnas, total ancho imprimible: 793.8 pt)
+    COLUMNS = [
+        ("Fecha", 44.0, "CENTER"),
+        ("H. CIR.", 40.0, "CENTER"),
+        ("HC", 52.0, "CENTER"),
+        ("PACIENTE / DNI", 115.0, "LEFT"),
+        ("N°", 22.0, "CENTER"),
+        ("OJO", 28.0, "CENTER"),
+        ("LENTE / PRÁCTICA", 102.0, "LEFT"),
+        ("DIOPTRIA", 64.0, "CENTER"),
+        ("OBSERVACIONES / LIO", 135.0, "LEFT"),
+        ("Cirujano", 72.0, "LEFT"),
+        ("DERIVADOR", 60.0, "LEFT"),
+        ("ANESTESIA", 59.8, "LEFT"),
     ]
+    IDX_NRO = 4
+    IDX_OJO = 5
+    IDX_LENTE = 6
+    IDX_DIOP = 7
+    IDX_OBS = 8
+
+    col_widths = [w for _, w, _ in COLUMNS]
+    headers = [Paragraph(label, style_th) for label, _, _ in COLUMNS]
 
     tabla_data = [headers]
     table_style_commands = [
@@ -2461,17 +2464,15 @@ def generar_pdf_planilla_quirofano_diaria(
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')]),
-        ('TOPPADDING', (0, 0), (-1, -1), 2.5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
+        ('TOPPADDING', (0, 0), (-1, -1), 10.5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 10.5),
         ('LEFTPADDING', (0, 0), (-1, -1), 2.5),
         ('RIGHTPADDING', (0, 0), (-1, -1), 2.5),
-        # Alineación de contenido
-        ('ALIGN', (0, 1), (3, -1), 'CENTER'),   # Fecha, H.PAC, H.CIR, HC
-        ('ALIGN', (4, 1), (4, -1), 'LEFT'),     # Paciente
-        ('ALIGN', (5, 1), (6, -1), 'CENTER'),   # N°, OJO
-        ('ALIGN', (7, 1), (7, -1), 'LEFT'),     # Lente
-        ('ALIGN', (8, 1), (8, -1), 'CENTER'),   # Dioptria
-        ('ALIGN', (9, 1), (-1, -1), 'LEFT'),    # OBS, Cirujano, Derivador, Anestesia, Obra Social
+        ('LEFTPADDING', (IDX_NRO, 0), (IDX_OJO, -1), 1.5),
+        ('RIGHTPADDING', (IDX_NRO, 0), (IDX_OJO, -1), 1.5),
+    ] + [
+        ('ALIGN', (col_i, 1), (col_i, -1), align)
+        for col_i, (_, _, align) in enumerate(COLUMNS)
     ]
 
     historial_map = turnos_historial_pacientes or {}
@@ -2502,158 +2503,161 @@ def generar_pdf_planilla_quirofano_diaria(
             except Exception:
                 h_cir = str(h_cir_raw)[:5]
 
-        # 3. H. PAC. (hora citación)
-        h_pac_raw = t.get("hora_citacion_paciente")
-        if h_pac_raw:
-            try:
-                s_hp = str(h_pac_raw).strip()
-                if "T" in s_hp:
-                    s_hp = s_hp.split("T")[1]
-                h_pac = s_hp[:5]
-            except Exception:
-                h_pac = str(h_pac_raw)[:5]
-        else:
-            # Cálculo sugerido reactivo: 50 min antes de la cirugía
-            h_pac = calcular_hora_citacion_sugerida(h_cir, duracion_minutos_antes=50)
-
-        # 4. HC (Historia Clínica)
+        # 3. HC (Historia Clínica real del expediente, sin fallback de UUID ni Geclisa)
         paciente_info = t.get("pacientes") or {}
-        hc_val = (
-            paciente_info.get("historia_clinica")
-            or paciente_info.get("geclisa_id")
-            or t.get("paciente_historia_clinica")
-            or (str(t.get("paciente_id") or "")[:6] if t.get("paciente_id") else "-")
+        raw_hc = (
+            paciente_info.get("nro_hc")
+            if paciente_info.get("nro_hc") not in (None, "")
+            else (
+                paciente_info.get("historia_clinica")
+                if paciente_info.get("historia_clinica") not in (None, "")
+                else t.get("paciente_historia_clinica")
+            )
         )
+        hc_val = (str(raw_hc).strip() if raw_hc not in (None, "") else "") or "-"
 
-        # 5. PACIENTE / DNI
-        p_nom = (
-            t.get("paciente_nombre")
-            or paciente_info.get("nombre")
-            or "SIN NOMBRE"
-        ).strip().upper()
+        # 4. PACIENTE / DNI
+        p_nom = xml_escape(
+            (
+                t.get("paciente_nombre")
+                or paciente_info.get("nombre")
+                or "SIN NOMBRE"
+            ).strip().upper()
+        )
         p_dni = (
             t.get("paciente_dni")
             or t.get("dni")
             or paciente_info.get("dni")
             or "-"
         )
-        p_dni_fmt = formatear_dni(p_dni) if p_dni != "-" else "-"
-        p_celda = f"<b>{p_nom}</b><br/><font color='#64748B' size=6>DNI: {p_dni_fmt}</font>"
+        p_dni_fmt = xml_escape(formatear_dni(p_dni) if p_dni != "-" else "-")
+        p_celda = f"<b>{p_nom}</b><br/><font color='#64748B' size=7.5>DNI: {p_dni_fmt}</font>"
 
-        # 6. Número (Secuencia 1, 2, U)
+        # 5. Número (Secuencia 1, 2, U)
         pac_id = str(t.get("paciente_id") or "")
         hist_pac = historial_map.get(pac_id, [])
         sec_val = inferir_secuencia_ojo(t, otros_turnos_paciente=hist_pac)
 
-        # 7. OJO
+        # 6. OJO
         ojo_raw = str(t.get("ojo") or "OD").strip().upper()
         ojo_val = "OD" if "OD" in ojo_raw else ("OI" if "OI" in ojo_raw else ("AO" if "AO" in ojo_raw else ojo_raw[:2]))
-        
-        # Color del badge de lateralidad
+
         if ojo_val == "OD":
-            table_style_commands.append(('BACKGROUND', (6, row_idx), (6, row_idx), colors.HexColor('#DC2626')))
+            table_style_commands.append(('BACKGROUND', (IDX_OJO, row_idx), (IDX_OJO, row_idx), colors.HexColor('#DC2626')))
             eye_style = style_eye_od
         elif ojo_val == "OI":
-            table_style_commands.append(('BACKGROUND', (6, row_idx), (6, row_idx), colors.HexColor('#16A34A')))
+            table_style_commands.append(('BACKGROUND', (IDX_OJO, row_idx), (IDX_OJO, row_idx), colors.HexColor('#16A34A')))
             eye_style = style_eye_oi
         else:
-            table_style_commands.append(('BACKGROUND', (6, row_idx), (6, row_idx), colors.HexColor('#2563EB')))
+            table_style_commands.append(('BACKGROUND', (IDX_OJO, row_idx), (IDX_OJO, row_idx), colors.HexColor('#2563EB')))
             eye_style = style_eye_gen
 
-        # 8. LENTE
-        lleva_lio = t.get("lleva_lente") or bool(t.get("lente_tipo")) or bool(t.get("lente_dioptria")) or bool(t.get("lente_modelo"))
-        if lleva_lio:
-            lente_mod = str(t.get("lente_tipo") or t.get("lente_modelo") or t.get("lente_marca") or "LIO Estándar").strip()
+        # 7. Evaluación de LIO (respetando lleva_lente is False y valores 0 D / 0°)
+        lente_tipo_raw = str(t.get("lente_tipo") or "").strip()
+        lente_tipo_es_lente = lente_tipo_raw.lower() not in ("", "sin lio")
+        lente_modelo_raw = str(t.get("lente_modelo") or "").strip()
+        tiene_dioptria_val = t.get("lente_dioptria") not in (None, "")
+        if t.get("lleva_lente") is False:
+            lleva_lio = False
         else:
-            lente_mod = "Sin LIO"
+            lleva_lio = bool(
+                t.get("lleva_lente")
+                or lente_tipo_es_lente
+                or tiene_dioptria_val
+                or lente_modelo_raw
+            )
 
-        # 9. DIOPTRIA
-        dioptria_lines = []
-        if lleva_lio and t.get("lente_dioptria"):
-            dioptria_lines.append(f"<b>{t.get('lente_dioptria')} D</b>")
-        
-        es_tor = t.get("es_torico") or bool(t.get("lente_torico_valor"))
-        tor_val = t.get("lente_torico_valor")
-        if es_tor and tor_val:
-            prefix_t = f"T{tor_val}" if str(tor_val).isdigit() else str(tor_val)
-            dioptria_lines.append(f"<font color='#0284C7' size=6>{prefix_t}</font>")
-        
-        diop_str = "<br/>".join(dioptria_lines) if dioptria_lines else "-"
-
-        # 10. OBSERVACIONES / LIO (Incisión, Eje, Pendiente, Observaciones Clínicas)
-        obs_parts = []
-        
-        # Incisión
-        inc_val = t.get("lente_incision_grados")
-        if inc_val:
-            obs_parts.append(f"<b>Inc:</b> {inc_val}°")
-            
-        # Eje tórico
-        tor_eje = t.get("lente_torico_eje")
-        if es_tor and tor_eje is not None:
-            obs_parts.append(f"<b>EJE:</b> {tor_eje}°")
-
-        # Alerta LIO Pendiente de Cálculo
-        if lleva_lio and not t.get("lio_calculado", False):
-            obs_parts.append("<font color='#C2410C'><b>[PENDIENTE DE CÁLCULO]</b></font>")
-
-        # Observaciones médicas prioritarias
-        obs_med = (
+        obs_med_raw = (
             t.get("observaciones_quirofano")
             or t.get("observaciones")
             or t.get("observaciones_medicas")
             or ""
         ).strip()
-        if obs_med:
-            obs_parts.append(obs_med[:100])
+        obs_med = obs_med_raw[:100]
 
-        obs_final_str = " · ".join(obs_parts) if obs_parts else "-"
+        if lleva_lio:
+            lente_mod = xml_escape(
+                lente_tipo_raw
+                or lente_modelo_raw
+                or str(t.get("lente_marca") or "").strip()
+                or "LIO Estándar"
+            )
+            dioptria_lines = []
+            if tiene_dioptria_val:
+                dioptria_lines.append(f"<b>{xml_escape(str(t.get('lente_dioptria')).strip())} D</b>")
 
-        # 11. Cirujano
-        cirujano_str = t.get("cirujano_nombre") or "-"
+            es_tor = bool(t.get("es_torico") or t.get("lente_torico_valor") not in (None, ""))
+            tor_val = t.get("lente_torico_valor")
+            if es_tor and tor_val not in (None, ""):
+                tor_str = str(tor_val).strip()
+                prefix_t = f"T{tor_str}" if tor_str.isdigit() else tor_str
+                dioptria_lines.append(f"<font color='#0284C7' size=7.5>{xml_escape(prefix_t)}</font>")
+
+            diop_cell = Paragraph("<br/>".join(dioptria_lines) if dioptria_lines else "-", style_cell_center)
+
+            obs_parts = []
+            inc_val = t.get("lente_incision_grados")
+            if inc_val not in (None, ""):
+                obs_parts.append(f"<b>Inc:</b> {xml_escape(str(inc_val).strip())}°")
+
+            tor_eje = t.get("lente_torico_eje")
+            if es_tor and tor_eje not in (None, ""):
+                obs_parts.append(f"<b>EJE:</b> {xml_escape(str(tor_eje).strip())}°")
+
+            if not t.get("lio_calculado", False):
+                obs_parts.append("<font color='#C2410C'><b>[PENDIENTE DE CÁLCULO]</b></font>")
+
+            if obs_med:
+                obs_parts.append(xml_escape(obs_med))
+
+            lente_cell = Paragraph(lente_mod, style_cell_left)
+            obs_cell = Paragraph(" · ".join(obs_parts) if obs_parts else "-", style_cell_left)
+        else:
+            # Sin LIO: mostrar práctica quirúrgica con SPAN en LENTE + DIOPTRIA (+ OBS si está vacía)
+            practica_txt = (
+                str(t.get("practica_nombre") or (t.get("asesorias_quirurgicas") or {}).get("practica_nombre") or "").strip()
+                or "Sin LIO"
+            )
+            lente_cell = Paragraph(xml_escape(practica_txt), style_cell_left)
+            diop_cell = ""
+            if obs_med:
+                table_style_commands.append(('SPAN', (IDX_LENTE, row_idx), (IDX_DIOP, row_idx)))
+                obs_cell = Paragraph(xml_escape(obs_med), style_cell_left)
+            else:
+                table_style_commands.append(('SPAN', (IDX_LENTE, row_idx), (IDX_OBS, row_idx)))
+                obs_cell = ""
+
+        # 8. Cirujano
+        cirujano_str = str(t.get("cirujano_nombre") or "").strip() or "-"
         if len(cirujano_str) > 22:
             cirujano_str = cirujano_str[:22] + "..."
 
-        # 12. DERIVADOR
-        derivador_str = (
+        # 9. DERIVADOR
+        derivador_str = str(
             t.get("medico_derivador_nombre")
             or (t.get("asesorias_quirurgicas") or {}).get("medico_derivador_nombre")
-            or "-"
-        )
+            or ""
+        ).strip() or "-"
         if len(derivador_str) > 18:
             derivador_str = derivador_str[:18] + "..."
 
-        # 13. ANESTESISTA
-        anestesia_str = t.get("anestesiologo_nombre") or t.get("tipo_anestesia") or "Tópica"
-        if len(anestesia_str) > 15:
-            anestesia_str = anestesia_str[:15] + "..."
+        # 10. ANESTESIA (Tipo de anestesia planificado, sin truncado arbitrario)
+        anestesia_str = str(t.get("tipo_anestesia") or "").strip() or "-"
 
-        # 14. OBRA SOCIAL
-        os_str = (
-            t.get("obra_social")
-            or t.get("codigo_obra_social")
-            or (t.get("pacientes") or {}).get("obra_social")
-            or "-"
-        )
-        if len(os_str) > 16:
-            os_str = os_str[:16] + "..."
-
-        # Ensamblado de fila
+        # Ensamblado de fila (12 columnas)
         fila = [
             Paragraph(f_disp, style_cell_center),
-            Paragraph(f"<b>{h_pac}</b>", style_cell_center_bold),
             Paragraph(f"<b>{h_cir}</b>", style_cell_center_bold),
-            Paragraph(str(hc_val), style_cell_center),
+            Paragraph(xml_escape(hc_val), style_cell_center),
             Paragraph(p_celda, style_cell_left),
             Paragraph(f"<b>{sec_val}</b>", style_cell_center_bold),
             Paragraph(ojo_val, eye_style),
-            Paragraph(lente_mod, style_cell_left),
-            Paragraph(diop_str, style_cell_center),
-            Paragraph(obs_final_str, style_cell_left),
-            Paragraph(cirujano_str, style_cell_left),
-            Paragraph(derivador_str, style_cell_left),
-            Paragraph(anestesia_str, style_cell_left),
-            Paragraph(os_str, style_cell_left),
+            lente_cell,
+            diop_cell,
+            obs_cell,
+            Paragraph(xml_escape(cirujano_str), style_cell_left),
+            Paragraph(xml_escape(derivador_str), style_cell_left),
+            Paragraph(xml_escape(anestesia_str), style_cell_left),
         ]
         tabla_data.append(fila)
 

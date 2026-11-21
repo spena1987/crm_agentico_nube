@@ -23,6 +23,12 @@ import {
 } from 'lucide-react'
 import { BACKEND_URL as API_BASE_URL, apiFetch } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
+import EditorIndicacionesClinicas, {
+  ModuloIndicacionEditable,
+  normalizarModulo,
+  legacyEmisionAModulos,
+  modulosTienenCambios
+} from './EditorIndicacionesClinicas'
 
 interface ModalEnviarIndicacionesQuirofanoProps {
   isOpen: boolean
@@ -51,12 +57,9 @@ export default function ModalEnviarIndicacionesQuirofano({
 
   const [datos, setDatos] = useState<any>(null)
   const [telefono, setTelefono] = useState<string>('')
-  const [textoIndicaciones, setTextoIndicaciones] = useState<string>('')
-  const [medicamentos, setMedicamentos] = useState<any[]>([])
-  const [cuidadosGenerales, setCuidadosGenerales] = useState<string>('')
-  const [pautasAlarma, setPautasAlarma] = useState<string>('')
-  const [modulosAsignados, setModulosAsignados] = useState<any[]>([])
-  const [modulosSeleccionadosIds, setModulosSeleccionadosIds] = useState<string[]>([])
+  const [modulosEditables, setModulosEditables] = useState<ModuloIndicacionEditable[]>([])
+  const [snapshotOriginal, setSnapshotOriginal] = useState<ModuloIndicacionEditable[]>([])
+  const [expectedVersion, setExpectedVersion] = useState<number | undefined>(undefined)
 
   const [plantillasCrm, setPlantillasCrm] = useState<any[]>([])
   const [plantillaManualId, setPlantillaManualId] = useState<string>('')
@@ -95,19 +98,38 @@ export default function ModalEnviarIndicacionesQuirofano({
         }
 
         const sug = data.sugerencia
+        let baseOriginal: ModuloIndicacionEditable[] = []
         if (sug) {
-          setTextoIndicaciones(sug.texto_indicaciones || sug.cuerpo_indicaciones || '')
-          setMedicamentos(sug.medicamentos || [])
-          setCuidadosGenerales(sug.cuidados_generales || '')
-          setPautasAlarma(sug.pautas_alarma || '')
-
           if (Array.isArray(sug.modulos_asignados) && sug.modulos_asignados.length > 0) {
-            setModulosAsignados(sug.modulos_asignados)
-            setModulosSeleccionadosIds(sug.modulos_asignados.map((m: any) => m.id))
+            baseOriginal = sug.modulos_asignados.map((m: any, idx: number) => normalizarModulo(m, idx))
           } else {
-            setModulosAsignados([])
-            setModulosSeleccionadosIds([])
+            baseOriginal = [
+              normalizarModulo(
+                {
+                  id: sug.plantilla_id || sug.id || 'sug-0',
+                  titulo: data.cirugia?.practica_nombre || 'Indicaciones Postquirúrgicas',
+                  cuerpo_indicaciones: sug.texto_indicaciones || sug.cuerpo_indicaciones || '',
+                  medicamentos: sug.medicamentos || [],
+                  cuidados_generales: sug.cuidados_generales || '',
+                  pautas_alarma: sug.pautas_alarma || ''
+                },
+                0
+              )
+            ]
           }
+        }
+        setSnapshotOriginal(baseOriginal)
+
+        if (data.ultima_emision) {
+          const prevMods = legacyEmisionAModulos(
+            data.ultima_emision,
+            data.cirugia?.practica_nombre || 'Indicaciones Postquirúrgicas'
+          )
+          setModulosEditables(prevMods)
+          setExpectedVersion(data.ultima_emision.version_actual || 1)
+        } else {
+          setModulosEditables(baseOriginal.map((m) => ({ ...m, medicamentos: m.medicamentos.map((x) => ({ ...x })) })))
+          setExpectedVersion(undefined)
         }
       } else {
         setMensajeError(data.error || 'No se pudieron preparar las indicaciones del turno.')
@@ -127,52 +149,56 @@ export default function ModalEnviarIndicacionesQuirofano({
     }
   }, [isOpen, cargarDatosTurno])
 
-  // Alternar módulos activos (1 a N)
+  // Alternar módulos activos (1 a N) protegiendo ediciones manuales
   const handleToggleModulo = (moduloId: string) => {
-    let nuevosIds: string[]
-    if (modulosSeleccionadosIds.includes(moduloId)) {
-      nuevosIds = modulosSeleccionadosIds.filter((id) => id !== moduloId)
-    } else {
-      nuevosIds = [...modulosSeleccionadosIds, moduloId]
+    const target = modulosEditables.find((m) => m.id === moduloId)
+    if (!target) return
+    if (target.activo && modulosTienenCambios([target], snapshotOriginal)) {
+      const ok = window.confirm(
+        `El módulo "${target.titulo}" tiene cambios manuales. Si lo desactivas no se incluirá en el PDF. ¿Continuar?`
+      )
+      if (!ok) return
     }
-    setModulosSeleccionadosIds(nuevosIds)
-
-    const modulosFiltrados = modulosAsignados.filter((m: any) => nuevosIds.includes(m.id))
-    const textos = modulosFiltrados.map((m: any) => m.cuerpo_indicaciones).filter(Boolean)
-    setTextoIndicaciones(textos.join('\n\n---\n\n'))
-
-    const todosMeds: any[] = []
-    modulosFiltrados.forEach((m: any) => {
-      ;(m.medicamentos || []).forEach((med: any) => {
-        if (!todosMeds.some((x) => x.droga === med.droga)) {
-          todosMeds.push(med)
-        }
-      })
-    })
-    setMedicamentos(todosMeds)
-
-    const todosCuidados = modulosFiltrados.map((m: any) => m.cuidados_generales).filter(Boolean)
-    setCuidadosGenerales(todosCuidados.join('\n'))
-
-    const todasAlarmas = modulosFiltrados.map((m: any) => m.pautas_alarma).filter(Boolean)
-    setPautasAlarma(todasAlarmas.join('\n'))
+    setModulosEditables((prev) =>
+      prev.map((m) => (m.id === moduloId ? { ...m, activo: !m.activo } : m))
+    )
   }
 
   // Selección manual de plantilla si no hay regla preconfigurada
   const handleSelectPlantillaManual = (plantillaId: string) => {
+    if (modulosTienenCambios(modulosEditables, snapshotOriginal)) {
+      const ok = window.confirm('Tiene cambios manuales; si cambia de plantilla se reemplazarán. ¿Continuar?')
+      if (!ok) return
+    }
     setPlantillaManualId(plantillaId)
     const match = plantillasCrm.find((p) => p.id === plantillaId)
     if (match) {
-      setTextoIndicaciones(match.cuerpo_indicaciones || '')
-      setMedicamentos(match.medicamentos || [])
-      setCuidadosGenerales(match.cuidados_generales || '')
-      setPautasAlarma(match.pautas_alarma || '')
-      setModulosAsignados([])
-      setModulosSeleccionadosIds([])
+      const mod = normalizarModulo(
+        {
+          id: match.id,
+          titulo: match.titulo || 'Indicaciones Médicas',
+          cuerpo_indicaciones: match.cuerpo_indicaciones || '',
+          medicamentos: match.medicamentos || [],
+          cuidados_generales: match.cuidados_generales || '',
+          pautas_alarma: match.pautas_alarma || ''
+        },
+        0
+      )
+      setModulosEditables([mod])
+      setSnapshotOriginal([{ ...mod, medicamentos: mod.medicamentos.map((x) => ({ ...x })) }])
     }
   }
 
-  // Previsualizar PDF Express
+  const modulosActivos = modulosEditables.filter((m) => m.activo)
+  const hasContenidoValido = modulosActivos.some(
+    (m) =>
+      m.cuerpo_indicaciones.trim().length > 0 ||
+      m.medicamentos.length > 0 ||
+      m.cuidados_generales.trim().length > 0 ||
+      m.pautas_alarma.trim().length > 0
+  )
+
+  // Previsualizar PDF Express (mismo payload que envío real)
   const handleVerPreviewPdf = async () => {
     setGenerandoPreview(true)
     setMensajeError(null)
@@ -183,12 +209,10 @@ export default function ModalEnviarIndicacionesQuirofano({
           paciente_dni: datos?.paciente?.dni || '',
           paciente_obra_social: datos?.paciente?.obra_social || '',
           practica_nombre: datos?.cirugia?.practica_nombre || 'Cirugía Oftalmológica',
+          ojo: datos?.cirugia?.ojo || 'OD',
           medico_nombre: datos?.cirujano?.nombre || 'Médico Cirujano',
           medico_id: datos?.cirujano?.id,
-          cuerpo_indicaciones: textoIndicaciones,
-          medicamentos: medicamentos,
-          cuidados_generales: cuidadosGenerales,
-          pautas_alarma: pautasAlarma,
+          modulos: modulosActivos,
           tipo_documento: 'postquirurgico',
           titulo_documento: 'INDICACIONES MÉDICAS POSTQUIRÚRGICAS'
         }
@@ -223,18 +247,13 @@ export default function ModalEnviarIndicacionesQuirofano({
     setMensajeError(null)
 
     try {
-      const modulosActivos = modulosAsignados.filter((m: any) => modulosSeleccionadosIds.includes(m.id))
-
       const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/enviar-indicaciones-postqx`, {
         method: 'POST',
         timeoutMs: 60000,
         body: JSON.stringify({
           telefono_override: telefono.trim(),
-          texto_indicaciones: textoIndicaciones,
-          medicamentos: medicamentos,
-          cuidados_generales: cuidadosGenerales,
-          pautas_alarma: pautasAlarma,
-          modulos: modulosActivos.length > 0 ? modulosActivos : undefined,
+          modulos: modulosActivos,
+          expected_version: expectedVersion,
           operador_id: operadorId,
           operador_nombre: operadorNombre
         })
@@ -242,7 +261,14 @@ export default function ModalEnviarIndicacionesQuirofano({
 
       const data = await res.json()
       if (res.ok && data.success) {
-        setMensajeExito('¡Indicaciones postquirúrgicas enviadas con éxito por WhatsApp!')
+        setMensajeExito(
+          data.version_numero && data.version_numero > 1
+            ? `¡Indicaciones actualizadas (v${data.version_numero}) enviadas con éxito por WhatsApp!`
+            : '¡Indicaciones postquirúrgicas enviadas con éxito por WhatsApp!'
+        )
+        if (data.version_numero) {
+          setExpectedVersion(data.version_numero)
+        }
         if (data.pdf_url) {
           setPdfUrlEnviado(data.pdf_url)
         }
@@ -417,18 +443,18 @@ export default function ModalEnviarIndicacionesQuirofano({
               </div>
 
               {/* Módulos 1 a N si hay más de 1 asignado */}
-              {modulosAsignados.length > 1 && (
+              {modulosEditables.length > 1 && (
                 <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-[11px] text-slate-300 flex items-center gap-1.5">
                       <Layers size={13} className="text-cyan-400" />
-                      Módulos Complementarios ({modulosAsignados.length}):
+                      Módulos Complementarios ({modulosEditables.length}):
                     </span>
                     <span className="text-[10px] text-slate-500">Tilde los que aplican a este paciente</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {modulosAsignados.map((m: any) => {
-                      const isActivo = modulosSeleccionadosIds.includes(m.id)
+                    {modulosEditables.map((m) => {
+                      const isActivo = m.activo
                       return (
                         <button
                           key={m.id}
@@ -453,24 +479,14 @@ export default function ModalEnviarIndicacionesQuirofano({
                 </div>
               )}
 
-              {/* Resumen de Medicamentos / Gotas */}
-              {medicamentos.length > 0 && (
-                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1.5">
-                  <span className="font-bold text-[11px] text-slate-300 block">
-                    💊 Esquema Posológico de Colirios & Gotas ({medicamentos.length}):
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {medicamentos.map((m: any, idx: number) => (
-                      <span
-                        key={idx}
-                        className="px-2 py-0.5 rounded-lg bg-blue-950/60 text-blue-300 border border-blue-900 text-[10.5px] font-medium"
-                      >
-                        {m.droga} {m.frecuencia ? `• ${m.frecuencia}` : ''}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {/* Editor Clínico Completo (siempre visible y editable al abrir) */}
+              <EditorIndicacionesClinicas
+                modulos={modulosEditables}
+                snapshotOriginal={snapshotOriginal}
+                onChange={setModulosEditables}
+                variant="dark"
+                disabled={loading || enviando}
+              />
 
               {/* Teléfono de Destino WhatsApp */}
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
@@ -489,14 +505,6 @@ export default function ModalEnviarIndicacionesQuirofano({
                   className="w-full text-xs p-2 rounded-lg border border-slate-700 bg-slate-900 text-slate-100 font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
-
-              {/* Cuidados Generales y Pautas de Alarma (Colapsable o resumen) */}
-              {cuidadosGenerales && (
-                <div className="p-2.5 rounded-xl bg-slate-950/40 border border-slate-800/80 text-[11px] text-slate-400 space-y-1">
-                  <span className="font-bold text-slate-300 block">Cuidados & Reposo:</span>
-                  <p className="line-clamp-2 italic">{cuidadosGenerales}</p>
-                </div>
-              )}
             </>
           )}
         </div>
@@ -514,7 +522,7 @@ export default function ModalEnviarIndicacionesQuirofano({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              disabled={loading || generandoPreview || !textoIndicaciones}
+              disabled={loading || generandoPreview || !hasContenidoValido}
               onClick={handleVerPreviewPdf}
               className="px-3 py-2 rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 text-xs font-bold flex items-center gap-1.5 transition disabled:opacity-50"
             >
@@ -524,7 +532,7 @@ export default function ModalEnviarIndicacionesQuirofano({
 
             <button
               type="button"
-              disabled={loading || enviando || !textoIndicaciones || !telefono}
+              disabled={loading || enviando || !hasContenidoValido || !telefono}
               onClick={handleEnviarWhatsApp}
               className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-950/40 transition disabled:opacity-50"
             >
