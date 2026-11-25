@@ -22,6 +22,14 @@ def is_valid_uuid(val: Any) -> bool:
     except (ValueError, AttributeError, TypeError):
         return False
 
+
+def es_borrador_o_nulo(val: Any) -> bool:
+    """Detecta IDs temporales de borrador del frontend (draft-...) o valores nulos/vacíos."""
+    if not val:
+        return True
+    s = str(val).strip().lower()
+    return s in ("", "null", "undefined", "none") or s.startswith("draft-")
+
 raw_url = (os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or "").strip().strip("'\"")
 SUPABASE_URL = raw_url if raw_url and not "tu_proyecto" in raw_url else None
 
@@ -4535,6 +4543,8 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
     """
     if not supabase:
         raise RuntimeError("Supabase no está conectado.")
+    if es_borrador_o_nulo(asesoria_id):
+        raise ValueError("El caso quirúrgico aún es un borrador temporal; guárdelo primero antes de actualizarlo.")
     try:
         datos = {}
         campos_permitidos = [
@@ -4595,7 +4605,12 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
             ).eq("id", asesoria_id).limit(1).execute()
             prev_row_estado = q_est.data[0] if (q_est and q_est.data) else {}
         except Exception as e_prev_est:
-            logger.warning(f"Aviso leyendo estado previo en asesoría {asesoria_id}: {e_prev_est}")
+            logger.warning(f"Aviso leyendo estado previo en asesoría {asesoria_id}, reintentando SELECT *: {e_prev_est}")
+            try:
+                q_est_fb = supabase.table("asesorias_quirurgicas").select("*").eq("id", asesoria_id).limit(1).execute()
+                prev_row_estado = q_est_fb.data[0] if (q_est_fb and q_est_fb.data) else {}
+            except Exception as e_prev_fb:
+                logger.warning(f"Aviso en fallback SELECT * para asesoría {asesoria_id}: {e_prev_fb}")
 
         prev_est = prev_row_estado.get("estado")
         prev_chk = prev_row_estado.get("checklist_prequirurgico") or {}
@@ -5971,6 +5986,7 @@ def cambiar_estado_presupuesto(
                 curr_checklist = {}
                 as_curr = None
                 as_curr_row = {}
+                lectura_as_ok = False
                 try:
                     as_curr = (
                         supabase.table("asesorias_quirurgicas")
@@ -5978,19 +5994,35 @@ def cambiar_estado_presupuesto(
                         .eq("id", target_asesoria_id)
                         .execute()
                     )
-                    if as_curr.data:
+                    if as_curr and as_curr.data:
                         as_curr_row = as_curr.data[0]
                         curr_checklist = as_curr_row.get("checklist_prequirurgico") or {}
+                        lectura_as_ok = True
                 except Exception as chk_err:
-                    logger.warning(f"Error leyendo checklist actual de asesoría {target_asesoria_id}: {chk_err}")
+                    logger.warning(f"Error leyendo checklist actual de asesoría {target_asesoria_id}, reintentando SELECT *: {chk_err}")
+                    try:
+                        as_curr = (
+                            supabase.table("asesorias_quirurgicas")
+                            .select("*")
+                            .eq("id", target_asesoria_id)
+                            .limit(1)
+                            .execute()
+                        )
+                        if as_curr and as_curr.data:
+                            as_curr_row = as_curr.data[0]
+                            curr_checklist = as_curr_row.get("checklist_prequirurgico") or {}
+                            lectura_as_ok = True
+                    except Exception as chk_err_fb:
+                        logger.error(f"Error crítico leyendo asesoría {target_asesoria_id} (fallback SELECT *): {chk_err_fb}")
 
                 if not isinstance(curr_checklist, dict):
                     curr_checklist = {}
                 curr_checklist = dict(curr_checklist)
-                curr_checklist["presupuesto_aceptado"] = True
+                if lectura_as_ok:
+                    curr_checklist["presupuesto_aceptado"] = True
 
-                sel_actual = curr_checklist.get("_lio_seleccion")
-                if not isinstance(sel_actual, dict) or str(sel_actual.get("estado") or "a_definir").strip().lower() == "a_definir":
+                sel_actual = curr_checklist.get("_lio_seleccion") if lectura_as_ok else None
+                if lectura_as_ok and (not isinstance(sel_actual, dict) or str(sel_actual.get("estado") or "a_definir").strip().lower() == "a_definir"):
                     try:
                         p_items = (
                             supabase.table("items_presupuesto")
@@ -6052,24 +6084,28 @@ def cambiar_estado_presupuesto(
                     except Exception as e_hid_ppto:
                         logger.warning(f"Aviso hidratando LIO desde items_presupuesto ({presupuesto_id}): {e_hid_ppto}")
 
-                puede_confirmar_as = True
-                try:
-                    _validar_lio_definido_para_confirmacion({
-                        **as_curr_row,
-                        "estado": "confirmado",
-                        "checklist_prequirurgico": curr_checklist,
-                    })
-                except ValueError:
-                    puede_confirmar_as = False
+                puede_confirmar_as = True if lectura_as_ok else False
+                if lectura_as_ok:
+                    try:
+                        _validar_lio_definido_para_confirmacion({
+                            **as_curr_row,
+                            "estado": "confirmado",
+                            "checklist_prequirurgico": curr_checklist,
+                        })
+                    except ValueError:
+                        puede_confirmar_as = False
 
                 update_as_aprobado = {
                     "estado": "confirmado" if puede_confirmar_as else "en_analisis",
                     "presupuesto_id": presupuesto_id,
                     "monto_extra": float(presupuesto.get("total") or 0.0),
-                    "checklist_prequirurgico": curr_checklist,
                     "canal_resolucion": canal_resolucion or ("whatsapp_bot" if origen == "IA_WHATSAPP" else "presencial"),
                     "updated_at": "now()"
                 }
+                if lectura_as_ok:
+                    update_as_aprobado["checklist_prequirurgico"] = curr_checklist
+                else:
+                    logger.warning(f"Se omitió actualizar checklist_prequirurgico en asesoría {target_asesoria_id} porque falló la lectura previa (protección anti-sobrescritura).")
                 if puede_confirmar_as:
                     update_as_aprobado["seguimiento_auto_activo"] = False
                     update_as_aprobado["seguimiento_estado_actual"] = "convertido"
@@ -7510,7 +7546,7 @@ def get_evoluciones_by_asesoria(asesoria_id: str) -> List[Dict[str, Any]]:
     """
     Retorna la lista cronológica de evoluciones de un caso quirúrgico.
     """
-    if not supabase or not asesoria_id:
+    if not supabase or es_borrador_o_nulo(asesoria_id) or not is_valid_uuid(asesoria_id):
         return []
     try:
         resp = supabase.table("asesoria_evoluciones") \
@@ -7530,13 +7566,20 @@ def crear_evolucion_asesoria(payload: dict) -> Dict[str, Any]:
     if not supabase:
         raise RuntimeError("Supabase no está conectado.")
     try:
+        asesoria_id = payload.get("asesoria_id")
+        if es_borrador_o_nulo(asesoria_id) or not is_valid_uuid(asesoria_id):
+            raise ValueError("Debe guardar primero el caso quirúrgico antes de registrar evoluciones en la bitácora.")
+        paciente_id = payload.get("paciente_id")
+        if es_borrador_o_nulo(paciente_id) or not is_valid_uuid(paciente_id):
+            raise ValueError("El ID del paciente es obligatorio y debe ser válido.")
+
         contenido = (payload.get("contenido") or "").strip()
         if not contenido:
             raise ValueError("El contenido de la evolución no puede estar vacío.")
             
         data_ins = {
-            "asesoria_id": payload["asesoria_id"],
-            "paciente_id": payload["paciente_id"],
+            "asesoria_id": asesoria_id,
+            "paciente_id": paciente_id,
             "usuario_id": payload.get("usuario_id"),
             "usuario_nombre": payload.get("usuario_nombre") or "Asesora Quirúrgica",
             "tipo_contacto": payload.get("tipo_contacto", "llamada"),
@@ -7549,7 +7592,7 @@ def crear_evolucion_asesoria(payload: dict) -> Dict[str, Any]:
             raise Exception("No se pudo insertar el registro de evolución.")
             
         # Actualizar updated_at en el caso quirúrgico
-        supabase.table("asesorias_quirurgicas").update({"updated_at": "now()"}).eq("id", payload["asesoria_id"]).execute()
+        supabase.table("asesorias_quirurgicas").update({"updated_at": "now()"}).eq("id", asesoria_id).execute()
         
         return resp.data[0]
     except Exception as e:
@@ -7560,7 +7603,7 @@ def eliminar_evolucion_asesoria(evolucion_id: str) -> bool:
     """
     Elimina una entrada de evolución por su ID.
     """
-    if not supabase:
+    if not supabase or es_borrador_o_nulo(evolucion_id) or not is_valid_uuid(evolucion_id):
         return False
     try:
         supabase.table("asesoria_evoluciones").delete().eq("id", evolucion_id).execute()
@@ -8586,25 +8629,27 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
         resp = supabase.table("asesorias_quirurgicas").select(f"*, pacientes({_PACIENTES_RESUMEN_COLS})").in_("estado", ["confirmado", "programado"]).order("created_at", desc=True).execute()
         casos = resp.data or []
         
-        # Optimización: Obtener turnos existentes de todas las asesorías en una sola consulta por lotes (evita N+1)
-        casos_ids = [c["id"] for c in casos if c.get("id")]
+        # Optimización: Obtener turnos existentes de todas las asesorías en lotes acotados (evita N+1 y URLs enormes)
+        casos_ids = [str(c["id"]) for c in casos if c.get("id") and not es_borrador_o_nulo(c.get("id"))]
         turnos_por_asesoria: Dict[str, List[Dict[str, Any]]] = {}
         reprogramados_por_asesoria: Dict[str, set] = {}
         if casos_ids:
             try:
-                t_resp = supabase.table("turnos_quirofano") \
-                    .select("id, asesoria_id, ojo, fecha_cirugia, hora_inicio, estado, motivo_cancelacion") \
-                    .in_("asesoria_id", casos_ids) \
-                    .execute()
-                for t in (t_resp.data or []):
-                    as_id = t.get("asesoria_id")
-                    if not as_id:
-                        continue
-                    if t.get("estado") == "cancelado":
-                        if t.get("motivo_cancelacion") == "reprogramado_asesoramiento":
-                            reprogramados_por_asesoria.setdefault(as_id, set()).add((t.get("ojo") or "OD").upper())
-                        continue
-                    turnos_por_asesoria.setdefault(as_id, []).append(t)
+                for i in range(0, len(casos_ids), 80):
+                    chunk_ids = casos_ids[i:i + 80]
+                    t_resp = supabase.table("turnos_quirofano") \
+                        .select("id, asesoria_id, ojo, fecha_cirugia, hora_inicio, estado, motivo_cancelacion") \
+                        .in_("asesoria_id", chunk_ids) \
+                        .execute()
+                    for t in (t_resp.data or []):
+                        as_id = t.get("asesoria_id")
+                        if not as_id:
+                            continue
+                        if t.get("estado") == "cancelado":
+                            if t.get("motivo_cancelacion") == "reprogramado_asesoramiento":
+                                reprogramados_por_asesoria.setdefault(as_id, set()).add((t.get("ojo") or "OD").upper())
+                            continue
+                        turnos_por_asesoria.setdefault(as_id, []).append(t)
             except Exception as e_t:
                 logger.warning(f"Aviso al cargar turnos en lote para asesorias confirmadas: {e_t}")
 
@@ -10315,7 +10360,9 @@ def asegurar_turnos_para_consentimiento_asesoria(
     no genera ningún registro espurio en turnos_quirofano.
     Retorna un diccionario estructurado con la información de ambos ojos y compatibilidad consolidada.
     """
-    if not supabase or not asesoria_id:
+    if not supabase or es_borrador_o_nulo(asesoria_id):
+        if crear_si_no_existe and es_borrador_o_nulo(asesoria_id):
+            raise ValueError("Debe guardar primero el caso quirúrgico antes de gestionar turnos o consentimientos.")
         return {"es_bilateral_escalonada": False, "tiene_turno": False, "consentimiento": None}
     try:
         import secrets
@@ -12652,6 +12699,12 @@ def _resolver_pre_id_geclisa(cirujano_nombre: Optional[str], cirujano_id: Option
             else:
                 matches = geclisa_client.buscar_prestadores(query)
                 if matches:
+                    if len(_GECLISA_PRESTADORES_CACHE) > 256:
+                        expired_keys = [k for k, v in list(_GECLISA_PRESTADORES_CACHE.items()) if now_m >= v.get("expires_at", 0)]
+                        for k in expired_keys:
+                            _GECLISA_PRESTADORES_CACHE.pop(k, None)
+                        if len(_GECLISA_PRESTADORES_CACHE) > 256:
+                            _GECLISA_PRESTADORES_CACHE.clear()
                     _GECLISA_PRESTADORES_CACHE[cache_key] = {"data": matches, "expires_at": now_m + 900}
             if matches:
                 # 1. Priorizar coincidencia completa de todos los nombres/apellidos

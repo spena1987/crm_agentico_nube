@@ -28,6 +28,35 @@ const formatUrl = (url: string) => {
 
 export const BACKEND_URL = formatUrl(rawBackendUrl);
 
+let activeRefreshPromise: Promise<any> | null = null
+let refreshFailedUntil = 0
+
+async function refreshSessionDeduped(): Promise<any | null> {
+  if (Date.now() < refreshFailedUntil) {
+    return null
+  }
+  if (activeRefreshPromise) {
+    return activeRefreshPromise
+  }
+  activeRefreshPromise = (async () => {
+    try {
+      const { data, error } = await supabase.auth.refreshSession()
+      if (error || !data?.session) {
+        refreshFailedUntil = Date.now() + 30000
+        return null
+      }
+      refreshFailedUntil = 0
+      return data.session
+    } catch {
+      refreshFailedUntil = Date.now() + 30000
+      return null
+    } finally {
+      activeRefreshPromise = null
+    }
+  })()
+  return activeRefreshPromise
+}
+
 /**
  * Obtiene los encabezados de autenticación con el JWT actual de la sesión de Supabase
  * o el token de acceso oficial del proyecto si no hay sesión individual iniciada.
@@ -48,15 +77,11 @@ export async function getAuthHeaders(customHeaders: HeadersInit = {}): Promise<R
 
   try {
     let session = (await supabase.auth.getSession()).data.session
-    // Proactivamente refrescar token si caduca en menos de 60 segundos
+    // Proactivamente refrescar token de forma serializada si caduca en menos de 60 segundos
     if (session?.expires_at && session.expires_at * 1000 < Date.now() + 60000) {
-      try {
-        const { data: refreshed } = await supabase.auth.refreshSession()
-        if (refreshed?.session) {
-          session = refreshed.session
-        }
-      } catch (refErr) {
-        console.warn('Fallo al refrescar sesión proactivamente:', refErr)
+      const refreshedSession = await refreshSessionDeduped()
+      if (refreshedSession) {
+        session = refreshedSession
       }
     }
 
@@ -147,12 +172,12 @@ export async function apiFetch(endpoint: string, options: ApiFetchOptions = {}):
     }
   }
 
-  // Si retorna 401, reintentar una sola vez tras renovar sesión
+  // Si retorna 401, reintentar una sola vez tras renovar sesión de forma serializada
   if (res.status === 401) {
     try {
-      const { data: refreshed } = await supabase.auth.refreshSession()
-      if (refreshed?.session?.access_token) {
-        const retryHeaders = { ...authHeaders, Authorization: `Bearer ${refreshed.session.access_token}` }
+      const refreshedSession = await refreshSessionDeduped()
+      if (refreshedSession?.access_token) {
+        const retryHeaders = { ...authHeaders, Authorization: `Bearer ${refreshedSession.access_token}` }
         res = await executeFetch(retryHeaders)
       }
     } catch {
@@ -183,8 +208,8 @@ if (typeof window !== 'undefined' && !(window as any).__MEDCRM_FETCH_INTERCEPTOR
         try {
           let session = (await supabase.auth.getSession()).data.session
           if (session?.expires_at && session.expires_at * 1000 < Date.now() + 60000) {
-            const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }))
-            session = refreshed?.session || session
+            const refreshedSession = await refreshSessionDeduped()
+            session = refreshedSession || session
           }
           token = session?.access_token || null
         } catch {
@@ -202,13 +227,13 @@ if (typeof window !== 'undefined' && !(window as any).__MEDCRM_FETCH_INTERCEPTOR
           
           let res = await originalFetch(input, { ...init, headers })
 
-          // Reintento resiliente ante 401 (token expirado durante la sesión)
+          // Reintento resiliente ante 401 (token expirado durante la sesión, con mutex)
           if (res.status === 401) {
             try {
-              const { data: refreshed } = await supabase.auth.refreshSession()
-              if (refreshed?.session?.access_token) {
+              const refreshedSession = await refreshSessionDeduped()
+              if (refreshedSession?.access_token) {
                 const retryHeaders = new Headers(headers)
-                retryHeaders.set('Authorization', `Bearer ${refreshed.session.access_token}`)
+                retryHeaders.set('Authorization', `Bearer ${refreshedSession.access_token}`)
                 res = await originalFetch(input, { ...init, headers: retryHeaders })
               }
             } catch {

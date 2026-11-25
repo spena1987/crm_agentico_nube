@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   PhoneCall,
   MessageSquare,
@@ -21,7 +21,7 @@ import {
   Lock
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import { BACKEND_URL } from '@/lib/api'
+import { apiFetch } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 
 export interface AsesoriaEvolucion {
@@ -100,6 +100,8 @@ export default function TimelineEvolucionesAsesoria({
   disabled = false
 }: TimelineEvolucionesAsesoriaProps) {
   const { user } = useAuth()
+  const instanceIdRef = useRef<string>(Math.random().toString(36).slice(2, 10))
+  const esBorrador = !asesoriaId || String(asesoriaId).trim() === '' || String(asesoriaId).startsWith('draft-')
   const [evoluciones, setEvoluciones] = useState<AsesoriaEvolucion[]>([])
   const [cargando, setCargando] = useState(false)
   const [guardando, setGuardando] = useState(false)
@@ -124,14 +126,16 @@ export default function TimelineEvolucionesAsesoria({
 
   // Cargar evoluciones desde Backend o Supabase
   const fetchEvoluciones = async () => {
-    if (!asesoriaId) {
+    if (esBorrador || !asesoriaId) {
       setEvoluciones([])
+      setError(null)
+      setCargando(false)
       return
     }
     try {
       setCargando(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${asesoriaId}/evoluciones`)
+      const res = await apiFetch(`/api/asesorias-quirurgicas/${asesoriaId}/evoluciones`, { cache: 'no-store' })
       const data = await res.json()
       if (res.ok && data.success) {
         setEvoluciones(data.evoluciones || [])
@@ -154,36 +158,52 @@ export default function TimelineEvolucionesAsesoria({
   }
 
   useEffect(() => {
+    if (esBorrador || !asesoriaId) {
+      setEvoluciones([])
+      setError(null)
+      return
+    }
+
     fetchEvoluciones()
 
-    if (!asesoriaId) return
-
-    // Suscripción en tiempo real para colaboración multi-usuario
-    const channel = supabase
-      .channel(`evoluciones-${asesoriaId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'asesoria_evoluciones',
-          filter: `asesoria_id=eq.${asesoriaId}`
-        },
-        () => {
-          fetchEvoluciones()
-        }
-      )
-      .subscribe()
+    // Suscripción en tiempo real aislada por instancia de montaje (evita error tras subscribe() en re-renders / resúmenes)
+    let channel: any = null
+    try {
+      const channelName = `evoluciones-${asesoriaId}-${instanceIdRef.current}`
+      channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'asesoria_evoluciones',
+            filter: `asesoria_id=eq.${asesoriaId}`
+          },
+          () => {
+            fetchEvoluciones()
+          }
+        )
+        .subscribe()
+    } catch (rtErr) {
+      console.warn('Aviso suscribiendo Realtime evoluciones:', rtErr)
+    }
 
     return () => {
-      supabase.removeChannel(channel)
+      if (channel) {
+        void supabase.removeChannel(channel)
+      }
     }
-  }, [asesoriaId])
+  }, [asesoriaId, esBorrador])
 
   // Guardar nueva evolución
   const handleGuardarEvolucion = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (disabled || !contenido.trim() || !asesoriaId) return
+    if (disabled || !contenido.trim()) return
+    if (esBorrador || !asesoriaId) {
+      setError('Guardá primero los datos principales del caso quirúrgico para habilitar el registro de evoluciones en la bitácora.')
+      return
+    }
 
     try {
       setGuardando(true)
@@ -199,9 +219,8 @@ export default function TimelineEvolucionesAsesoria({
         fecha_contacto: new Date().toISOString()
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${asesoriaId}/evoluciones`, {
+      const res = await apiFetch(`/api/asesorias-quirurgicas/${asesoriaId}/evoluciones`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
 
@@ -249,12 +268,12 @@ export default function TimelineEvolucionesAsesoria({
 
   // Eliminar evolución
   const handleEliminarEvolucion = async (evolucionId: string) => {
-    if (disabled) return
+    if (disabled || esBorrador) return
     if (!confirm('¿Deseas eliminar este registro de la bitácora?')) return
 
     try {
       setEvoluciones((prev) => prev.filter((ev) => ev.id !== evolucionId))
-      await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/evoluciones/${evolucionId}`, {
+      await apiFetch(`/api/asesorias-quirurgicas/evoluciones/${evolucionId}`, {
         method: 'DELETE'
       })
       await supabase.from('asesoria_evoluciones').delete().eq('id', evolucionId)
@@ -307,7 +326,7 @@ export default function TimelineEvolucionesAsesoria({
         </div>
       )}
 
-      {/* Formulario de Entrada Rápida O Aviso de Solo Lectura si está bloqueado */}
+      {/* Formulario de Entrada Rápida O Aviso de Solo Lectura / Borrador */}
       {disabled ? (
         <div className="p-3.5 rounded-xl bg-neutral-950/70 border border-[var(--border)] text-xs text-gray-400 flex items-center justify-between gap-3 shadow-inner">
           <div className="flex items-center gap-2">
@@ -316,6 +335,16 @@ export default function TimelineEvolucionesAsesoria({
           </div>
           <span className="text-[10px] text-gray-500 font-mono">
             Reabrir caso para agregar nuevos registros
+          </span>
+        </div>
+      ) : esBorrador ? (
+        <div className="p-3.5 rounded-xl bg-amber-950/25 border border-amber-500/30 text-xs text-amber-200 flex items-center justify-between gap-3 shadow-inner">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={14} className="text-amber-400 shrink-0" />
+            <span className="font-medium">Guardá primero el caso quirúrgico para habilitar la bitácora de evoluciones.</span>
+          </div>
+          <span className="text-[10px] text-amber-300/70 font-mono shrink-0">
+            Caso en borrador
           </span>
         </div>
       ) : (

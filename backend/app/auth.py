@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 from typing import Optional, Dict, Any, Tuple
 from fastapi import Request, HTTPException, Depends
@@ -24,6 +25,29 @@ bearer_scheme = HTTPBearer(auto_error=False)
 _AUTH_TOKEN_CACHE: Dict[str, Tuple[Dict[str, Any], float]] = {}
 # Cache negativo para tokens rechazados o con sesión revocada (token -> expire_timestamp)
 _AUTH_INVALID_TOKEN_CACHE: Dict[str, float] = {}
+_AUTH_CACHE_MAX_ENTRIES = 500
+
+
+def _prune_auth_caches(ahora_ts: Optional[float] = None) -> None:
+    """Elimina tokens expirados y acota el tamaño máximo de los cachés de sesión en RAM."""
+    now_t = ahora_ts if ahora_ts is not None else time.time()
+    if len(_AUTH_TOKEN_CACHE) > _AUTH_CACHE_MAX_ENTRIES:
+        expired_valid = [k for k, (_, exp_ts) in list(_AUTH_TOKEN_CACHE.items()) if exp_ts <= now_t]
+        for k in expired_valid:
+            _AUTH_TOKEN_CACHE.pop(k, None)
+        if len(_AUTH_TOKEN_CACHE) > _AUTH_CACHE_MAX_ENTRIES:
+            ordered = sorted(_AUTH_TOKEN_CACHE.items(), key=lambda item: item[1][1])
+            for k, _ in ordered[: len(_AUTH_TOKEN_CACHE) // 2]:
+                _AUTH_TOKEN_CACHE.pop(k, None)
+
+    if len(_AUTH_INVALID_TOKEN_CACHE) > _AUTH_CACHE_MAX_ENTRIES:
+        expired_invalid = [k for k, exp_ts in list(_AUTH_INVALID_TOKEN_CACHE.items()) if exp_ts <= now_t]
+        for k in expired_invalid:
+            _AUTH_INVALID_TOKEN_CACHE.pop(k, None)
+        if len(_AUTH_INVALID_TOKEN_CACHE) > _AUTH_CACHE_MAX_ENTRIES:
+            ordered_inv = sorted(_AUTH_INVALID_TOKEN_CACHE.items(), key=lambda item: item[1])
+            for k, _ in ordered_inv[: len(_AUTH_INVALID_TOKEN_CACHE) // 2]:
+                _AUTH_INVALID_TOKEN_CACHE.pop(k, None)
 
 def decode_supabase_jwt(token: str) -> Dict[str, Any]:
     """
@@ -84,6 +108,7 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
             # Guardar en caché si el token es válido
             exp = payload.get("exp") or (ahora_ts + 300)
             _AUTH_TOKEN_CACHE[token] = (payload, min(float(exp), ahora_ts + 300))
+            _prune_auth_caches(ahora_ts)
             return payload
         except jwt.ExpiredSignatureError:
             raise HTTPException(
@@ -126,6 +151,7 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
         exp = unverified.get("exp")
         if exp and exp < ahora_ts:
             _AUTH_INVALID_TOKEN_CACHE[token] = ahora_ts + 60
+            _prune_auth_caches(ahora_ts)
             raise HTTPException(
                 status_code=401, 
                 detail="La sesión o token de acceso ha expirado. Inicia sesión nuevamente.", 
@@ -143,11 +169,13 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
                         "role": res.user.role or "authenticated"
                     }
                     _AUTH_TOKEN_CACHE[token] = (verified_payload, ahora_ts + 300)
+                    _prune_auth_caches(ahora_ts)
                     return verified_payload
         except Exception as api_err:
             logger.debug(f"Verificación remota get_user no aplicable o falló: {api_err}")
             # Cachear el rechazo por 60 segundos para evitar llamadas repetitivas /auth/v1/user en polling
             _AUTH_INVALID_TOKEN_CACHE[token] = ahora_ts + 60
+            _prune_auth_caches(ahora_ts)
             raise HTTPException(
                 status_code=401,
                 detail="El token o sesión de usuario no es válido o fue revocado. Inicia sesión nuevamente.",
@@ -181,7 +209,7 @@ async def get_current_user(
             detail="Acceso no autorizado: Se requiere encabezado 'Authorization: Bearer <token>'.",
             headers={"WWW-Authenticate": "Bearer"}
         )
-    return decode_supabase_jwt(credentials.credentials)
+    return await asyncio.to_thread(decode_supabase_jwt, credentials.credentials)
 
 async def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme)
@@ -193,7 +221,7 @@ async def get_optional_user(
     if not credentials or not credentials.credentials:
         return None
     try:
-        return decode_supabase_jwt(credentials.credentials)
+        return await asyncio.to_thread(decode_supabase_jwt, credentials.credentials)
     except HTTPException:
         return None
 
@@ -361,7 +389,7 @@ class AuthSecurityMiddleware(BaseHTTPMiddleware):
                 headers=cors_headers
             )
         try:
-            user_payload = decode_supabase_jwt(token)
+            user_payload = await asyncio.to_thread(decode_supabase_jwt, token)
             request.state.user = user_payload
         except HTTPException as he:
             resp_headers = dict(he.headers or {})

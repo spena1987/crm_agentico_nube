@@ -20,6 +20,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 from app.db import (
     is_valid_uuid,
+    es_borrador_o_nulo,
     supabase, 
     actualizar_bot_disabled,
     archivar_conversacion,
@@ -199,7 +200,7 @@ from app.services.tools import crear_borrador_presupuesto
 from app.services.config_service import load_settings, save_settings
 from app.services.agent_orchestrator import orchestrator, AVAILABLE_TOOLS_MAP
 from app.services.alcon_catalog_service import alcon_catalog_service
-from app.services.geclisa_client import GeclisaClient
+from app.services.geclisa_client import GeclisaClient, es_ficha_geclisa_valida
 from app.services.logger_service import log_event, get_logs, get_logs_stats
 
 geclisa_client = GeclisaClient()
@@ -221,19 +222,42 @@ logger = logging.getLogger(__name__)
 
 async def cron_limpieza_diaria_media():
     """
-    Tarea en segundo plano que ejecuta la purga de archivos multimedia > 30 días una vez cada 24 horas.
+    Tarea en segundo plano que ejecuta la purga de archivos multimedia > 30 días,
+    PDFs temporales generados > 24 h (regenerables on-demand) y recolección de memoria cada 24 horas.
     """
+    import gc
     while True:
         try:
             await asyncio.sleep(60) # Esperar 1 minuto tras arranque del backend
             from app.db import get_configuracion_automatismos
-            cfg = get_configuracion_automatismos()
+            cfg = await asyncio.to_thread(get_configuracion_automatismos)
             if cfg.get("purga_multimedia_activa", True):
                 dias = int(cfg.get("dias_retencion_multimedia", 30))
                 logger.info(f"Ejecutando rutina periódica de retención y limpieza de multimedia (> {dias} días)...")
-                purgar_archivos_antiguos(dias_retencion=dias, dry_run=False)
+                await asyncio.to_thread(purgar_archivos_antiguos, dias_retencion=dias, dry_run=False)
             else:
                 logger.info("⏸️ [Purga Auto] Purga de multimedia pausada desde el Centro de Automatismos.")
+
+            # Limpiar PDFs efímeros en PDF_DIR con antigüedad > 24h (excluir subcarpetas como branding)
+            def _purgar_pdfs_temporales() -> int:
+                cutoff = time.time() - 86400
+                eliminados = 0
+                if PDF_DIR and os.path.isdir(PDF_DIR):
+                    for fn in os.listdir(PDF_DIR):
+                        fpath = os.path.join(PDF_DIR, fn)
+                        if os.path.isfile(fpath) and (fn.lower().endswith(".pdf") or fn.startswith("temp_")):
+                            try:
+                                if os.path.getmtime(fpath) < cutoff:
+                                    os.remove(fpath)
+                                    eliminados += 1
+                            except Exception:
+                                pass
+                return eliminados
+
+            pdfs_purgados = await asyncio.to_thread(_purgar_pdfs_temporales)
+            if pdfs_purgados > 0:
+                logger.info(f"🧹 [Purga Auto] Eliminados {pdfs_purgados} archivos temporales/PDF (>24h) de PDF_DIR.")
+            gc.collect()
         except Exception as e:
             logger.error(f"Error en rutina periódica de limpieza de multimedia: {e}")
         
@@ -411,7 +435,7 @@ async def cron_notificaciones_agendas_prestadores():
             from app.db import get_configuracion_notificaciones_prestadores
             from app.services.notificacion_prestadores_service import NotificacionPrestadoresService
 
-            cfg = get_configuracion_notificaciones_prestadores()
+            cfg = await asyncio.to_thread(get_configuracion_notificaciones_prestadores)
             if cfg.get("enabled", True):
                 ahora_ba = datetime.now(tz_ba)
                 hora_corte = str(cfg.get("hora_corte", "19:00")).strip()
@@ -3002,6 +3026,8 @@ def obtener_turnos_pendientes_geclisa(ficha_id: int):
     Consulta en tiempo real a Geclisa los turnos pendientes/agendados de una ficha de paciente (GET /api/Turnos/pendientes/{fichaId}).
     No almacena en la base de datos local.
     """
+    if not es_ficha_geclisa_valida(ficha_id):
+        return {"success": True, "turnos": [], "mensaje": "Ficha Geclisa fuera de rango válido."}
     try:
         resultado = geclisa_client.obtener_turnos_pendientes_ficha(ficha_id)
         return resultado
@@ -3549,7 +3575,8 @@ def actualizar_paciente_crm(paciente_id: str, payload: Dict[str, Any] = Body(...
         if "dni" in payload:
             datos_actualizar["dni"] = str(payload["dni"]).strip() if payload["dni"] else None
         if "geclisa_ficha_id" in payload:
-            datos_actualizar["geclisa_ficha_id"] = int(payload["geclisa_ficha_id"]) if payload["geclisa_ficha_id"] else None
+            raw_fid = payload["geclisa_ficha_id"]
+            datos_actualizar["geclisa_ficha_id"] = int(raw_fid) if es_ficha_geclisa_valida(raw_fid) else None
         if "nro_hc" in payload:
             datos_actualizar["nro_hc"] = str(payload["nro_hc"]).strip() if payload["nro_hc"] else None
         if "telefono" in payload and payload["telefono"]:
@@ -5825,6 +5852,8 @@ def listar_evoluciones_asesoria(asesoria_id: str):
     """
     Retorna el historial cronológico de notas de evolución de un caso quirúrgico.
     """
+    if es_borrador_o_nulo(asesoria_id) or not is_valid_uuid(asesoria_id):
+        return {"success": True, "evoluciones": []}
     try:
         evoluciones = get_evoluciones_by_asesoria(asesoria_id)
         return {"success": True, "evoluciones": evoluciones}
@@ -5837,6 +5866,11 @@ def registrar_evolucion_asesoria(asesoria_id: str, payload: Dict[str, Any] = Bod
     """
     Registra una nueva evolución en la bitácora del asesoramiento quirúrgico.
     """
+    if es_borrador_o_nulo(asesoria_id) or not is_valid_uuid(asesoria_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Debe guardar primero el caso quirúrgico antes de registrar evoluciones en la bitácora."
+        )
     if not payload.get("paciente_id"):
         raise HTTPException(status_code=400, detail="El ID del paciente es obligatorio.")
     if not payload.get("contenido") or not str(payload["contenido"]).strip():
@@ -5849,6 +5883,8 @@ def registrar_evolucion_asesoria(asesoria_id: str, payload: Dict[str, Any] = Bod
             "mensaje": "Nota de evolución registrada correctamente.",
             "evolucion": evolucion
         }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"Error al registrar evolución de asesoría {asesoria_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -5858,6 +5894,8 @@ def borrar_evolucion_asesoria(evolucion_id: str):
     """
     Elimina una nota de evolución por su ID.
     """
+    if es_borrador_o_nulo(evolucion_id) or not is_valid_uuid(evolucion_id):
+        raise HTTPException(status_code=400, detail="ID de evolución inválido.")
     try:
         ok = eliminar_evolucion_asesoria(evolucion_id)
         return {"success": ok, "mensaje": "Evolución eliminada."}
@@ -6018,31 +6056,6 @@ def registrar_quick_recontacto_endpoint(asesoria_id: str, payload: Dict[str, Any
 # ENDPOINTS: ASESORÍAS, BITÁCORA Y PRÓXIMA ACCIÓN PROGRAMADA
 # ====================================================================
 
-@app.get("/api/asesorias-quirurgicas/{asesoria_id}/evoluciones")
-def listar_evoluciones_asesoria_api(asesoria_id: str):
-    """
-    Lista la bitácora cronológica de evoluciones de un caso quirúrgico.
-    """
-    try:
-        evs = get_evoluciones_by_asesoria(asesoria_id)
-        return {"success": True, "evoluciones": evs}
-    except Exception as e:
-        logger.error(f"Error al listar evoluciones: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/asesorias-quirurgicas/{asesoria_id}/evoluciones")
-def crear_evolucion_asesoria_api(asesoria_id: str, payload: Dict[str, Any] = Body(...)):
-    """
-    Asienta una nueva evolución o contacto en la bitácora del paciente.
-    """
-    try:
-        payload["asesoria_id"] = asesoria_id
-        ev = crear_evolucion_asesoria(payload)
-        return {"success": True, "evolucion": ev, "mensaje": "Evolución registrada correctamente."}
-    except Exception as e:
-        logger.error(f"Error al registrar evolución: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/api/asesorias-quirurgicas/{asesoria_id}/completar-proxima-accion")
 def completar_proxima_accion_api(asesoria_id: str, payload: Dict[str, Any] = Body(...)):
     """
@@ -6051,6 +6064,8 @@ def completar_proxima_accion_api(asesoria_id: str, payload: Dict[str, Any] = Bod
     2. Limpia proxima_accion_fecha y proxima_accion_texto en la asesoría.
     3. Actualiza ultimo_contacto_at a now().
     """
+    if es_borrador_o_nulo(asesoria_id) or not is_valid_uuid(asesoria_id):
+        raise HTTPException(status_code=400, detail="Debe guardar primero el caso quirúrgico.")
     try:
         if not supabase:
             raise RuntimeError("Supabase no está conectado.")

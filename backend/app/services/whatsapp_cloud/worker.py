@@ -407,6 +407,12 @@ async def handle_estudios_line_inbound_message(
             logger.info(f"[Worker Estudios] Cooldown activo para {normalized_phone}. No se repite auto-reply.")
             return
 
+        if len(_ESTUDIOS_AUTOREPLY_CACHE) > 500:
+            expired_est = [k for k, ts_v in list(_ESTUDIOS_AUTOREPLY_CACHE.items()) if (now_ts - ts_v) >= 86400]
+            for k in expired_est:
+                _ESTUDIOS_AUTOREPLY_CACHE.pop(k, None)
+            if len(_ESTUDIOS_AUTOREPLY_CACHE) > 500:
+                _ESTUDIOS_AUTOREPLY_CACHE.clear()
         _ESTUDIOS_AUTOREPLY_CACHE[normalized_phone] = now_ts
         reply_text = str(cfg.get("estudios_auto_reply_text") or "").strip()
         if not reply_text:

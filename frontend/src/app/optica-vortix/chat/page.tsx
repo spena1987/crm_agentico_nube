@@ -614,9 +614,23 @@ export default function OpticaVortixChatPage() {
     setLoadingConvs(true)
     fetchConversaciones(false)
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return
       fetchConversaciones(true)
     }, 12000)
-    return () => clearInterval(interval)
+    const onVisChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        fetchConversaciones(true)
+      }
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisChange)
+    }
+    return () => {
+      clearInterval(interval)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisChange)
+      }
+    }
   }, [filtroEtapa, searchQuery, mainTab])
 
   // Limpieza de grabador de audio al desmontar

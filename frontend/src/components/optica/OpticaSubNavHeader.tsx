@@ -90,8 +90,24 @@ export default function OpticaSubNavHeader({
 
   useEffect(() => {
     fetchSalud()
-    const timer = setInterval(fetchSalud, 30000)
-    return () => clearInterval(timer)
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return
+      fetchSalud()
+    }, 30000)
+    const onVisChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        fetchSalud()
+      }
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisChange)
+    }
+    return () => {
+      clearInterval(timer)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisChange)
+      }
+    }
   }, [])
 
   const quality = (salud?.quality_rating || 'GREEN').toUpperCase()

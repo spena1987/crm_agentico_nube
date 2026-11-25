@@ -17,6 +17,25 @@ from app.services.logger_service import log_event
 
 logger = logging.getLogger(__name__)
 
+GECLISA_INT32_MAX = 2_147_483_647
+
+
+def es_ficha_geclisa_valida(ficha_id: Any) -> bool:
+    """
+    Valida que el ID de ficha Geclisa sea un entero positivo dentro del rango Int32
+    y no corresponda a un número telefónico guardado accidentalmente.
+    """
+    if ficha_id is None or isinstance(ficha_id, bool):
+        return False
+    s = str(ficha_id).strip()
+    if not s or not s.isdigit() or len(s) >= 10:
+        return False
+    try:
+        val = int(s)
+        return 1 <= val <= GECLISA_INT32_MAX
+    except (ValueError, OverflowError):
+        return False
+
 class GeclisaClient:
     """
     Cliente de Integración de Lectura (GET) para la API de Geclisa (CREO Mendoza).
@@ -37,7 +56,7 @@ class GeclisaClient:
         # Sesión HTTP persistente con SSL verify desactivado y pool ampliado para concurrencia
         self.session = requests.Session()
         self.session.verify = False
-        adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=2)
+        adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=0)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
         
@@ -46,6 +65,7 @@ class GeclisaClient:
         self._token_expires_at = 0
         import threading
         self._token_lock = threading.Lock()
+        self._circuit_open_until: float = 0.0
 
         # Caché en memoria para stock de LIOs (TTL 45 segundos)
         self._stock_lotes_cache: Dict[int, Any] = {}
@@ -53,14 +73,29 @@ class GeclisaClient:
 
     def _do_request(self, method: str, url: str, **kwargs) -> requests.Response:
         """
-        Ejecuta una petición HTTP contra Geclisa con reintento automático y fallback por IP si falla la resolución DNS.
+        Ejecuta una petición HTTP contra Geclisa con reintento automático, connect timeout acotado,
+        circuit breaker ante caídas prolongadas y fallback por IP si falla la resolución DNS.
         """
+        now_cb = time.time()
+        if now_cb < getattr(self, "_circuit_open_until", 0.0):
+            raise requests.exceptions.ConnectionError(
+                "Geclisa temporalmente inalcanzable (circuit breaker activo)."
+            )
+
         timeout = kwargs.pop("timeout", 18)
+        if isinstance(timeout, (int, float)):
+            req_timeout = (min(4.0, float(timeout)), float(timeout))
+            fallback_timeout = (3.0, min(10.0, float(timeout)))
+        else:
+            req_timeout = timeout
+            fallback_timeout = timeout
         headers = kwargs.pop("headers", {}) or {}
 
         for intento in range(2):
             try:
-                return self.session.request(method, url, headers=headers, timeout=timeout, **kwargs)
+                resp = self.session.request(method, url, headers=headers, timeout=req_timeout, **kwargs)
+                self._circuit_open_until = 0.0
+                return resp
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as err:
                 err_str = str(err)
                 logger.warning(f"Intento {intento + 1}/2 falló para {url} ({err_str}).")
@@ -72,7 +107,9 @@ class GeclisaClient:
                     headers_copy["Host"] = "apigeclisa.centrovision.com.ar"
                     try:
                         logger.warning(f"Reintentando por IP directa Centro Visión: {fallback_url}")
-                        return self.session.request(method, fallback_url, headers=headers_copy, timeout=timeout, **kwargs)
+                        resp_fb = self.session.request(method, fallback_url, headers=headers_copy, timeout=fallback_timeout, **kwargs)
+                        self._circuit_open_until = 0.0
+                        return resp_fb
                     except Exception:
                         pass
                 elif "creogeclisa.fertilidadmendoza.com.ar" in url:
@@ -81,13 +118,16 @@ class GeclisaClient:
                     headers_copy["Host"] = "creogeclisa.fertilidadmendoza.com.ar"
                     try:
                         logger.warning(f"Reintentando por IP directa CREO: {fallback_url}")
-                        return self.session.request(method, fallback_url, headers=headers_copy, timeout=timeout, **kwargs)
+                        resp_fb = self.session.request(method, fallback_url, headers=headers_copy, timeout=fallback_timeout, **kwargs)
+                        self._circuit_open_until = 0.0
+                        return resp_fb
                     except Exception:
                         pass
 
                 if intento == 1:
+                    self._circuit_open_until = time.time() + 15.0
                     raise
-                time.sleep(0.6)
+                time.sleep(0.4)
 
     def _obtener_token(self) -> str:
         """
@@ -765,6 +805,9 @@ class GeclisaClient:
         Consulta los turnos asignados/pendientes de un paciente en Geclisa por fichaId.
         Ruta: GET /api/Turnos/pendientes/{fichaId}
         """
+        if not es_ficha_geclisa_valida(ficha_id):
+            return {"success": True, "turnos": [], "mensaje": "ID de ficha inválido o fuera de rango Int32."}
+
         url = f"{self.base_url}/api/Turnos/pendientes/{ficha_id}"
         t_start = time.time()
         try:
@@ -1602,8 +1645,8 @@ class GeclisaClient:
         asociadas a la ficha del paciente en Geclisa.
         Operación 100% de lectura (no escribe nada en Geclisa).
         """
-        if not ficha_id:
-            return {"encontrado": False, "mensaje": "Ficha ID no proporcionada."}
+        if not es_ficha_geclisa_valida(ficha_id):
+            return {"encontrado": False, "indicaciones": [], "mensaje": "Ficha ID inválida o fuera de rango Int32."}
 
         indicaciones_unificadas = []
         headers = self._get_headers()
@@ -2198,6 +2241,12 @@ class GeclisaClient:
             "cached_at": now
         }
 
+        if len(self._stock_lotes_cache) > 200:
+            expired_ele = [k for k, (ts, _) in list(self._stock_lotes_cache.items()) if (now - ts) >= self._stock_cache_ttl]
+            for k in expired_ele:
+                self._stock_lotes_cache.pop(k, None)
+            if len(self._stock_lotes_cache) > 200:
+                self._stock_lotes_cache.clear()
         self._stock_lotes_cache[ele_id] = (now, resumen)
         return resumen
 

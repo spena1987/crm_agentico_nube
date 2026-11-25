@@ -28,8 +28,15 @@ def _get_from_cache(key: str) -> Optional[Any]:
 
 
 def _set_in_cache(key: str, data: Any) -> None:
+    now_ts = datetime.now().timestamp()
+    if len(_CACHE_STORE) > 60:
+        expired_keys = [k for k, entry in list(_CACHE_STORE.items()) if (now_ts - entry.get("ts", 0)) >= CACHE_TTL_SECONDS]
+        for k in expired_keys:
+            _CACHE_STORE.pop(k, None)
+        if len(_CACHE_STORE) > 60:
+            _CACHE_STORE.clear()
     _CACHE_STORE[key] = {
-        "ts": datetime.now().timestamp(),
+        "ts": now_ts,
         "data": data
     }
 

@@ -28,10 +28,18 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { formatPhoneDisplay } from '@/lib/phoneUtils'
 import ModalBuscarGeclisa from '@/components/ModalBuscarGeclisa'
 import { formatDateArg } from '@/lib/dateUtils'
+
+const esFichaGeclisaValida = (val: any): boolean => {
+  if (val === null || val === undefined || typeof val === 'boolean') return false
+  const s = String(val).trim()
+  if (!/^\d+$/.test(s) || s.length >= 10) return false
+  const n = Number(s)
+  return Number.isInteger(n) && n >= 1 && n <= 2147483647
+}
 
 interface PatientSidebarProps {
   paciente: any
@@ -93,7 +101,7 @@ export default function ChatPatientSidebar({
       }
     }
 
-    if (!fichaId) {
+    if (!fichaId || !esFichaGeclisaValida(fichaId)) {
       setTurnosGeclisa([])
       setTurnosConsultados(true)
       return
@@ -101,7 +109,7 @@ export default function ChatPatientSidebar({
 
     try {
       setCargandoTurnosGeclisa(true)
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/turnos/pendientes/${fichaId}`)
+      const res = await apiFetch(`/api/geclisa/turnos/pendientes/${fichaId}`)
       if (res.ok) {
         const data = await res.json()
         setTurnosGeclisa(data.turnos || [])

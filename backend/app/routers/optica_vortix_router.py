@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Bod
 from pydantic import BaseModel, Field
 
 from app.db import supabase
-from app.services.geclisa_client import GeclisaClient
+from app.services.geclisa_client import GeclisaClient, es_ficha_geclisa_valida
 from app.services.media_service import MediaService
 from app.services.whatsapp_cloud.client import (
     WhatsAppCloudClient,
@@ -329,9 +329,14 @@ async def get_salud_linea_optica(force_refresh: bool = Query(False, description=
         except Exception:
             pass
 
-    # Plantillas de Óptica Vortix
-    templates: List[Dict[str, Any]] = []
-    if supabase:
+    # Plantillas y métricas de Óptica Vortix (ejecutadas en threadpool para no bloquear el event loop)
+    def _consultar_plantillas_y_metricas_supabase() -> Tuple[List[Dict[str, Any]], Dict[str, Any], int]:
+        tpl_list: List[Dict[str, Any]] = []
+        hoy_mza = get_mendoza_now().strftime("%Y-%m-%d")
+        c_stats = {"pendientes": 0, "enviados_hoy": 0, "fallidos_hoy": 0, "max_diarios": int(cfg.get("max_envios_diarios", 200))}
+        oo_tot = 0
+        if not supabase:
+            return tpl_list, c_stats, oo_tot
         try:
             t_res = (
                 supabase.table("whatsapp_templates")
@@ -343,13 +348,27 @@ async def get_salud_linea_optica(force_refresh: bool = Query(False, description=
                 n_low = str(t.get("name") or "").lower()
                 grp = str(t.get("grupo_crm") or "").lower()
                 if n_low.startswith(("vortix_", "optica_")) or "vortix" in grp or "óptica" in grp or "optica" in grp:
-                    templates.append({
+                    tpl_list.append({
                         **t,
                         "language": t.get("language") or "es_AR",
                         "preview_body": t.get("body_text") or ""
                     })
         except Exception:
             pass
+        try:
+            p_res = supabase.table("optica_envios_programados").select("id", count="exact").eq("estado", "pendiente").execute()
+            s_res = supabase.table("optica_envios_programados").select("id", count="exact").eq("estado", "enviado").gte("enviado_at", f"{hoy_mza}T00:00:00").execute()
+            f_res = supabase.table("optica_envios_programados").select("id", count="exact").eq("estado", "fallido").gte("updated_at", f"{hoy_mza}T00:00:00").execute()
+            oo_res = supabase.table("optica_contactos").select("id", count="exact").eq("opt_out", True).execute()
+            c_stats["pendientes"] = p_res.count or 0
+            c_stats["enviados_hoy"] = s_res.count or 0
+            c_stats["fallidos_hoy"] = f_res.count or 0
+            oo_tot = oo_res.count or 0
+        except Exception:
+            pass
+        return tpl_list, c_stats, oo_tot
+
+    templates, cola_stats, opt_outs_total = await asyncio.to_thread(_consultar_plantillas_y_metricas_supabase)
 
     if not templates:
         templates = [
@@ -362,23 +381,6 @@ async def get_salud_linea_optica(force_refresh: bool = Query(False, description=
             }
             for spec in OPTICA_VORTIX_TEMPLATES_CATALOG
         ]
-
-    # Métricas de cola hoy y opt-outs totales
-    hoy_mza = get_mendoza_now().strftime("%Y-%m-%d")
-    cola_stats = {"pendientes": 0, "enviados_hoy": 0, "fallidos_hoy": 0, "max_diarios": int(cfg.get("max_envios_diarios", 200))}
-    opt_outs_total = 0
-    if supabase:
-        try:
-            p_res = supabase.table("optica_envios_programados").select("id", count="exact").eq("estado", "pendiente").execute()
-            s_res = supabase.table("optica_envios_programados").select("id", count="exact").eq("estado", "enviado").gte("enviado_at", f"{hoy_mza}T00:00:00").execute()
-            f_res = supabase.table("optica_envios_programados").select("id", count="exact").eq("estado", "fallido").gte("updated_at", f"{hoy_mza}T00:00:00").execute()
-            oo_res = supabase.table("optica_contactos").select("id", count="exact").eq("opt_out", True).execute()
-            cola_stats["pendientes"] = p_res.count or 0
-            cola_stats["enviados_hoy"] = s_res.count or 0
-            cola_stats["fallidos_hoy"] = f_res.count or 0
-            opt_outs_total = oo_res.count or 0
-        except Exception:
-            pass
 
     q_rating = str(linea_health.get("quality_rating") or "UNKNOWN").upper()
     res_data = {
@@ -1485,7 +1487,7 @@ async def listar_conversaciones_optica(
     if not supabase:
         return {"success": True, "conversaciones": [], "items": [], "etapas_counts": {}}
 
-    try:
+    def _fetch_conversaciones_sync() -> Dict[str, Any]:
         query = (
             supabase.table("optica_conversaciones")
             .select("*, optica_contactos(*)")
@@ -1555,6 +1557,9 @@ async def listar_conversaciones_optica(
             "total_no_leidos": total_no_leidos,
             "tab_counts": tab_counts
         }
+
+    try:
+        return await asyncio.to_thread(_fetch_conversaciones_sync)
     except Exception as e:
         logger.error(f"[OpticaRouter] Error listando conversaciones: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1653,7 +1658,7 @@ async def obtener_mensajes_optica(conv_id: str, limit: int = Query(150, ge=1, le
     if not supabase:
         return {"success": True, "mensajes": [], "items": []}
 
-    try:
+    def _fetch_mensajes_sync() -> Dict[str, Any]:
         supabase.table("optica_conversaciones").update({"mensajes_no_leidos": 0}).eq("id", conv_id).execute()
         res = (
             supabase.table("optica_mensajes")
@@ -1670,6 +1675,9 @@ async def obtener_mensajes_optica(conv_id: str, limit: int = Query(150, ge=1, le
             "mensajes": msgs,
             "items": msgs
         }
+
+    try:
+        return await asyncio.to_thread(_fetch_mensajes_sync)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -2612,7 +2620,7 @@ async def obtener_ficha_optica_conversacion(conv_id: str):
 
     turnos_pendientes = []
     indicaciones_recientes = []
-    if ficha_id and str(ficha_id).isdigit():
+    if es_ficha_geclisa_valida(ficha_id):
         try:
             t_pend = await asyncio.to_thread(geclisa_client.obtener_turnos_pendientes_ficha, int(ficha_id))
             turnos_pendientes = (t_pend.get("turnos") or [])[:5]
@@ -3474,8 +3482,15 @@ async def obtener_audiencia_geclisa_campana(
             "pacientes": todos_pacientes
         }
 
-        # Guardar en caché global en memoria
-        _AUDIENCIA_GECLISA_CACHE[fecha_obj] = (time.time(), full_payload)
+        # Guardar en caché global en memoria (acotando claves expiradas y máximo 15 entradas)
+        now_cache = time.time()
+        expired_aud = [k for k, (ts_aud, _) in list(_AUDIENCIA_GECLISA_CACHE.items()) if (now_cache - ts_aud) >= AUDIENCIA_CACHE_TTL_SECONDS]
+        for k in expired_aud:
+            _AUDIENCIA_GECLISA_CACHE.pop(k, None)
+        while len(_AUDIENCIA_GECLISA_CACHE) >= 15:
+            oldest_key = min(_AUDIENCIA_GECLISA_CACHE.items(), key=lambda item: item[1][0])[0]
+            _AUDIENCIA_GECLISA_CACHE.pop(oldest_key, None)
+        _AUDIENCIA_GECLISA_CACHE[fecha_obj] = (now_cache, full_payload)
 
         # Filtrar por prestador, ubicación y servicio si fueron solicitados
         pacs_result = _aplicar_filtros_pacs(todos_pacientes)

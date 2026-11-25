@@ -197,10 +197,10 @@ export default function Navigation() {
       try {
         const { data: optRows } = await (supabase as any)
           .from('optica_conversaciones')
-          .select('no_leidos')
-          .gt('no_leidos', 0)
+          .select('mensajes_no_leidos')
+          .gt('mensajes_no_leidos', 0)
         if (Array.isArray(optRows)) {
-          const sum = optRows.reduce((acc: number, r: any) => acc + (Number(r.no_leidos) || 0), 0)
+          const sum = optRows.reduce((acc: number, r: any) => acc + (Number(r.mensajes_no_leidos) || 0), 0)
           setUnreadOpticaCount(sum)
         }
       } catch {}
@@ -255,52 +255,75 @@ export default function Navigation() {
     // Cargar branding institucional y métricas iniciales
     fetchClinicBranding()
     fetchUnreadMetrics()
-    const intervalMetrics = setInterval(fetchUnreadMetrics, 20000)
+    const intervalMetrics = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return
+      fetchUnreadMetrics()
+    }, 45000)
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        fetchUnreadMetrics()
+      }
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange)
+    }
 
     // Suscripción Realtime a mensajes y cambios de configuración para actualizar logo en vivo
-    const channel = supabase
-      .channel('nav-unread-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'mensajes' },
-        () => {
-          fetchUnreadMetrics()
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'conversaciones' },
-        () => {
-          fetchUnreadMetrics()
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'configuracion_sistema' },
-        () => {
-          fetchClinicBranding()
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
-        () => {
-          fetchUnreadMetrics()
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'optica_conversaciones' },
-        () => {
-          fetchUnreadMetrics()
-        }
-      )
-      .subscribe()
+    let channel: any = null
+    try {
+      const navChannelName = `nav-unread-realtime-${Math.random().toString(36).slice(2, 8)}`
+      channel = supabase
+        .channel(navChannelName)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'mensajes' },
+          () => {
+            fetchUnreadMetrics()
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'conversaciones' },
+          () => {
+            fetchUnreadMetrics()
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'configuracion_sistema' },
+          () => {
+            fetchClinicBranding()
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
+          () => {
+            fetchUnreadMetrics()
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'optica_conversaciones' },
+          () => {
+            fetchUnreadMetrics()
+          }
+        )
+        .subscribe()
+    } catch (err) {
+      console.warn('Aviso suscribiendo Realtime de navegación:', err)
+    }
 
     return () => {
       window.removeEventListener('resize', handleResize)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange)
+      }
       clearInterval(intervalMetrics)
-      supabase.removeChannel(channel)
+      if (channel) {
+        void supabase.removeChannel(channel)
+      }
     }
   }, [])
 

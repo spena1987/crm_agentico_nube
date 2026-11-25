@@ -1016,8 +1016,16 @@ def obtener_ficha_geclisa_con_cache(ficha_id: Any) -> Dict[str, Any]:
             return data
 
     try:
+        if not str(key).isdigit() or len(key) >= 10 or int(key) <= 0 or int(key) > 2_147_483_647:
+            return {}
         res = geclisa_client.obtener_ficha_completa(int(key))
         if isinstance(res, dict) and res.get("encontrado"):
+            if len(_FICHA_GECLISA_CACHE) > 200:
+                expired_f = [k for k, (ts, _) in list(_FICHA_GECLISA_CACHE.items()) if (now - ts) >= FICHA_CACHE_TTL_SECONDS]
+                for k in expired_f:
+                    _FICHA_GECLISA_CACHE.pop(k, None)
+                if len(_FICHA_GECLISA_CACHE) > 200:
+                    _FICHA_GECLISA_CACHE.clear()
             _FICHA_GECLISA_CACHE[key] = (now, res)
             return res
     except Exception as e:
@@ -2376,6 +2384,12 @@ async def handle_optica_line_inbound_message(
             now_ts = time.time()
             last_ah = _AFTER_HOURS_REPLY_CACHE.get(tel_norm, 0.0)
             if now_ts - last_ah > 8 * 3600:
+                if len(_AFTER_HOURS_REPLY_CACHE) > 500:
+                    exp_ah = [k for k, ts_ah in list(_AFTER_HOURS_REPLY_CACHE.items()) if (now_ts - ts_ah) >= 8 * 3600]
+                    for k in exp_ah:
+                        _AFTER_HOURS_REPLY_CACHE.pop(k, None)
+                    if len(_AFTER_HOURS_REPLY_CACHE) > 500:
+                        _AFTER_HOURS_REPLY_CACHE.clear()
                 _AFTER_HOURS_REPLY_CACHE[tel_norm] = now_ts
                 ah_txt = str(cfg.get("mensaje_fuera_horario") or DEFAULT_OPTICA_CONFIG["mensaje_fuera_horario"])
                 r_send = await wa_client.send_free_text(to_phone=tel_norm, text=ah_txt)
@@ -2728,6 +2742,12 @@ async def obtener_o_subir_placa_media_id(wa_client: WhatsAppCloudClient, media_u
         fname = os.path.basename(media_url.split("?")[0]) or "placa_vortix.jpg"
         media_id = await wa_client.upload_media_bytes(file_bytes=f_bytes, filename=fname, mime_type=ct)
         if media_id:
+            if len(_PLACA_MEDIA_ID_CACHE) > 200:
+                exp_p = [k for k, (ts_p, _) in list(_PLACA_MEDIA_ID_CACHE.items()) if (now - ts_p) >= PLACA_MEDIA_CACHE_TTL_SECONDS]
+                for k in exp_p:
+                    _PLACA_MEDIA_ID_CACHE.pop(k, None)
+                if len(_PLACA_MEDIA_ID_CACHE) > 200:
+                    _PLACA_MEDIA_ID_CACHE.clear()
             _PLACA_MEDIA_ID_CACHE[cache_key] = (now, media_id)
             return media_id
     except Exception as e:

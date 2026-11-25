@@ -777,13 +777,18 @@ export default function ChatInbox() {
   useEffect(() => {
     fetchConversaciones()
     fetchWAStatus()
-    const intervalStatus = setInterval(fetchWAStatus, 30000)
+    const intervalStatus = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return
+      fetchWAStatus()
+    }, 30000)
     
     const intervalConvs = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return
       fetchConversaciones(true)
     }, 30000)
 
     const onFocus = () => {
+      if (typeof document !== 'undefined' && document.hidden) return
       fetchConversaciones(true)
       fetchWAStatus()
     }
@@ -850,6 +855,7 @@ export default function ChatInbox() {
 
     const intervalMsgs = setInterval(async () => {
       if (!selectedConvId) return
+      if (typeof document !== 'undefined' && document.hidden) return
       try {
         let fetchedMsgs: Mensaje[] = []
 
