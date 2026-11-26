@@ -72,13 +72,84 @@ interface Paciente {
   }>
 }
 
+const PACIENTE_SELECT_QUERY =
+  '*, asesorias_quirurgicas(id, estado, fecha_probable_cirugia, fecha_definitiva_cirugia, proxima_accion_fecha, proxima_accion_texto, ultimo_contacto_at, created_at, updated_at)'
+const PACIENTES_PAGE_SIZE = 500
+
+function normalizarTextoBusqueda(valor?: string | null): string {
+  return (valor || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+}
+
+function coincideBusquedaPaciente(p: Paciente, rawTerm: string): boolean {
+  const normTerm = normalizarTextoBusqueda(rawTerm)
+  if (!normTerm) return true
+  const tokens = normTerm.split(/\s+/).filter(Boolean)
+  const haystack = normalizarTextoBusqueda(
+    [p.nombre, p.dni, p.telefono, p.obra_social, p.nro_hc, p.medico_cabecera]
+      .filter(Boolean)
+      .join(' ')
+  )
+  return tokens.every((tok) => haystack.includes(tok))
+}
+
+function deduplicarPacientes(lista: Paciente[]): Paciente[] {
+  const vistos = new Set<string>()
+  const resultado: Paciente[] = []
+  for (const p of lista) {
+    if (!p?.id || vistos.has(p.id)) continue
+    vistos.add(p.id)
+    resultado.push(p)
+  }
+  return resultado
+}
+
+async function buscarPacientesEnServidor(rawTerm: string, limit = 30): Promise<Paciente[]> {
+  const clean = rawTerm.trim()
+  if (!clean) return []
+  const tokens = clean
+    .split(/\s+/)
+    .map((t) => t.replace(/[%(),]/g, '').trim())
+    .filter(Boolean)
+  if (tokens.length === 0) return []
+
+  let query = supabase
+    .from('pacientes')
+    .select(PACIENTE_SELECT_QUERY)
+
+  if (tokens.length === 1) {
+    const t = tokens[0]
+    query = query.or(
+      `nombre.ilike.%${t}%,dni.ilike.%${t}%,telefono.ilike.%${t}%,nro_hc.ilike.%${t}%,obra_social.ilike.%${t}%`
+    )
+  } else {
+    for (const tok of tokens) {
+      query = query.ilike('nombre', `%${tok}%`)
+    }
+  }
+
+  const { data, error } = await query.order('nombre').limit(limit)
+  if (error) {
+    console.error('Error buscando pacientes en servidor:', error)
+    return []
+  }
+  return (data || []) as Paciente[]
+}
+
 function PacientesContent() {
   const { can, canAccess } = usePermissions()
   const searchParams = useSearchParams()
   const paramId = searchParams?.get('id') || null
   const [pacientes, setPacientes] = useState<Paciente[]>([])
+  const [totalPacientesCount, setTotalPacientesCount] = useState<number>(0)
+  const [cargandoMas, setCargandoMas] = useState(false)
   const [selectedPacienteId, setSelectedPacienteId] = useState<string | null>(paramId)
   const [search, setSearch] = useState('')
+  const [dirServerResults, setDirServerResults] = useState<Paciente[] | null>(null)
+  const [buscandoDir, setBuscandoDir] = useState(false)
   const [filtroCategoria, setFiltroCategoria] = useState<'todos' | 'activos' | 'alertas' | 'proximas'>('todos')
   const [loading, setLoading] = useState(true)
 
@@ -86,6 +157,8 @@ function PacientesContent() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
   const [quickSearchText, setQuickSearchText] = useState('')
+  const [quickServerResults, setQuickServerResults] = useState<Paciente[] | null>(null)
+  const [buscandoQuick, setBuscandoQuick] = useState(false)
   const quickSearchRef = React.useRef<HTMLDivElement>(null)
 
   // Mensajes de acción
@@ -115,14 +188,16 @@ function PacientesContent() {
   const fetchPacientes = async (autoSelectId?: string) => {
     try {
       setLoading(true)
-      const { data, error } = await supabase
+      const { data, error, count } = await supabase
         .from('pacientes')
-        .select('*, asesorias_quirurgicas(id, estado, fecha_probable_cirugia, fecha_definitiva_cirugia, proxima_accion_fecha, proxima_accion_texto, ultimo_contacto_at, created_at, updated_at)')
+        .select(PACIENTE_SELECT_QUERY, { count: 'exact' })
         .order('nombre')
+        .range(0, PACIENTES_PAGE_SIZE - 1)
 
       if (error) throw error
       const lista = (data || []) as Paciente[]
       setPacientes(lista)
+      setTotalPacientesCount(count ?? lista.length)
 
       // Seleccionar paciente
       if (autoSelectId) {
@@ -131,7 +206,7 @@ function PacientesContent() {
         if (!existe) {
           const { data: pDirecto } = await supabase
             .from('pacientes')
-            .select('*, asesorias_quirurgicas(id, estado, fecha_probable_cirugia, fecha_definitiva_cirugia, proxima_accion_fecha, proxima_accion_texto, ultimo_contacto_at, created_at, updated_at)')
+            .select(PACIENTE_SELECT_QUERY)
             .eq('id', autoSelectId)
             .maybeSingle()
           if (pDirecto) {
@@ -147,6 +222,80 @@ function PacientesContent() {
       setLoading(false)
     }
   }
+
+  const cargarMasPacientes = async () => {
+    if (cargandoMas || pacientes.length >= totalPacientesCount) return
+    try {
+      setCargandoMas(true)
+      const desde = pacientes.length
+      const hasta = desde + PACIENTES_PAGE_SIZE - 1
+      const { data, error } = await supabase
+        .from('pacientes')
+        .select(PACIENTE_SELECT_QUERY)
+        .order('nombre')
+        .range(desde, hasta)
+      if (error) throw error
+      const nuevos = (data || []) as Paciente[]
+      if (nuevos.length > 0) {
+        setPacientes((prev) => deduplicarPacientes([...prev, ...nuevos]))
+      }
+    } catch (err) {
+      console.error('Error cargando más pacientes:', err)
+    } finally {
+      setCargandoMas(false)
+    }
+  }
+
+  const seleccionarPacienteEnEstado = (paciente: Paciente) => {
+    setPacientes((prev) => (prev.some((p) => p.id === paciente.id) ? prev : [paciente, ...prev]))
+    setSelectedPacienteId(paciente.id)
+  }
+
+  // Búsqueda en servidor con debounce para Quick-Switcher (sin límite de 1.000)
+  useEffect(() => {
+    const term = quickSearchText.trim()
+    if (term.length < 2) {
+      setQuickServerResults(null)
+      setBuscandoQuick(false)
+      return
+    }
+    let cancelled = false
+    setBuscandoQuick(true)
+    const timer = setTimeout(async () => {
+      const res = await buscarPacientesEnServidor(term, 15)
+      if (!cancelled) {
+        setQuickServerResults(res)
+        setBuscandoQuick(false)
+      }
+    }, 250)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [quickSearchText])
+
+  // Búsqueda en servidor con debounce para Directorio lateral (sin límite de 1.000)
+  useEffect(() => {
+    const term = search.trim()
+    if (term.length < 2) {
+      setDirServerResults(null)
+      setBuscandoDir(false)
+      return
+    }
+    let cancelled = false
+    setBuscandoDir(true)
+    const timer = setTimeout(async () => {
+      const res = await buscarPacientesEnServidor(term, 50)
+      if (!cancelled) {
+        setDirServerResults(res)
+        setBuscandoDir(false)
+      }
+    }, 250)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [search])
 
   useEffect(() => {
     fetchPacientes(paramId || undefined)
@@ -203,6 +352,7 @@ function PacientesContent() {
       if (existe) {
         return prev.map((p) => (p.id === nuevoPaciente.id ? nuevoPaciente : p))
       }
+      setTotalPacientesCount((c) => c + 1)
       return [nuevoPaciente, ...prev].sort((a, b) => a.nombre.localeCompare(b.nombre))
     })
     setSelectedPacienteId(nuevoPaciente.id)
@@ -367,6 +517,7 @@ function PacientesContent() {
           .insert({ paciente_id: nuevo.id, bot_disabled: false })
 
         setPacientes((prev) => [...prev, nuevo].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+        setTotalPacientesCount((c) => c + 1)
         setSelectedPacienteId(nuevo.id)
       }
 
@@ -397,25 +548,20 @@ function PacientesContent() {
     return isNaN(edad) ? null : `${edad} años`
   }
 
-  // Filtrado de pacientes en cliente (texto + categoría inteligente)
+  // Filtrado de pacientes (combina memoria normalizada + resultados de servidor sin límite de 1.000)
   const filteredPacientes = useMemo(() => {
-    const term = search.toLowerCase().trim()
+    const term = search.trim()
     const hoyMs = Date.now()
     const en7DiasMs = hoyMs + 7 * 24 * 60 * 60 * 1000
 
-    return pacientes.filter((p) => {
-      // 1. Filtro de Texto
-      if (term) {
-        const matchesText =
-          p.nombre.toLowerCase().includes(term) ||
-          p.telefono.includes(term) ||
-          (p.dni && p.dni.includes(term)) ||
-          (p.obra_social && p.obra_social.toLowerCase().includes(term)) ||
-          (p.nro_hc && p.nro_hc.toLowerCase().includes(term)) ||
-          (p.medico_cabecera && p.medico_cabecera.toLowerCase().includes(term))
+    const baseList = term
+      ? deduplicarPacientes([
+          ...pacientes.filter((p) => coincideBusquedaPaciente(p, term)),
+          ...(dirServerResults || []),
+        ])
+      : pacientes
 
-        if (!matchesText) return false
-      }
+    return baseList.filter((p) => {
 
       // 2. Filtro de Categoría
       const asesorias = p.asesorias_quirurgicas || []
@@ -447,7 +593,7 @@ function PacientesContent() {
 
       return true
     })
-  }, [pacientes, search, filtroCategoria])
+  }, [pacientes, dirServerResults, search, filtroCategoria])
 
   // Conteos rápidos de categorías
   const metricasCategorias = useMemo(() => {
@@ -480,12 +626,12 @@ function PacientesContent() {
     })
 
     return {
-      todos: pacientes.length,
+      todos: Math.max(totalPacientesCount, pacientes.length),
       activos,
       alertas,
       proximas
     }
-  }, [pacientes])
+  }, [pacientes, totalPacientesCount])
 
   // Atajos de teclado y detector de clics fuera de Quick-Switcher
   useEffect(() => {
@@ -525,21 +671,12 @@ function PacientesContent() {
     }
   }
 
-  // Resultados predictivos rápidos para la barra superior
+  // Resultados predictivos rápidos para la barra superior (incluye búsqueda directa en servidor)
   const quickSearchResults = useMemo(() => {
     if (!quickSearchText.trim()) return filteredPacientes.slice(0, 8)
-    const term = quickSearchText.toLowerCase().trim()
-    return pacientes
-      .filter((p) => {
-        return (
-          p.nombre.toLowerCase().includes(term) ||
-          (p.dni && p.dni.includes(term)) ||
-          (p.nro_hc && p.nro_hc.toLowerCase().includes(term)) ||
-          p.telefono.includes(term)
-        )
-      })
-      .slice(0, 8)
-  }, [pacientes, filteredPacientes, quickSearchText])
+    const locales = pacientes.filter((p) => coincideBusquedaPaciente(p, quickSearchText))
+    return deduplicarPacientes([...(quickServerResults || []), ...locales]).slice(0, 15)
+  }, [pacientes, filteredPacientes, quickSearchText, quickServerResults])
 
   return (
     <div className="flex flex-col flex-1 h-full min-h-0 w-full gap-3 p-3 sm:p-4 md:p-5 overflow-hidden min-w-0">
@@ -636,7 +773,12 @@ function PacientesContent() {
                 </div>
 
                 <div className="max-h-60 overflow-y-auto divide-y divide-[var(--border)]/40">
-                  {quickSearchResults.length === 0 ? (
+                  {buscandoQuick && quickSearchResults.length === 0 ? (
+                    <div className="p-3 text-center text-xs text-gray-400 flex items-center justify-center gap-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                      Buscando en todo el padrón...
+                    </div>
+                  ) : quickSearchResults.length === 0 ? (
                     <div className="p-3 text-center text-xs text-gray-500">
                       No se encontraron pacientes
                     </div>
@@ -648,7 +790,7 @@ function PacientesContent() {
                           key={p.id}
                           type="button"
                           onClick={() => {
-                            setSelectedPacienteId(p.id)
+                            seleccionarPacienteEnEstado(p)
                             setQuickSearchOpen(false)
                             setQuickSearchText('')
                           }}
@@ -819,10 +961,10 @@ function PacientesContent() {
 
         {/* Lista Scrolleable de Pacientes */}
         <div className="flex-1 overflow-y-auto divide-y divide-[var(--border)]/50">
-          {loading ? (
+          {loading || (buscandoDir && filteredPacientes.length === 0) ? (
             <div className="p-8 text-center text-xs text-gray-400 flex flex-col items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-              Cargando expedientes...
+              {buscandoDir ? 'Buscando en todo el padrón...' : 'Cargando expedientes...'}
             </div>
           ) : filteredPacientes.length === 0 ? (
             <div className="p-8 text-center text-xs text-gray-500 space-y-2">
@@ -845,7 +987,7 @@ function PacientesContent() {
                 <button
                   key={paciente.id}
                   onClick={() => {
-                    setSelectedPacienteId(paciente.id)
+                    seleccionarPacienteEnEstado(paciente)
                     setDrawerOpen(false)
                   }}
                   className={`w-full text-left p-3.5 transition-all flex items-start gap-3 relative hover:bg-white/5 ${
@@ -896,6 +1038,27 @@ function PacientesContent() {
                 </button>
               )
             })
+          )}
+          {!search.trim() && filtroCategoria === 'todos' && pacientes.length < totalPacientesCount && (
+            <div className="p-3 text-center">
+              <button
+                type="button"
+                onClick={cargarMasPacientes}
+                disabled={cargandoMas}
+                className="w-full py-2 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-[var(--border)] text-xs font-semibold text-blue-300 transition flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {cargandoMas ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Cargando más expedientes...
+                  </>
+                ) : (
+                  <span>
+                    Cargar más expedientes (mostrando {pacientes.length} de {totalPacientesCount})
+                  </span>
+                )}
+              </button>
+            </div>
           )}
         </div>
 
