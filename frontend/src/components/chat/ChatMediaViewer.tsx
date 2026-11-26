@@ -84,7 +84,7 @@ export default function ChatMediaViewer({
   if ((metadata.tipo as string) === 'image') metadata.tipo = 'imagen'
   if ((metadata.tipo as string) === 'document') metadata.tipo = 'documento'
 
-  if (!metadata.tipo && contenidoTexto) {
+  if (!metadata.tipo && contenidoTexto && !/https?:\/\/\S+/i.test(contenidoTexto)) {
     const txt = contenidoTexto.trim()
     if (txt.toLowerCase().endsWith('.pdf') || txt.toLowerCase().includes('.pdf')) {
       metadata.tipo = 'documento'

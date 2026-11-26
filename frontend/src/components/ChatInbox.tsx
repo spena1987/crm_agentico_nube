@@ -3036,7 +3036,13 @@ export default function ChatInbox() {
                       String(msg.metadata_json?.error_message || '').toLowerCase().includes('24 hour')
                     )
 
+                    const tipoMeta = String(msg.metadata_json?.tipo || '').toLowerCase()
+                    const esTextoExplicit = tipoMeta === 'texto' || tipoMeta === 'text'
+                    const contieneUrl = /https?:\/\/\S+/i.test(msg.contenido || '')
+
                     const isDocumentFilename = Boolean(
+                      !esTextoExplicit &&
+                      !contieneUrl &&
                       msg.contenido && (
                         msg.contenido.trim().toLowerCase().endsWith('.pdf') || 
                         msg.contenido.trim().toLowerCase().endsWith('.docx') || 
@@ -3044,15 +3050,18 @@ export default function ChatInbox() {
                       )
                     )
                     const isPhotoContent = Boolean(
+                      !esTextoExplicit &&
+                      !contieneUrl &&
                       msg.contenido && (msg.contenido.includes('📷') || msg.contenido.toLowerCase().includes('[foto]'))
                     )
 
                     const hasMedia = Boolean(
-                      (msg.metadata_json?.tipo &&
-                       msg.metadata_json?.tipo !== 'texto' &&
-                       msg.metadata_json?.tipo !== 'button' &&
-                       msg.metadata_json?.tipo !== 'template' &&
-                       msg.metadata_json?.tipo !== 'reaction') ||
+                      (tipoMeta &&
+                       tipoMeta !== 'texto' &&
+                       tipoMeta !== 'text' &&
+                       tipoMeta !== 'button' &&
+                       tipoMeta !== 'template' &&
+                       tipoMeta !== 'reaction') ||
                       isDocumentFilename ||
                       isPhotoContent
                     )
@@ -3061,8 +3070,10 @@ export default function ChatInbox() {
                       msg.contenido && (
                         isButton ||
                         isTemplate ||
+                        esTextoExplicit ||
+                        contieneUrl ||
                         (!isDocumentFilename && !isPhotoContent && (
-                          !msg.metadata_json?.tipo ||
+                          !tipoMeta ||
                           (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))
                         ))
                       )
