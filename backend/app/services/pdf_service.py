@@ -484,9 +484,6 @@ def generar_pdf_presupuesto(
         Paragraph("<b>Subtotal</b>", style_encabezado_tabla_right)
     ]]
     
-    total_ars = 0.0
-    total_usd = 0.0
-    
     for item in items:
         srv = item.get("servicios_precios") or {}
         codigo = str(item.get("codigo") or item.get("codigo_servicio") or srv.get("codigo") or "PRAC").strip().upper()
@@ -506,11 +503,6 @@ def generar_pdf_presupuesto(
             style_num_bold = ParagraphStyle('NumBoldConv', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=7.5, leading=9.5, alignment=1, textColor=colors.HexColor('#059669'))
             moneda_display = Paragraph("<b>OS</b>", style_moneda_tag)
         else:
-            if moneda_item == "USD":
-                total_usd += subtotal
-            else:
-                total_ars += subtotal
-                
             p_unit_str = formatear_monto_moneda(p_unit, moneda_item)
             subtotal_str = formatear_monto_moneda(subtotal, moneda_item)
             style_num_cell = ParagraphStyle('NumCell', parent=styles['Normal'], fontName='Helvetica', fontSize=8.0, leading=10, alignment=2, textColor=colors.HexColor('#334155'))
@@ -541,36 +533,7 @@ def generar_pdf_presupuesto(
         ])
         
     num_items = len(items)
-    
-    # Filas de Totales con SPAN: (0 a 2 para etiqueta 370pt, 3 a 5 para monto 170pt)
-    if total_ars > 0 and total_usd > 0:
-        table_data.append([
-            Paragraph("<b>TOTAL EN PESOS (ARS):</b>", style_total_label),
-            "", "",
-            Paragraph(f"<b>{formatear_monto_moneda(total_ars, 'ARS')}</b>", style_total_amount),
-            "", ""
-        ])
-        table_data.append([
-            Paragraph("<b>TOTAL EN DÓLARES (USD):</b>", style_total_label),
-            "", "",
-            Paragraph(f"<b>{formatear_monto_moneda(total_usd, 'USD')}</b>", style_total_amount),
-            "", ""
-        ])
-    elif total_usd > 0:
-        table_data.append([
-            Paragraph("<b>TOTAL EN DÓLARES (USD):</b>", style_total_label),
-            "", "",
-            Paragraph(f"<b>{formatear_monto_moneda(total_usd, 'USD')}</b>", style_total_amount),
-            "", ""
-        ])
-    else:
-        table_data.append([
-            Paragraph("<b>TOTAL EN PESOS (ARS):</b>", style_total_label),
-            "", "",
-            Paragraph(f"<b>{formatear_monto_moneda(total_ars, 'ARS')}</b>", style_total_amount),
-            "", ""
-        ])
-        
+
     t_items = Table(table_data, colWidths=[58, 245, 48, 68, 38, 83])
     
     table_styles = [
@@ -588,23 +551,9 @@ def generar_pdf_presupuesto(
     for r in range(1, num_items + 1):
         bg_col = colors.white if r % 2 != 0 else colors.HexColor('#F8FAFC')
         table_styles.append(('BACKGROUND', (0, r), (-1, r), bg_col))
-        
-    # Estilos y SPAN para las filas de totales (garantiza 1 sola línea para montos en ARS y USD)
-    first_total_row = num_items + 1
-    total_rows_count = 2 if (total_ars > 0 and total_usd > 0) else 1
-    
-    for tr in range(first_total_row, first_total_row + total_rows_count):
-        table_styles.append(('SPAN', (0, tr), (2, tr)))
-        table_styles.append(('SPAN', (3, tr), (5, tr)))
-        table_styles.append(('BACKGROUND', (0, tr), (-1, tr), colors.HexColor('#F8FAFC')))
-        table_styles.append(('ALIGN', (0, tr), (2, tr), 'RIGHT'))
-        table_styles.append(('ALIGN', (3, tr), (5, tr), 'RIGHT'))
-        table_styles.append(('TOPPADDING', (0, tr), (-1, tr), 6))
-        table_styles.append(('BOTTOMPADDING', (0, tr), (-1, tr), 6))
-        table_styles.append(('LINEABOVE', (0, tr), (-1, tr), 1.0, color_primario if tr == first_total_row else colors.HexColor('#E2E8F0')))
-        table_styles.append(('LINEBELOW', (0, tr), (-1, tr), 1.0, color_primario if tr == (first_total_row + total_rows_count - 1) else colors.HexColor('#E2E8F0')))
-        table_styles.append(('LINEBEFORE', (0, tr), (0, tr), 0.5, colors.HexColor('#E2E8F0')))
-        table_styles.append(('LINEAFTER', (5, tr), (5, tr), 0.5, colors.HexColor('#E2E8F0')))
+
+    if num_items > 0:
+        table_styles.append(('LINEBELOW', (0, num_items), (-1, num_items), 1.0, color_primario))
     
     t_items.setStyle(TableStyle(table_styles))
     story.append(t_items)
