@@ -123,6 +123,8 @@ interface EstudioHistorialItem {
   tamano_bytes: number
   geclisa_ficha_id: number
   geclisa_as_id: number | null
+  geclisa_status?: 'ok' | 'error' | 'skipped' | string | null
+  geclisa_error?: string | null
   wamid: string | null
   whatsapp_status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed' | 'skipped' | string
   whatsapp_error?: string | null
@@ -2503,6 +2505,29 @@ export default function EstudiosTecnicosPage() {
                           <span>AS #{item.geclisa_as_id}</span>
                           <ExternalLink size={11} />
                         </a>
+                      ) : item.geclisa_status === 'error' || item.geclisa_error ? (
+                        <div>
+                          <span
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold text-[11px]"
+                            title={item.geclisa_error || 'Error subiendo a Geclisa'}
+                          >
+                            <AlertTriangle size={12} />
+                            <span>Error Geclisa</span>
+                          </span>
+                          <p
+                            className="text-[10px] text-rose-500 max-w-[200px] truncate mt-0.5"
+                            title={item.geclisa_error || 'No se guardó en Geclisa'}
+                          >
+                            {item.geclisa_error || 'No se guardó en Geclisa'}
+                          </p>
+                        </div>
+                      ) : item.geclisa_status === 'skipped' ? (
+                        <span
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-500/15 text-slate-500 dark:text-slate-400 font-medium text-[11px]"
+                          title="Enviado solo por WhatsApp (Guardar en Geclisa desmarcado)"
+                        >
+                          Solo WA
+                        </span>
                       ) : (
                         <span className="text-[11px] text-[var(--secondary)]">Ficha #{item.geclisa_ficha_id}</span>
                       )}

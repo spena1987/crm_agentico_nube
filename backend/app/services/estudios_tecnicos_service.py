@@ -1617,6 +1617,7 @@ async def enviar_y_archivar_estudio_oftalmologico(
 
         # Analizar resultado de Geclisa
         geclisa_ok = False
+        geclisa_status = "error"
         geclisa_as_id = None
         geclisa_err = None
         if isinstance(geclisa_res, Exception):
@@ -1624,8 +1625,10 @@ async def enviar_y_archivar_estudio_oftalmologico(
         elif isinstance(geclisa_res, dict):
             if geclisa_res.get("skipped"):
                 geclisa_ok = True
+                geclisa_status = "skipped"
             elif geclisa_res.get("exito") or geclisa_res.get("success"):
                 geclisa_ok = True
+                geclisa_status = "ok"
                 geclisa_as_id = (
                     geclisa_res.get("as_id")
                     or geclisa_res.get("archivo_id")
@@ -1700,6 +1703,8 @@ async def enviar_y_archivar_estudio_oftalmologico(
                 "tamano_bytes": len(final_bytes),
                 "geclisa_archivo_id": int(geclisa_as_id) if geclisa_as_id else None,
                 "geclisa_as_id": int(geclisa_as_id) if geclisa_as_id else None,
+                "geclisa_status": geclisa_status,
+                "geclisa_error": geclisa_err,
                 "geclisa_pac_id": int(geclisa_pac_id) if geclisa_pac_id else None,
                 "geclisa_ficha_id": int(geclisa_ficha_id),
                 "dni_paciente": dni_limpio,
@@ -1724,16 +1729,18 @@ async def enviar_y_archivar_estudio_oftalmologico(
                 except Exception as db_e:
                     logger.error(f"[Estudios] Error insertando en estudios_oftalmo: {db_e}")
 
+            geclisa_label = "OMITIDO" if geclisa_status == "skipped" else ("OK" if geclisa_ok else "ERROR")
             log_event(
                 nivel="INFO" if (geclisa_ok and wa_ok) else "WARNING",
                 modulo="ESTUDIOS_TECNICOS",
                 accion="ENVIO_ESTUDIO_OFTALMOLOGICO",
-                mensaje=f"Estudio '{titulo_completo}' para {nombre_paciente} (DNI {dni_limpio}): Geclisa={'OK' if geclisa_ok else 'ERROR'}, WhatsApp={'OK' if wa_ok else 'ERROR'}",
+                mensaje=f"Estudio '{titulo_completo}' para {nombre_paciente} (DNI {dni_limpio}): Geclisa={geclisa_label}, WhatsApp={'OK' if wa_ok else 'ERROR'}",
                 detalles={
                     "estudio_id": saved_record.get("id") if isinstance(saved_record, dict) else None,
                     "dni": dni_limpio,
                     "ficha_id": geclisa_ficha_id,
                     "geclisa_as_id": geclisa_as_id,
+                    "geclisa_status": geclisa_status,
                     "wamid": wamid,
                     "tecnico": resolved_tecnico_nombre,
                     "raw_bytes_cliente": raw_bytes_total,
@@ -1882,6 +1889,7 @@ async def enviar_archivo_existente_geclisa_por_whatsapp(
         "tamano_bytes": len(file_bytes),
         "geclisa_archivo_id": int(payload.geclisa_as_id),
         "geclisa_as_id": int(payload.geclisa_as_id),
+        "geclisa_status": "ok",
         "geclisa_pac_id": int(payload.geclisa_pac_id) if payload.geclisa_pac_id else None,
         "geclisa_ficha_id": int(payload.geclisa_ficha_id),
         "dni_paciente": dni_limpio,

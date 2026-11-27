@@ -82,10 +82,15 @@ class GeclisaClient:
                 "Geclisa temporalmente inalcanzable (circuit breaker activo)."
             )
 
+        is_file_upload = bool(kwargs.get("files"))
         timeout = kwargs.pop("timeout", 18)
         if isinstance(timeout, (int, float)):
-            req_timeout = (min(4.0, float(timeout)), float(timeout))
-            fallback_timeout = (3.0, min(10.0, float(timeout)))
+            if is_file_upload:
+                req_timeout = (min(25.0, float(timeout)), max(90.0, float(timeout)))
+                fallback_timeout = (15.0, max(60.0, float(timeout)))
+            else:
+                req_timeout = (min(4.0, float(timeout)), float(timeout))
+                fallback_timeout = (3.0, min(10.0, float(timeout)))
         else:
             req_timeout = timeout
             fallback_timeout = timeout
@@ -99,9 +104,21 @@ class GeclisaClient:
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as err:
                 err_str = str(err)
                 logger.warning(f"Intento {intento + 1}/2 falló para {url} ({err_str}).")
-                
-                # Fallback por IP si falla DNS o timeout en hostname
-                if "apigeclisa.centrovision.com.ar" in url:
+
+                # En subidas binarias, si ya se enviaron los bytes y el servidor tardó en responder, no reintentar
+                if is_file_upload and isinstance(err, requests.exceptions.ReadTimeout):
+                    raise
+
+                should_try_ip_fallback = True
+                if is_file_upload:
+                    err_lower = err_str.lower()
+                    should_try_ip_fallback = any(
+                        k in err_lower
+                        for k in ("getaddrinfo", "nameresolution", "failed to resolve", "name or service not known")
+                    )
+
+                # Fallback por IP si falla DNS o (en consultas normales) timeout en hostname
+                if should_try_ip_fallback and "apigeclisa.centrovision.com.ar" in url:
                     fallback_url = url.replace("apigeclisa.centrovision.com.ar", "190.231.99.200")
                     headers_copy = dict(headers)
                     headers_copy["Host"] = "apigeclisa.centrovision.com.ar"
@@ -112,7 +129,7 @@ class GeclisaClient:
                         return resp_fb
                     except Exception:
                         pass
-                elif "creogeclisa.fertilidadmendoza.com.ar" in url:
+                elif should_try_ip_fallback and "creogeclisa.fertilidadmendoza.com.ar" in url:
                     fallback_url = url.replace("creogeclisa.fertilidadmendoza.com.ar", "190.15.197.191")
                     headers_copy = dict(headers)
                     headers_copy["Host"] = "creogeclisa.fertilidadmendoza.com.ar"
@@ -125,9 +142,10 @@ class GeclisaClient:
                         pass
 
                 if intento == 1:
-                    self._circuit_open_until = time.time() + 15.0
+                    if not is_file_upload:
+                        self._circuit_open_until = time.time() + 15.0
                     raise
-                time.sleep(0.4)
+                time.sleep(1.0 if is_file_upload else 0.4)
 
     def _obtener_token(self) -> str:
         """
@@ -1938,7 +1956,7 @@ class GeclisaClient:
             
         t_start = time.time()
         try:
-            res = self._do_request("POST", url, headers=headers, data=data, files=files, timeout=60)
+            res = self._do_request("POST", url, headers=headers, data=data, files=files, timeout=90)
             duracion = int((time.time() - t_start) * 1000)
             res.raise_for_status()
             res_data = res.json() if res.content else {}
