@@ -99,7 +99,7 @@ export default function EncuestaPuenteClient({ token }: { token: string }) {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <main className="min-h-screen bg-slate-50 text-slate-900 flex items-center justify-center p-6">
         <div className="bg-white border border-slate-200 rounded-2xl p-8 max-w-md w-full text-center shadow-sm space-y-3">
           <Loader2 className="w-8 h-8 animate-spin text-blue-600 mx-auto" />
           <p className="text-sm text-slate-600 font-medium">Cargando información de tu atención...</p>
@@ -111,7 +111,7 @@ export default function EncuestaPuenteClient({ token }: { token: string }) {
   if (errorMsg || !data || data.estado === 'no_encontrado' || data.estado === 'expirado') {
     const isExpired = data?.estado === 'expirado'
     return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <main className="min-h-screen bg-slate-50 text-slate-900 flex items-center justify-center p-6">
         <div className="bg-white border border-slate-200 rounded-2xl p-8 max-w-md w-full text-center shadow-sm space-y-4">
           <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
             <AlertCircle className="w-6 h-6" />
@@ -133,7 +133,7 @@ export default function EncuestaPuenteClient({ token }: { token: string }) {
   const multiple = data.turnos.length > 1
 
   return (
-    <main className="min-h-screen bg-slate-50 flex items-center justify-center p-4 sm:p-6">
+    <main className="min-h-screen bg-slate-50 text-slate-900 flex items-center justify-center p-4 sm:p-6">
       <div className="max-w-lg w-full space-y-5">
         <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-2 text-center">
           <h1 className="text-xl font-bold text-slate-900">

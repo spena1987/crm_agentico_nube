@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import re
 import secrets
@@ -1020,7 +1021,83 @@ async def get_encuestas_config_admin(
     )
     ultimo_lote = lote_res.data[0] if lote_res.data else None
 
-    return {"config": cfg, "line_health": line_health, "ultimo_lote": ultimo_lote}
+    template_row: Optional[Dict[str, Any]] = None
+    try:
+        tpl_res = (
+            db.table("whatsapp_templates")
+            .select("name, status, category, language, updated_at")
+            .eq("name", cfg["template_name"])
+            .limit(1)
+            .execute()
+        )
+        if tpl_res.data:
+            template_row = tpl_res.data[0]
+    except Exception as exc:
+        logger.warning(f"[EncuestasConfig] Error consultando whatsapp_templates: {exc}")
+
+    template_status = {
+        "exists": template_row is not None,
+        "name": cfg["template_name"],
+        "status": template_row.get("status") if template_row else None,
+        "category": template_row.get("category") if template_row else None,
+        "language": template_row.get("language") if template_row else cfg["template_language"],
+        "updated_at": template_row.get("updated_at") if template_row else None,
+    }
+
+    return {
+        "config": cfg,
+        "line_health": line_health,
+        "ultimo_lote": ultimo_lote,
+        "template_status": template_status,
+    }
+
+
+@encuestas_satisfaccion_router.post("/api/encuestas/plantilla/crear")
+async def crear_plantilla_encuesta_meta(
+    _actor: str = Depends(require_module_permission("encuestas", "editar")),
+):
+    from app.services.whatsapp_cloud.templates import (
+        TemplateButton,
+        TemplateCreateRequest,
+        create_template,
+    )
+
+    cfg = load_encuestas_config()
+    frontend_base = (os.getenv("FRONTEND_URL") or "https://crm-agentico-nube.vercel.app").strip().rstrip("/")
+    req = TemplateCreateRequest(
+        name=cfg["template_name"],
+        category="UTILITY",
+        language=cfg.get("template_language") or "es_AR",
+        header_type="NONE",
+        body_text=(
+            "Hola. Gracias por haberte atendido ayer en nuestra clínica. "
+            "Te invitamos a responder una breve encuesta anónima de satisfacción sobre tu atención."
+        ),
+        buttons=[
+            TemplateButton(
+                type="URL",
+                text="Responder encuesta",
+                url=f"{frontend_base}/e/{{{{1}}}}",
+                example=[f"{frontend_base}/e/demo_token_123"],
+            ),
+            TemplateButton(
+                type="QUICK_REPLY",
+                text="No recibir encuestas",
+            ),
+        ],
+    )
+    res = await create_template(req)
+    return {"ok": True, "result": res}
+
+
+@encuestas_satisfaccion_router.post("/api/encuestas/plantilla/sincronizar")
+async def sincronizar_plantillas_encuesta_meta(
+    _actor: str = Depends(require_module_permission("encuestas", "editar")),
+):
+    from app.services.whatsapp_cloud.templates import sync_templates_from_meta
+
+    res = await sync_templates_from_meta()
+    return {"ok": True, "result": res}
 
 
 @encuestas_satisfaccion_router.put("/api/encuestas/config")
