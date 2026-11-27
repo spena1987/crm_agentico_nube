@@ -6,7 +6,7 @@ export type EtapaComercialOptica =
   | 'EN_LABORATORIO'
   | 'LISTO_PARA_RETIRAR'
   | 'VENDIDO'
-  | 'DESCARTADO'
+  | 'SIN_INTERES'
 
 export type OrigenConversacionOptica =
   | 'PLACA_TURNO'
@@ -45,8 +45,20 @@ export interface OpticaConversacion {
   nombre_paciente: string
   dni?: string | null
   paciente_geclisa_id?: string | null
+  ficha_geclisa_id?: string | null
   obra_social?: string | null
+  titular_telefono_nombre?: string | null
+  titular_telefono_dni?: string | null
+  vinculacion_manual?: boolean
+  vinculado_at?: string | null
+  vinculado_por?: string | null
+  paciente_vinculado_ficha_id?: string | null
+  paciente_vinculado_nombre?: string | null
+  paciente_vinculado_dni?: string | null
+  paciente_vinculado_obra_social?: string | null
   etapa_comercial: EtapaComercialOptica
+  etapa_updated_at?: string | null
+  clasificacion_origen?: string | null
   origen: OrigenConversacionOptica
   cupon_codigo?: string | null
   receta_detectada_hoy?: boolean
@@ -274,4 +286,13 @@ export interface ServicioFiltro {
   id: string
   nombre: string
   cantidad_turnos?: number
+}
+
+export interface GeclisaPacienteCandidato {
+  ficha_geclisa_id: string
+  nombre: string
+  dni?: string | null
+  obra_social?: string | null
+  telefono?: string | null
+  fuente: 'geclisa' | 'optica_contactos' | 'pacientes' | string
 }

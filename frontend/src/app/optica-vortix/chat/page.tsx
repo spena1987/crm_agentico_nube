@@ -44,9 +44,12 @@ import {
   AlertCircle,
   BookOpen,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Link2
 } from 'lucide-react'
 import OpticaSubNavHeader from '@/components/optica/OpticaSubNavHeader'
+import EtapaSelectorPopover from '@/components/optica/EtapaSelectorPopover'
+import ModalVincularPacienteGeclisa from '@/components/optica/ModalVincularPacienteGeclisa'
 import WhatsAppFormattedText from '@/components/chat/WhatsAppFormattedText'
 import ChatMediaViewer, { DeliveryStatusIcon } from '@/components/chat/ChatMediaViewer'
 import ChatEmojiPicker from '@/components/chat/ChatEmojiPicker'
@@ -144,7 +147,22 @@ const ETAPAS_EMBUDO: {
     short: 'Vendido',
     color: 'bg-green-600/20 text-green-700 dark:text-green-300 border-green-500/40',
   },
+  {
+    code: 'SIN_INTERES',
+    label: 'Sin Interés',
+    short: 'Sin interés',
+    color: 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/30',
+  },
 ]
+
+const isVentana24hActiva = (conv: OpticaConversacion | null | undefined): boolean => {
+  if (!conv) return false
+  if (conv.ventana_24h_expira_at) {
+    const expMs = new Date(conv.ventana_24h_expira_at).getTime()
+    if (!Number.isNaN(expMs)) return expMs > Date.now()
+  }
+  return Boolean(conv.ventana_24h_activa)
+}
 
 const ATAJOS_RAPIDOS = [
   {
@@ -315,9 +333,16 @@ export default function OpticaVortixChatPage() {
   // Estados de lista de conversaciones
   const [conversaciones, setConversaciones] = useState<OpticaConversacion[]>([])
   const [loadingConvs, setLoadingConvs] = useState(true)
+  const [loadingMoreConvs, setLoadingMoreConvs] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [etapasCounts, setEtapasCounts] = useState<Record<string, number>>({})
+  const [totalConvsCount, setTotalConvsCount] = useState(0)
+  const [hasMoreConvs, setHasMoreConvs] = useState(false)
   const [filtroTab, setFiltroTab] = useState<'TODOS' | 'SIN_LEER' | 'RECETA_HOY' | 'VOUCHERS'>('TODOS')
   const [filtroEtapa, setFiltroEtapa] = useState<EtapaComercialOptica | 'TODAS'>('TODAS')
+  const [showVincularGeclisaModal, setShowVincularGeclisaModal] = useState(false)
+  const [desvinculandoPaciente, setDesvinculandoPaciente] = useState(false)
 
   // Conversación seleccionada y mensajes
   const [selectedConv, setSelectedConv] = useState<OpticaConversacion | null>(null)
@@ -433,8 +458,12 @@ export default function OpticaVortixChatPage() {
   const [showConfirmListoRetirar, setShowConfirmListoRetirar] = useState(false)
   const [cotizadorError, setCotizadorError] = useState<string | null>(null)
 
-  // Toast visual de notificaciones (OCR, etc.)
-  const [toastNotificacion, setToastNotificacion] = useState<{ mensaje: string; tipo?: 'success' | 'info' } | null>(null)
+  // Toast visual de notificaciones (OCR, etapas, vínculo, errores)
+  const [toastNotificacion, setToastNotificacion] = useState<{ mensaje: string; tipo?: 'success' | 'info' | 'error' } | null>(null)
+  const showToast = useCallback((mensaje: string, tipo: 'success' | 'info' | 'error' = 'info') => {
+    setToastNotificacion({ mensaje, tipo })
+    setTimeout(() => setToastNotificacion(null), 4500)
+  }, [])
 
   // Búsqueda en mensajes del chat activo
   const [showSearchInChat, setShowSearchInChat] = useState(false)
@@ -566,7 +595,17 @@ export default function OpticaVortixChatPage() {
     }
   }, [selectedConv?.id])
 
-  const fetchConversaciones = async (isBackground = false) => {
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(searchQuery)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [searchQuery])
+
+  const fetchConversaciones = async (isBackground = false, nextOffset = 0, append = false) => {
+    if (append) {
+      setLoadingMoreConvs(true)
+    }
     try {
       const params = new URLSearchParams()
       if (mainTab === 'ARCHIVADAS') {
@@ -580,17 +619,34 @@ export default function OpticaVortixChatPage() {
       }
 
       if (filtroEtapa !== 'TODAS') params.set('etapa_comercial', filtroEtapa)
-      if (searchQuery.trim()) params.set('search', searchQuery.trim())
+      if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim())
+      params.set('limit', '100')
+      params.set('offset', String(nextOffset))
+
       const res = await apiFetch(`/api/optica-vortix/conversaciones?${params.toString()}`, {
         cache: 'no-store',
       })
       if (res.ok) {
         const data = await res.json()
         const list: OpticaConversacion[] = Array.isArray(data) ? data : data.items || []
-        setConversaciones(list)
+        if (append) {
+          setConversaciones((prev) => {
+            const seen = new Set(prev.map((c) => c.id))
+            return [...prev, ...list.filter((c) => !seen.has(c.id))]
+          })
+        } else {
+          setConversaciones(list)
+        }
         if (data.tab_counts) {
           setTabCounts(data.tab_counts)
         }
+        if (data.etapas_counts) {
+          setEtapasCounts(data.etapas_counts)
+        }
+        if (typeof data.total_count === 'number') {
+          setTotalConvsCount(data.total_count)
+        }
+        setHasMoreConvs(Boolean(data.has_more))
 
         // Auto-selección única inicial: solo se ejecuta la primera vez que carga la página
         if (!selectedConvIdRef.current && !hasInitialSelectedRef.current && list.length > 0) {
@@ -607,19 +663,22 @@ export default function OpticaVortixChatPage() {
       if (!isBackground) {
         setLoadingConvs(false)
       }
+      if (append) {
+        setLoadingMoreConvs(false)
+      }
     }
   }
 
   useEffect(() => {
     setLoadingConvs(true)
-    fetchConversaciones(false)
+    fetchConversaciones(false, 0, false)
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return
-      fetchConversaciones(true)
+      fetchConversaciones(true, 0, false)
     }, 12000)
     const onVisChange = () => {
       if (typeof document !== 'undefined' && !document.hidden) {
-        fetchConversaciones(true)
+        fetchConversaciones(true, 0, false)
       }
     }
     if (typeof document !== 'undefined') {
@@ -631,7 +690,7 @@ export default function OpticaVortixChatPage() {
         document.removeEventListener('visibilitychange', onVisChange)
       }
     }
-  }, [filtroEtapa, searchQuery, mainTab])
+  }, [filtroEtapa, debouncedSearch, mainTab])
 
   // Limpieza de grabador de audio al desmontar
   useEffect(() => {
@@ -789,6 +848,11 @@ export default function OpticaVortixChatPage() {
     const tipo = modoNotaInterna ? 'nota_interna' : (retryMessage?.tipo || 'text')
     const currentReply = replyingToMessage
 
+    if (tipo !== 'nota_interna' && !isVentana24hActiva(selectedConv)) {
+      showToast('Ventana de 24h cerrada. Enviá una Plantilla de Seguimiento o activá Nota Interna.', 'error')
+      return
+    }
+
     if (!isRetry) {
       setInputMsg('')
       setShowSlashMenu(false)
@@ -865,6 +929,18 @@ export default function OpticaVortixChatPage() {
         }))
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 60)
       } else {
+        const errData = await res.json().catch(() => ({}))
+        const errDetail = String(errData?.detail || '')
+        if (res.status === 400 && errDetail.toLowerCase().includes('ventana')) {
+          setSelectedConv((prev) => (prev ? { ...prev, ventana_24h_activa: false } : prev))
+          setConversaciones((prev) =>
+            prev.map((c) => (c.id === selectedConv.id ? { ...c, ventana_24h_activa: false } : c))
+          )
+          setMensajes((prev) => prev.filter((m) => m.id !== tempId && m.client_id !== client_id))
+          if (!isRetry) setInputMsg(texto)
+          showToast(errDetail, 'error')
+          return
+        }
         // En caso de fallo HTTP, marcar como 'failed'
         setMensajes((prev) =>
           prev.map((m) =>
@@ -949,6 +1025,10 @@ export default function OpticaVortixChatPage() {
         const file = item.getAsFile()
         if (file) {
           e.preventDefault()
+          if (!isVentana24hActiva(selectedConv)) {
+            showToast('Ventana de 24h cerrada: enviá una Plantilla Meta para reabrir el chat antes de adjuntar.', 'error')
+            return
+          }
           setStagedFile(file)
           setStagedFilePreview(URL.createObjectURL(file))
           setIsStagedModalOpen(true)
@@ -962,6 +1042,7 @@ export default function OpticaVortixChatPage() {
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    if (!isVentana24hActiva(selectedConv)) return
     if (!isDraggingOver) setIsDraggingOver(true)
   }
 
@@ -977,6 +1058,10 @@ export default function OpticaVortixChatPage() {
     e.stopPropagation()
     setIsDraggingOver(false)
     if (!selectedConv) return
+    if (!isVentana24hActiva(selectedConv)) {
+      showToast('Ventana de 24h cerrada: enviá una Plantilla Meta para reabrir el chat antes de adjuntar.', 'error')
+      return
+    }
 
     const files = e.dataTransfer?.files
     if (files && files.length > 0) {
@@ -1364,15 +1449,58 @@ export default function OpticaVortixChatPage() {
         }),
       })
       if (res.ok) {
-        setSelectedConv({ ...selectedConv, etapa_comercial: nuevaEtapa })
-        setConversaciones((prev) =>
-          prev.map((c) => (c.id === selectedConv.id ? { ...c, etapa_comercial: nuevaEtapa } : c))
-        )
-        if (notificarListo) {
-          handleSelectConv({ ...selectedConv, etapa_comercial: nuevaEtapa })
+        const data = await res.json().catch(() => ({}))
+        const updatedConv: OpticaConversacion = data.conversacion || {
+          ...selectedConv,
+          etapa_comercial: nuevaEtapa,
+          etapa_updated_at: new Date().toISOString(),
+          clasificacion_origen: 'manual',
         }
+        setSelectedConv(updatedConv)
+        setConversaciones((prev) =>
+          prev.map((c) => (c.id === selectedConv.id ? { ...c, ...updatedConv } : c))
+        )
+        fetchConversaciones(true, 0, false)
+        if (notificarListo) {
+          handleSelectConv(updatedConv)
+        }
+        const meta = ETAPAS_EMBUDO.find((e) => e.code === nuevaEtapa)
+        showToast(`Etapa actualizada a ${meta?.label || nuevaEtapa}`, 'success')
+      } else {
+        const err = await res.json().catch(() => ({}))
+        showToast(err.detail || 'No se pudo actualizar la etapa', 'error')
       }
-    } catch {}
+    } catch {
+      showToast('Error de conexión al actualizar la etapa', 'error')
+    }
+  }
+
+  const handleDesvincularPaciente = async () => {
+    if (!selectedConv || desvinculandoPaciente) return
+    setDesvinculandoPaciente(true)
+    try {
+      const res = await apiFetch(
+        `/api/optica-vortix/conversaciones/${selectedConv.id}/vincular-paciente`,
+        { method: 'DELETE' }
+      )
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.conversacion) {
+        setSelectedConv(data.conversacion)
+        setConversaciones((prev) =>
+          prev.map((c) => (c.id === selectedConv.id ? { ...c, ...data.conversacion } : c))
+        )
+        setGraduacion(EMPTY_GRADUACION)
+        setEvolucionHoy(null)
+        await handleSelectConv(data.conversacion, true)
+        showToast('Se desvinculó la ficha y se restauró el titular del teléfono', 'info')
+      } else {
+        showToast(data.detail || 'No se pudo desvincular la ficha', 'error')
+      }
+    } catch {
+      showToast('Error de conexión al desvincular la ficha', 'error')
+    } finally {
+      setDesvinculandoPaciente(false)
+    }
   }
 
   const handleToggleBot = async () => {
@@ -1550,7 +1678,18 @@ export default function OpticaVortixChatPage() {
       if (res.ok) {
         const nuevo = await res.json()
         setMensajes((prev) => [...prev, nuevo.mensaje || nuevo])
-        handleChangeEtapa('PRESUPUESTO_AEREOS')
+        const nextEtapa: EtapaComercialOptica = 'PRESUPUESTO_AEREOS'
+        setSelectedConv((prev) =>
+          prev ? { ...prev, etapa_comercial: nextEtapa, clasificacion_origen: 'auto_cotizador' } : prev
+        )
+        setConversaciones((prev) =>
+          prev.map((c) =>
+            c.id === selectedConv.id
+              ? { ...c, etapa_comercial: nextEtapa, clasificacion_origen: 'auto_cotizador' }
+              : c
+          )
+        )
+        fetchConversaciones(true, 0, false)
       }
     } catch {
     } finally {
@@ -1722,37 +1861,55 @@ export default function OpticaVortixChatPage() {
                     </button>
                   ))}
                 </div>
-
-                {/* Filtro horizontal de Etiquetas de Embudo Óptico (Pipeline de 7 Estados) */}
-                <div className="flex items-center gap-1 overflow-x-auto pb-1 no-scrollbar">
-                  <button
-                    type="button"
-                    onClick={() => setFiltroEtapa('TODAS')}
-                    className={`px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 border transition-all ${
-                      filtroEtapa === 'TODAS'
-                        ? 'bg-indigo-600 text-white border-indigo-600'
-                        : 'bg-slate-50 dark:bg-slate-800/50 text-[var(--secondary)] border-[var(--border)]'
-                    }`}
-                  >
-                    Todas las Etapas
-                  </button>
-                  {ETAPAS_EMBUDO.map((et) => (
-                    <button
-                      key={et.code}
-                      type="button"
-                      onClick={() => setFiltroEtapa(et.code)}
-                      className={`px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 border transition-all ${
-                        filtroEtapa === et.code
-                          ? 'bg-indigo-600 text-white border-indigo-600'
-                          : `${et.color}`
-                      }`}
-                    >
-                      {et.short}
-                    </button>
-                  ))}
-                </div>
               </>
             )}
+
+            {/* Filtro horizontal de Etapas del Embudo Óptico (8 Etapas con contadores reales en Activas/Cerradas/Archivadas) */}
+            <div className="flex items-center gap-1 overflow-x-auto pb-1 no-scrollbar">
+              <button
+                type="button"
+                onClick={() => setFiltroEtapa('TODAS')}
+                className={`px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 border transition-all flex items-center gap-1 ${
+                  filtroEtapa === 'TODAS'
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'bg-slate-50 dark:bg-slate-800/50 text-[var(--secondary)] border-[var(--border)]'
+                }`}
+              >
+                <span>Todas</span>
+                <span className="opacity-80">
+                  ({Object.values(etapasCounts).reduce((acc, n) => acc + (Number(n) || 0), 0)})
+                </span>
+              </button>
+              {ETAPAS_EMBUDO.map((et) => {
+                const count = etapasCounts[et.code] ?? 0
+                const isSelected = filtroEtapa === et.code
+                return (
+                  <button
+                    key={et.code}
+                    type="button"
+                    onClick={() => setFiltroEtapa(isSelected ? 'TODAS' : et.code)}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 border transition-all flex items-center gap-1 ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : `${et.color}`
+                    }`}
+                  >
+                    <span>{et.short}</span>
+                    <span className="opacity-80">({count})</span>
+                  </button>
+                )
+              })}
+              {filtroEtapa !== 'TODAS' && (
+                <button
+                  type="button"
+                  onClick={() => setFiltroEtapa('TODAS')}
+                  className="px-1.5 py-1 rounded-lg text-[10px] font-bold shrink-0 bg-slate-200 dark:bg-slate-800 text-[var(--foreground)] hover:bg-slate-300 dark:hover:bg-slate-700"
+                  title="Limpiar filtro de etapa"
+                >
+                  × Limpiar
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Lista de Tarjetas de Conversación con soporte para Clic Derecho (ChatContactContextMenu) */}
@@ -1798,11 +1955,19 @@ export default function OpticaVortixChatPage() {
                           <span className="font-bold text-xs text-[var(--foreground)] truncate">
                             {conv.nombre_paciente || conv.telefono}
                           </span>
-                          {conv.ventana_24h_activa && (
+                          {isVentana24hActiva(conv) && (
                             <span
                               className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"
                               title="Ventana Meta 24h abierta (mensajes libres sin costo)"
                             />
+                          )}
+                          {conv.vinculacion_manual && (
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-500/15 text-indigo-600 dark:text-indigo-300 border border-indigo-500/30 shrink-0"
+                              title={`Tel. titular: ${conv.titular_telefono_nombre || 'Titular'}`}
+                            >
+                              Vínculo
+                            </span>
                           )}
                         </div>
                         <p className="text-[10px] text-[var(--secondary)] font-medium">
@@ -1853,6 +2018,23 @@ export default function OpticaVortixChatPage() {
                 )
               })
             )}
+            {!loadingConvs && hasMoreConvs && (
+              <div className="p-3 flex flex-col items-center gap-1">
+                <button
+                  type="button"
+                  disabled={loadingMoreConvs}
+                  onClick={() => fetchConversaciones(true, conversaciones.length, true)}
+                  className="w-full py-2 px-3 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[var(--foreground)] border border-[var(--border)] flex items-center justify-center gap-1.5 disabled:opacity-60 transition-colors"
+                >
+                  {loadingMoreConvs ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : null}
+                  <span>
+                    Cargar más ({conversaciones.length} de {totalConvsCount})
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
         </aside>
 
@@ -1896,10 +2078,28 @@ export default function OpticaVortixChatPage() {
                     {(selectedConv.nombre_paciente || 'OV').substring(0, 2).toUpperCase()}
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-black text-sm text-[var(--foreground)] truncate">
                         {selectedConv.nombre_paciente}
                       </h3>
+                      {selectedConv.vinculacion_manual && (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30">
+                          <Link2 size={10} />
+                          <span>
+                            Vinculado manualmente • Tel. titular: {selectedConv.titular_telefono_nombre || 'Titular'}
+                            {selectedConv.titular_telefono_dni ? ` (${selectedConv.titular_telefono_dni})` : ''}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={desvinculandoPaciente}
+                            onClick={handleDesvincularPaciente}
+                            className="ml-1 underline hover:text-rose-500 font-black disabled:opacity-50"
+                            title="Volver al titular del teléfono"
+                          >
+                            {desvinculandoPaciente ? '...' : 'Desvincular'}
+                          </button>
+                        </span>
+                      )}
                       {selectedConv.estado === 'cerrada' ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 flex items-center gap-1">
                           🔒 Conversación Cerrada
@@ -1907,27 +2107,40 @@ export default function OpticaVortixChatPage() {
                       ) : (
                         <span
                           className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            selectedConv.ventana_24h_activa
+                            isVentana24hActiva(selectedConv)
                               ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                               : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
                           }`}
                         >
-                          {selectedConv.ventana_24h_activa ? 'Ventana 24h Abierta' : 'Ventana 24h Cerrada (Usar Plantilla)'}
+                          {isVentana24hActiva(selectedConv) ? 'Ventana 24h Abierta' : 'Ventana 24h Cerrada (Usar Plantilla)'}
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-[var(--secondary)] flex items-center gap-2">
+                    <p className="text-[11px] text-[var(--secondary)] flex items-center gap-2 flex-wrap">
                       <span className="inline-flex items-center gap-1">
                         <Phone size={11} /> +{selectedConv.telefono}
                       </span>
                       {selectedConv.dni && <span>• DNI {selectedConv.dni}</span>}
+                      {selectedConv.ficha_geclisa_id && <span>• Ficha {selectedConv.ficha_geclisa_id}</span>}
                       {selectedConv.obra_social && <span>• {selectedConv.obra_social}</span>}
                     </p>
                   </div>
                 </div>
 
-                {/* Controles Superiores: Selector Etapa 1-clic, Switch Bot ToggleHuman, Cotizador, Búsqueda, Toggle Ficha */}
+                {/* Controles Superiores: Selector Etapa 1-clic, Vincular Geclisa, Switch Bot, Cotizador, Búsqueda, Toggle Ficha */}
                 <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setShowVincularGeclisaModal(true)}
+                    className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 border border-indigo-500/25 flex items-center gap-1.5 transition-colors"
+                    title="Vincular esta conversación a otra ficha de Geclisa (teléfonos compartidos)"
+                  >
+                    <Link2 size={13} />
+                    <span className="hidden md:inline">
+                      {selectedConv.vinculacion_manual ? 'Cambiar ficha' : 'Vincular Geclisa'}
+                    </span>
+                  </button>
+
                   {selectedConv.estado === 'cerrada' ? (
                     <button
                       type="button"
@@ -1948,17 +2161,12 @@ export default function OpticaVortixChatPage() {
                     </button>
                   )}
 
-                  <select
+                  <EtapaSelectorPopover
                     value={selectedConv.etapa_comercial}
-                    onChange={(e) => handleChangeEtapa(e.target.value as EtapaComercialOptica)}
-                    className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 border border-[var(--border)] text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
-                  >
-                    {ETAPAS_EMBUDO.map((et) => (
-                      <option key={et.code} value={et.code}>
-                        Etapa: {et.label}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(etapa) => handleChangeEtapa(etapa)}
+                    etapaUpdatedAt={selectedConv.etapa_updated_at}
+                    clasificacionOrigen={selectedConv.clasificacion_origen}
+                  />
 
                   <button
                     type="button"
@@ -2357,22 +2565,35 @@ export default function OpticaVortixChatPage() {
                 )}
 
                 {/* Banner de Ventana de 24 Horas Cerrada */}
-                {!selectedConv.ventana_24h_activa && !modoNotaInterna && (
-                  <div className="flex items-center justify-between p-2.5 bg-rose-950/20 border border-rose-500/30 rounded-xl shadow-xs text-xs text-rose-600 dark:text-rose-300 animate-in fade-in">
+                {!isVentana24hActiva(selectedConv) && !modoNotaInterna && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-rose-500/10 border border-rose-500/30 rounded-xl shadow-xs text-xs text-rose-700 dark:text-rose-200 animate-in fade-in">
                     <div className="flex items-center gap-2 min-w-0">
                       <AlertCircle size={15} className="text-rose-500 shrink-0" />
-                      <span className="truncate">
-                        <strong>Ventana 24h de WhatsApp cerrada</strong>: Meta exige enviar una plantilla aprobada para reabrir el chat.
+                      <span>
+                        <strong>Ventana 24h de WhatsApp cerrada</strong>: no podés enviar texto libre ni adjuntos hasta que el paciente responda o envíes una plantilla.
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowTemplatesModal(true)}
-                      className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold text-[11px] shrink-0 transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer ml-2"
-                    >
-                      <Send size={11} />
-                      <span>Reabrir con Plantilla</span>
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setShowTemplatesModal(true)}
+                        className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold text-[11px] transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Send size={11} />
+                        <span>Enviar Plantilla de Seguimiento</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setModoNotaInterna(true)
+                          setTimeout(() => messageInputRef.current?.focus(), 50)
+                        }}
+                        className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-800 dark:text-amber-200 border border-amber-500/30 rounded-lg font-bold text-[11px] transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <StickyNote size={11} />
+                        <span>Escribir Nota Interna</span>
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -2533,9 +2754,13 @@ export default function OpticaVortixChatPage() {
                       <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        disabled={sendingMedia || modoNotaInterna}
+                        disabled={sendingMedia || modoNotaInterna || !isVentana24hActiva(selectedConv)}
                         className="p-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700/80 border border-[var(--border)] rounded-xl text-[var(--secondary)] hover:text-[var(--foreground)] transition-colors shrink-0 disabled:opacity-40 mb-0.5"
-                        title="Adjuntar archivo local o imagen (PDF, JPG, PNG)"
+                        title={
+                          !isVentana24hActiva(selectedConv)
+                            ? 'Ventana 24h cerrada: usá una Plantilla Meta'
+                            : 'Adjuntar archivo local o imagen (PDF, JPG, PNG)'
+                        }
                       >
                         {sendingMedia ? <Loader2 size={16} className="animate-spin text-indigo-500" /> : <Paperclip size={16} />}
                       </button>
@@ -2543,6 +2768,7 @@ export default function OpticaVortixChatPage() {
                       {/* Selector Popover de Emojis */}
                       <ChatEmojiPicker
                         onSelectEmoji={(emoji) => {
+                          if (!isVentana24hActiva(selectedConv) && !modoNotaInterna) return
                           setInputMsg((prev) => prev + emoji)
                           setTimeout(() => messageInputRef.current?.focus(), 50)
                         }}
@@ -2559,6 +2785,7 @@ export default function OpticaVortixChatPage() {
                           ref={messageInputRef}
                           rows={1}
                           value={inputMsg}
+                          disabled={!isVentana24hActiva(selectedConv) && !modoNotaInterna}
                           onChange={(e) => {
                             setInputMsg(e.target.value)
                             handleTypingPresence()
@@ -2573,11 +2800,11 @@ export default function OpticaVortixChatPage() {
                           placeholder={
                             modoNotaInterna
                               ? '🔒 Escribe una nota interna para el equipo de óptica (solo visible en el CRM)...'
-                              : !selectedConv.ventana_24h_activa
-                              ? '⚠️ Ventana 24h cerrada. Haz clic en "Plantillas Meta" arriba para reabrir el chat...'
+                              : !isVentana24hActiva(selectedConv)
+                              ? '⚠️ Ventana 24h cerrada. Enviá una Plantilla de Seguimiento o activá Nota Interna.'
                               : 'Escribe un mensaje por WhatsApp (*negrita*, _cursiva_, / atajos)...'
                           }
-                          className={`w-full px-4 py-2.5 text-xs border rounded-xl text-[var(--foreground)] placeholder:text-[var(--secondary)] focus:outline-none focus:ring-1 resize-none max-h-32 min-h-[38px] overflow-y-auto ${
+                          className={`w-full px-4 py-2.5 text-xs border rounded-xl text-[var(--foreground)] placeholder:text-[var(--secondary)] focus:outline-none focus:ring-1 resize-none max-h-32 min-h-[38px] overflow-y-auto disabled:opacity-60 disabled:cursor-not-allowed ${
                             modoNotaInterna
                               ? 'bg-amber-50/80 dark:bg-amber-950/30 border-amber-400/50 focus:ring-amber-500 focus:border-amber-500'
                               : 'bg-slate-100 dark:bg-slate-800 border-[var(--border)] focus:ring-indigo-500 focus:border-indigo-500'
@@ -2589,9 +2816,14 @@ export default function OpticaVortixChatPage() {
                       {!inputMsg.trim() && !modoNotaInterna && (
                         <button
                           type="button"
+                          disabled={!isVentana24hActiva(selectedConv)}
                           onClick={startAudioRecording}
-                          className="p-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-rose-500/15 border border-[var(--border)] rounded-xl text-[var(--secondary)] hover:text-rose-500 transition-colors shrink-0 mb-0.5"
-                          title="Grabar nota de voz"
+                          className="p-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-rose-500/15 border border-[var(--border)] rounded-xl text-[var(--secondary)] hover:text-rose-500 transition-colors shrink-0 mb-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                          title={
+                            !isVentana24hActiva(selectedConv)
+                              ? 'Ventana 24h cerrada: usá una Plantilla Meta'
+                              : 'Grabar nota de voz'
+                          }
                         >
                           <Mic size={16} />
                         </button>
@@ -2600,7 +2832,7 @@ export default function OpticaVortixChatPage() {
                       {/* Botón Enviar */}
                       <button
                         type="submit"
-                        disabled={!inputMsg.trim() || sendingMsg}
+                        disabled={!inputMsg.trim() || sendingMsg || (!isVentana24hActiva(selectedConv) && !modoNotaInterna)}
                         className={`px-4 py-2.5 rounded-xl text-white font-bold text-xs flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition-all shrink-0 mb-0.5 ${
                           modoNotaInterna
                             ? 'bg-amber-600 hover:bg-amber-700'
@@ -2643,15 +2875,48 @@ export default function OpticaVortixChatPage() {
             </div>
 
             <div className="p-3.5 space-y-4">
+              {/* Etapa y Vinculación Clínica Geclisa */}
+              <div className="space-y-2 p-2.5 rounded-2xl bg-slate-50/70 dark:bg-slate-900/40 border border-[var(--border)]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[var(--secondary)]">
+                    Etapa comercial
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowVincularGeclisaModal(true)}
+                    className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                  >
+                    <Link2 size={10} />
+                    {selectedConv.vinculacion_manual ? 'Cambiar ficha' : 'Vincular otra ficha'}
+                  </button>
+                </div>
+                <EtapaSelectorPopover
+                  variant="compact"
+                  value={selectedConv.etapa_comercial}
+                  onChange={(etapa) => handleChangeEtapa(etapa)}
+                  etapaUpdatedAt={selectedConv.etapa_updated_at}
+                  clasificacionOrigen={selectedConv.clasificacion_origen}
+                />
+                {selectedConv.vinculacion_manual && (
+                  <p className="text-[10px] text-indigo-700 dark:text-indigo-300 leading-tight">
+                    Chat vinculado a <strong>{selectedConv.nombre_paciente}</strong> (Ficha{' '}
+                    {selectedConv.ficha_geclisa_id || 'S/D'}). Titular del tel.:{' '}
+                    {selectedConv.titular_telefono_nombre || 'Titular'}.
+                  </p>
+                )}
+              </div>
+
               {/* Botón Ver Historia Clínica Completa Geclisa */}
               <button
                 type="button"
                 onClick={() => {
+                  const rawFicha = selectedConv.ficha_geclisa_id || selectedConv.paciente_geclisa_id || null
+                  const parsedFicha = rawFicha ? parseInt(String(rawFicha), 10) : NaN
                   setSelectedPacienteHistoriaClinica({
-                    id: selectedConv.paciente_geclisa_id || selectedConv.id,
+                    id: rawFicha || selectedConv.id,
                     nombre: selectedConv.nombre_paciente || 'Paciente',
                     dni: selectedConv.dni || null,
-                    geclisa_ficha_id: selectedConv.paciente_geclisa_id ? parseInt(selectedConv.paciente_geclisa_id, 10) : null,
+                    geclisa_ficha_id: !Number.isNaN(parsedFicha) && parsedFicha > 0 ? parsedFicha : null,
                     telefono: selectedConv.telefono,
                     obra_social: selectedConv.obra_social || null,
                   })
@@ -3248,7 +3513,7 @@ export default function OpticaVortixChatPage() {
           pacienteTelefono={selectedConv.telefono}
           pacienteId={selectedConv.paciente_geclisa_id || selectedConv.id}
           conversacionId={selectedConv.id}
-          isWindowOpen={Boolean(selectedConv.ventana_24h_activa)}
+          isWindowOpen={isVentana24hActiva(selectedConv)}
           onInsertText={(text) => {
             setInputMsg(text)
             setShowTemplatesModal(false)
@@ -3257,6 +3522,7 @@ export default function OpticaVortixChatPage() {
           onEnviadoExitoso={() => {
             setShowTemplatesModal(false)
             handleSelectConv(selectedConv, true)
+            fetchConversaciones(true, 0, false)
           }}
         />
       )}
@@ -3287,6 +3553,25 @@ export default function OpticaVortixChatPage() {
           onForwardSuccess={() => {
             setForwardingMessage(null)
             if (selectedConv) handleSelectConv(selectedConv, true)
+          }}
+        />
+      )}
+
+      {/* MODAL: Vincular Otra Ficha de Geclisa (Teléfonos Compartidos) */}
+      {selectedConv && (
+        <ModalVincularPacienteGeclisa
+          isOpen={showVincularGeclisaModal}
+          onClose={() => setShowVincularGeclisaModal(false)}
+          conversacion={selectedConv}
+          onVinculado={(convActualizada) => {
+            setSelectedConv(convActualizada)
+            setConversaciones((prev) =>
+              prev.map((c) => (c.id === convActualizada.id ? { ...c, ...convActualizada } : c))
+            )
+            setGraduacion(EMPTY_GRADUACION)
+            setEvolucionHoy(null)
+            handleSelectConv(convActualizada, true)
+            showToast(`Chat vinculado a ${convActualizada.nombre_paciente}`, 'success')
           }}
         />
       )}
@@ -3376,8 +3661,20 @@ export default function OpticaVortixChatPage() {
       )}
       {/* Toast Visual de Notificación */}
       {toastNotificacion && (
-        <div className="fixed top-20 right-8 z-50 flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-slate-900/95 dark:bg-slate-800/95 text-white border border-emerald-500/40 shadow-2xl backdrop-blur-md animate-in slide-in-from-top-3 fade-in duration-200">
-          <Sparkles size={16} className="text-amber-400 shrink-0" />
+        <div
+          className={`fixed top-20 right-8 z-50 flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-slate-900/95 dark:bg-slate-800/95 text-white shadow-2xl backdrop-blur-md animate-in slide-in-from-top-3 fade-in duration-200 border ${
+            toastNotificacion.tipo === 'error'
+              ? 'border-rose-500/60'
+              : toastNotificacion.tipo === 'info'
+              ? 'border-indigo-500/50'
+              : 'border-emerald-500/40'
+          }`}
+        >
+          {toastNotificacion.tipo === 'error' ? (
+            <AlertCircle size={16} className="text-rose-400 shrink-0" />
+          ) : (
+            <Sparkles size={16} className="text-amber-400 shrink-0" />
+          )}
           <span className="text-xs font-semibold">{toastNotificacion.mensaje}</span>
           <button
             type="button"

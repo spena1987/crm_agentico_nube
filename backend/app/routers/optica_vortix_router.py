@@ -16,10 +16,11 @@ import httpx
 from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List, Dict, Any, Set, Tuple
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Body, Request
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Body, Request, Depends
 from pydantic import BaseModel, Field
 
 from app.db import supabase
+from app.auth import get_optional_user
 from app.services.geclisa_client import GeclisaClient, es_ficha_geclisa_valida
 from app.services.media_service import MediaService
 from app.services.whatsapp_cloud.client import (
@@ -52,6 +53,7 @@ from app.services.optica_vortix_service import (
     extraer_graduacion_desde_imagen_receta,
     generar_sugerencia_copiloto_optica,
     _record_optica_outbound_msg,
+    preparar_reset_vinculacion_manual,
     OPTICA_VORTIX_TEMPLATES_CATALOG
 )
 
@@ -129,6 +131,7 @@ class EnviarMensajeOpticaPayload(BaseModel):
 
 class PatchConversacionOpticaPayload(BaseModel):
     etapa_comercial: Optional[str] = None
+    clasificacion_origen: Optional[str] = None
     asignado_a: Optional[str] = None
     archivada: Optional[bool] = None
     bot_paused: Optional[bool] = None
@@ -137,6 +140,14 @@ class PatchConversacionOpticaPayload(BaseModel):
     codigo_cupon_activo: Optional[str] = None
     notificar_lentes_listos: bool = False
     detalle_pedido: Optional[str] = None
+
+
+class VincularPacienteGeclisaPayload(BaseModel):
+    ficha_geclisa_id: str
+    nombre: str
+    dni: Optional[str] = None
+    obra_social: Optional[str] = None
+    operador_nombre: Optional[str] = None
 
 
 class OcrRecetaPayload(BaseModel):
@@ -1419,11 +1430,26 @@ def _enriquecer_conversacion_optica_frontend(r: Dict[str, Any], now_utc: Optiona
         except Exception:
             pass
 
-    nombre_pac = contacto.get("nombre") or r.get("nombre_contacto") or r.get("nombre_paciente") or f"Contacto {str(r.get('telefono') or '')[-4:]}"
+    titular_nombre = contacto.get("nombre") or r.get("nombre_contacto") or r.get("nombre_paciente") or f"Contacto {str(r.get('telefono') or '')[-4:]}"
+    titular_dni = contacto.get("dni") or r.get("dni")
     meta = r.get("metadata_json") if isinstance(r.get("metadata_json"), dict) else {}
-    grad_norm = normalizar_estructura_graduacion(contacto.get("graduacion_actual_json") or meta.get("graduacion_actual_json") or r.get("graduacion_actual_json") or {})
+    vinculado_manual = bool(r.get("vinculacion_manual"))
+
+    if vinculado_manual:
+        nombre_pac = r.get("paciente_vinculado_nombre") or titular_nombre
+        ficha_efectiva = r.get("paciente_vinculado_ficha_id") or contacto.get("ficha_geclisa_id") or r.get("ficha_geclisa_id")
+        dni_efectivo = r.get("paciente_vinculado_dni") or titular_dni
+        obra_efectiva = r.get("paciente_vinculado_obra_social") or contacto.get("obra_social") or r.get("obra_social")
+        grad_norm = normalizar_estructura_graduacion(meta.get("graduacion_vinculada_json") or {})
+    else:
+        nombre_pac = titular_nombre
+        ficha_efectiva = contacto.get("ficha_geclisa_id") or r.get("ficha_geclisa_id")
+        dni_efectivo = titular_dni
+        obra_efectiva = contacto.get("obra_social") or r.get("obra_social")
+        grad_norm = normalizar_estructura_graduacion(contacto.get("graduacion_actual_json") or meta.get("graduacion_actual_json") or r.get("graduacion_actual_json") or {})
+
     origen_fe = _map_origen_to_frontend(r.get("origen_oportunidad") or r.get("origen"))
-    cupon = contacto.get("codigo_cupon_activo") or r.get("cupon_codigo") or generar_codigo_beneficio_vortix(str(contacto.get("ficha_geclisa_id") or r.get("telefono") or ""))
+    cupon = contacto.get("codigo_cupon_activo") or r.get("cupon_codigo") or generar_codigo_beneficio_vortix(str(ficha_efectiva or r.get("telefono") or ""))
     is_pinned = bool(meta.get("fijado") or meta.get("fijada") or meta.get("is_pinned") or r.get("fijada") or r.get("fijado"))
     no_leido_flag = bool(meta.get("no_leido") or meta.get("manual_unread") or (int(r.get("mensajes_no_leidos") or 0) > 0))
 
@@ -1431,9 +1457,16 @@ def _enriquecer_conversacion_optica_frontend(r: Dict[str, Any], now_utc: Optiona
         **r,
         "nombre_contacto": nombre_pac,
         "nombre_paciente": nombre_pac,
-        "ficha_geclisa_id": contacto.get("ficha_geclisa_id") or r.get("ficha_geclisa_id"),
-        "dni": contacto.get("dni") or r.get("dni"),
-        "obra_social": contacto.get("obra_social") or r.get("obra_social"),
+        "ficha_geclisa_id": str(ficha_efectiva) if ficha_efectiva is not None else None,
+        "dni": dni_efectivo,
+        "obra_social": obra_efectiva,
+        "titular_telefono_nombre": titular_nombre,
+        "titular_telefono_dni": titular_dni,
+        "vinculacion_manual": vinculado_manual,
+        "vinculado_at": r.get("vinculado_at"),
+        "vinculado_por": r.get("vinculado_por"),
+        "etapa_updated_at": r.get("etapa_updated_at"),
+        "clasificacion_origen": r.get("clasificacion_origen") or "inicial",
         "cupon_codigo": cupon,
         "codigo_cupon_activo": cupon,
         "ventana_24h_abierta": ventana_abierta,
@@ -1477,77 +1510,59 @@ async def listar_conversaciones_optica(
     search: Optional[str] = Query(None),
     archivadas: bool = Query(False),
     estado: Optional[str] = Query(None),
-    limit: int = Query(100, ge=1, le=300)
+    limit: int = Query(100, ge=1, le=300),
+    offset: int = Query(0, ge=0)
 ):
     """
-    Lista las conversaciones exclusivas de Óptica Vortix ordenadas por actividad reciente,
-    incluyendo los datos del contacto (`optica_contactos`), estado de la ventana de 24h y
-    contadores por etapa comercial.
+    Lista las conversaciones exclusivas de Óptica Vortix mediante RPC SQL (`buscar_conversaciones_optica`
+    y `obtener_contadores_bandeja_optica`), garantizando búsqueda sin truncamiento previo de 100 filas,
+    paginación real (`total_count`, `has_more`) y contadores exactos por etapa y pestaña.
     """
     if not supabase:
-        return {"success": True, "conversaciones": [], "items": [], "etapas_counts": {}}
+        return {"success": True, "conversaciones": [], "items": [], "etapas_counts": {}, "total_count": 0, "has_more": False}
 
     def _fetch_conversaciones_sync() -> Dict[str, Any]:
-        query = (
-            supabase.table("optica_conversaciones")
-            .select("*, optica_contactos(*)")
-            .eq("archivada", archivadas)
-        )
-        if estado and estado not in ("TODOS", "TODAS", "ALL", ""):
-            est_clean = estado.strip().lower()
-            if est_clean in ("activa", "activas", "abierta"):
-                query = query.in_("estado", ["activa", "abierta"])
-            else:
-                query = query.eq("estado", est_clean)
-
-        if etapa_comercial and etapa_comercial not in ("TODAS", "TODOS", "ALL", ""):
-            query = query.eq("etapa_comercial", etapa_comercial)
-
-        res = query.order("ultimo_mensaje_at", desc=True).limit(limit).execute()
-        rows = res.data or []
-
         now_utc = datetime.now(timezone.utc)
+        p_estado = None if archivadas else (estado or "activa")
+        p_etapa = etapa_comercial if (etapa_comercial and etapa_comercial not in ("TODAS", "TODOS", "ALL", "")) else "TODAS"
+        p_origen = origen if (origen and origen not in ("TODAS", "TODOS", "ALL", "")) else None
+        p_search = search.strip() if (search and search.strip()) else None
+
+        search_res = supabase.rpc("buscar_conversaciones_optica", {
+            "p_estado": p_estado,
+            "p_archivada": archivadas,
+            "p_etapa": p_etapa,
+            "p_origen": p_origen,
+            "p_search": p_search,
+            "p_limit": limit,
+            "p_offset": offset
+        }).execute()
+
+        rows = search_res.data or []
+        total_count = 0
         conversaciones: List[Dict[str, Any]] = []
+        for item in rows:
+            conv_raw = item.get("conv_row") if isinstance(item, dict) else None
+            if conv_raw and isinstance(conv_raw, dict):
+                if total_count == 0 and item.get("total_count") is not None:
+                    total_count = int(item["total_count"])
+                conversaciones.append(_enriquecer_conversacion_optica_frontend(conv_raw, now_utc))
 
-        for r in rows:
-            enriched = _enriquecer_conversacion_optica_frontend(r, now_utc)
-            if origen and origen not in ("TODOS", "TODAS", "ALL", ""):
-                if enriched.get("origen") != origen and r.get("origen_oportunidad") != origen:
-                    continue
-            if search and search.strip():
-                q = search.strip().lower()
-                haystack = (
-                    f"{enriched.get('nombre_paciente') or ''} {enriched.get('telefono') or ''} "
-                    f"{enriched.get('dni') or ''} {enriched.get('obra_social') or ''} {enriched.get('cupon_codigo') or ''}"
-                ).lower()
-                if q not in haystack:
-                    continue
+        cnt_res = supabase.rpc("obtener_contadores_bandeja_optica", {
+            "p_estado": p_estado,
+            "p_archivada": archivadas
+        }).execute()
+        cnt_data = cnt_res.data if isinstance(cnt_res.data, dict) else {}
 
-            conversaciones.append(enriched)
+        raw_etapas = cnt_data.get("etapas_counts") or {}
+        etapas_counts: Dict[str, int] = {et: int(raw_etapas.get(et) or 0) for et in ETAPAS_COMERCIALES_OPTICA}
+        for k_et, v_et in raw_etapas.items():
+            if k_et not in etapas_counts:
+                etapas_counts[k_et] = int(v_et or 0)
 
-        # Priorizar fijadas al inicio manteniendo orden cronológico
-        conversaciones.sort(key=lambda c: bool(c.get("fijado") or c.get("is_pinned")), reverse=True)
-
-        # Contadores por etapa comercial
-        all_res = supabase.table("optica_conversaciones").select("etapa_comercial, mensajes_no_leidos").eq("archivada", False).execute()
-        etapas_counts: Dict[str, int] = {et: 0 for et in ETAPAS_COMERCIALES_OPTICA}
-        total_no_leidos = 0
-        for item in (all_res.data or []):
-            et = str(item.get("etapa_comercial") or "NUEVA_CONSULTA")
-            etapas_counts[et] = etapas_counts.get(et, 0) + 1
-            total_no_leidos += int(item.get("mensajes_no_leidos") or 0)
-
-        # Contadores globales de pestañas (Activas, Cerradas, Archivadas)
-        tab_counts: Dict[str, int] = {"activas": 0, "cerradas": 0, "archivadas": 0}
-        try:
-            cnt_act = supabase.table("optica_conversaciones").select("id", count="exact").in_("estado", ["activa", "abierta"]).eq("archivada", False).limit(1).execute()
-            cnt_cer = supabase.table("optica_conversaciones").select("id", count="exact").eq("estado", "cerrada").eq("archivada", False).limit(1).execute()
-            cnt_arc = supabase.table("optica_conversaciones").select("id", count="exact").eq("archivada", True).limit(1).execute()
-            tab_counts["activas"] = int(cnt_act.count or 0)
-            tab_counts["cerradas"] = int(cnt_cer.count or 0)
-            tab_counts["archivadas"] = int(cnt_arc.count or 0)
-        except Exception as cnt_err:
-            logger.warning(f"[OpticaRouter] Error calculando tab_counts: {cnt_err}")
+        total_no_leidos = int(cnt_data.get("total_no_leidos") or 0)
+        tab_counts = cnt_data.get("tab_counts") or {"activas": 0, "cerradas": 0, "archivadas": 0}
+        has_more = (offset + len(conversaciones)) < total_count
 
         return {
             "success": True,
@@ -1555,7 +1570,11 @@ async def listar_conversaciones_optica(
             "items": conversaciones,
             "etapas_counts": etapas_counts,
             "total_no_leidos": total_no_leidos,
-            "tab_counts": tab_counts
+            "tab_counts": tab_counts,
+            "total_count": total_count,
+            "has_more": has_more,
+            "offset": offset,
+            "limit": limit
         }
 
     try:
@@ -1615,8 +1634,10 @@ async def iniciar_conversacion_optica(payload: IniciarConversacionOpticaPayload)
             "contacto_id": contacto_id,
             "telefono": tel_norm,
             "nombre_contacto": (contacto.get("nombre") if contacto else nombre_input) or f"Contacto {tel_norm[-4:]}",
-            "estado": "abierta",
+            "estado": "activa",
             "etapa_comercial": "NUEVA_CONSULTA",
+            "etapa_updated_at": now_iso,
+            "clasificacion_origen": "inicial",
             "origen_oportunidad": payload.origen_oportunidad or "manual_optica",
             "ultimo_mensaje_texto": "Conversación iniciada en Óptica Vortix",
             "ultimo_mensaje_at": now_iso,
@@ -1703,7 +1724,10 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
     contacto = conv.get("optica_contactos") or {}
     contacto_id = contacto.get("id") or conv.get("contacto_id")
     to_phone = str(conv.get("telefono") or "").strip()
-    nombre_pac = (contacto.get("nombre") or conv.get("nombre_contacto") or "Paciente").split(",")[0].title().strip()
+    if conv.get("vinculacion_manual"):
+        nombre_pac = (conv.get("paciente_vinculado_nombre") or contacto.get("nombre") or conv.get("nombre_contacto") or "Paciente").split(",")[0].title().strip()
+    else:
+        nombre_pac = (contacto.get("nombre") or conv.get("nombre_contacto") or "Paciente").split(",")[0].title().strip()
     texto_final = (payload.contenido or payload.mensaje or "").strip()
     tipo_req = str(payload.tipo or "text").strip().lower()
 
@@ -1785,6 +1809,8 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
 
             supabase.table("optica_conversaciones").update({
                 "etapa_comercial": "LISTO_PARA_RETIRAR",
+                "etapa_updated_at": now_utc.isoformat(),
+                "clasificacion_origen": "auto_retiro",
                 "updated_at": now_utc.isoformat()
             }).eq("id", conv_id).execute()
             return {**(saved or {}), "success": True, "mensaje": saved, "etapa_comercial": "LISTO_PARA_RETIRAR"}
@@ -1917,6 +1943,8 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
             )
             supabase.table("optica_conversaciones").update({
                 "etapa_comercial": "PRESUPUESTO_AEREOS",
+                "etapa_updated_at": now_utc.isoformat(),
+                "clasificacion_origen": "auto_cotizador",
                 "updated_at": now_utc.isoformat()
             }).eq("id", conv_id).execute()
             return {**(saved or {}), "success": True, "mensaje": saved, "etapa_comercial": "PRESUPUESTO_AEREOS"}
@@ -2135,26 +2163,53 @@ async def cerrar_conversacion_optica(conv_id: str, payload: Optional[Dict[str, A
 async def reabrir_conversacion_optica(conv_id: str):
     """
     Reabre una conversación de Óptica Vortix.
-    Restaura el modo de atención previo y marca el estado como `activa`.
+    Restaura el modo de atención previo, marca el estado como `activa` y limpia
+    cualquier vínculo clínico manual si la conversación estaba cerrada.
     """
     if not supabase:
         raise HTTPException(status_code=500, detail="Supabase no disponible")
 
-    c_res = supabase.table("optica_conversaciones").select("id, modo_atencion, modo_atencion_previo, estado").eq("id", conv_id).limit(1).execute()
+    c_res = (
+        supabase.table("optica_conversaciones")
+        .select("id, contacto_id, modo_atencion, modo_atencion_previo, estado, vinculacion_manual, paciente_vinculado_nombre, paciente_vinculado_ficha_id, metadata_json")
+        .eq("id", conv_id)
+        .limit(1)
+        .execute()
+    )
     if not c_res.data:
         raise HTTPException(status_code=404, detail="Conversación no encontrada")
 
     conv = c_res.data[0]
     modo_restaurado = conv.get("modo_atencion_previo") or conv.get("modo_atencion") or "autonomo"
     now_iso = datetime.now(timezone.utc).isoformat()
+    era_cerrada = str(conv.get("estado") or "").lower() == "cerrada"
 
-    supabase.table("optica_conversaciones").update({
+    upd_reopen: Dict[str, Any] = {
         "estado": "activa",
         "modo_atencion": modo_restaurado,
         "cerrado_at": None,
         "cerrado_motivo": None,
         "updated_at": now_iso
-    }).eq("id", conv_id).execute()
+    }
+    nota_desv = None
+    if era_cerrada:
+        reset_upd, nota_desv = preparar_reset_vinculacion_manual(
+            conv,
+            motivo_auditoria="Reapertura manual de conversación"
+        )
+        if reset_upd:
+            upd_reopen.update(reset_upd)
+
+    supabase.table("optica_conversaciones").update(upd_reopen).eq("id", conv_id).execute()
+    if nota_desv:
+        _record_optica_outbound_msg(
+            conversacion_id=conv_id,
+            contacto_id=conv.get("contacto_id"),
+            wamid=None,
+            tipo="nota_interna",
+            contenido=nota_desv,
+            enviado_por="sistema"
+        )
 
     return {
         "success": True,
@@ -2515,8 +2570,8 @@ async def actualizar_conversacion_optica(conv_id: str, payload: PatchConversacio
     """
     Actualiza el estado comercial del embudo óptico (`etapa_comercial`), asignación, archivo,
     pausa del bot o graduación del paciente.
-    Si `etapa_comercial == 'VENDIDO'`, marca automáticamente como `vendido` las oportunidades vinculadas.
-    Si `etapa_comercial == 'LISTO_PARA_RETIRAR'` y `notificar_lentes_listos=True`, envía el aviso por WhatsApp.
+    Valida `etapa_comercial` contra `ETAPAS_COMERCIALES_OPTICA` y actualiza `etapa_updated_at`/`clasificacion_origen`.
+    Si la conversación tiene `vinculacion_manual=True`, la graduación se guarda solo en la conversación.
     """
     if not supabase:
         raise HTTPException(status_code=500, detail="Supabase no disponible")
@@ -2528,11 +2583,20 @@ async def actualizar_conversacion_optica(conv_id: str, payload: PatchConversacio
     conv = c_res.data[0]
     contacto_id = conv.get("contacto_id")
     tel = conv.get("telefono")
+    is_vinculado = bool(conv.get("vinculacion_manual"))
     now_iso = datetime.now(timezone.utc).isoformat()
 
     upd_conv: Dict[str, Any] = {"updated_at": now_iso}
     if payload.etapa_comercial is not None:
-        upd_conv["etapa_comercial"] = payload.etapa_comercial
+        etapa_norm = str(payload.etapa_comercial).strip().upper()
+        if etapa_norm not in ETAPAS_COMERCIALES_OPTICA:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Etapa comercial inválida: '{payload.etapa_comercial}'. Válidas: {', '.join(ETAPAS_COMERCIALES_OPTICA)}"
+            )
+        upd_conv["etapa_comercial"] = etapa_norm
+        upd_conv["etapa_updated_at"] = now_iso
+        upd_conv["clasificacion_origen"] = (payload.clasificacion_origen or "manual").strip()
     if payload.asignado_a is not None:
         upd_conv["asignado_a"] = payload.asignado_a
     if payload.archivada is not None:
@@ -2540,13 +2604,19 @@ async def actualizar_conversacion_optica(conv_id: str, payload: PatchConversacio
     if payload.bot_paused is not None:
         upd_conv["bot_paused"] = payload.bot_paused
 
+    if is_vinculado and payload.graduacion_actual_json is not None:
+        meta_c = dict(conv.get("metadata_json") or {}) if isinstance(conv.get("metadata_json"), dict) else {}
+        meta_c["graduacion_vinculada_json"] = normalizar_estructura_graduacion(payload.graduacion_actual_json)
+        upd_conv["metadata_json"] = meta_c
+
     supabase.table("optica_conversaciones").update(upd_conv).eq("id", conv_id).execute()
 
-    # Actualizar datos del contacto si vinieron en el PATCH
-    if contacto_id and (payload.graduacion_actual_json is not None or payload.notas is not None or payload.codigo_cupon_activo is not None):
+    # Actualizar datos en optica_contactos (graduación solo si NO hay vinculación manual)
+    grad_para_contacto = None if is_vinculado else payload.graduacion_actual_json
+    if contacto_id and (grad_para_contacto is not None or payload.notas is not None or payload.codigo_cupon_activo is not None):
         upd_cont: Dict[str, Any] = {"updated_at": now_iso}
-        if payload.graduacion_actual_json is not None:
-            upd_cont["graduacion_actual_json"] = normalizar_estructura_graduacion(payload.graduacion_actual_json)
+        if grad_para_contacto is not None:
+            upd_cont["graduacion_actual_json"] = normalizar_estructura_graduacion(grad_para_contacto)
         if payload.notas is not None:
             upd_cont["notas"] = payload.notas
         if payload.codigo_cupon_activo is not None:
@@ -2603,8 +2673,8 @@ async def obtener_ficha_optica_conversacion(conv_id: str):
     conv = _enriquecer_conversacion_optica_frontend(c_res.data[0])
     contacto = conv.get("optica_contactos") or {}
     tel = conv.get("telefono")
-    ficha_id = contacto.get("ficha_geclisa_id")
-    dni = contacto.get("dni")
+    ficha_id = conv.get("ficha_geclisa_id") or contacto.get("ficha_geclisa_id")
+    dni = conv.get("dni") or contacto.get("dni")
 
     oportunidades = []
     if tel or ficha_id:
@@ -2632,7 +2702,7 @@ async def obtener_ficha_optica_conversacion(conv_id: str):
         except Exception:
             pass
 
-    grad_norm = normalizar_estructura_graduacion(contacto.get("graduacion_actual_json") or {})
+    grad_norm = conv.get("graduacion_actual_json") or normalizar_estructura_graduacion(contacto.get("graduacion_actual_json") or {})
 
     # Construir evolucion_geclisa_hoy para el panel derecho del Frontend
     evolucion_geclisa_hoy = None
@@ -2668,6 +2738,271 @@ async def obtener_ficha_optica_conversacion(conv_id: str):
     }
 
 
+def _resolver_operador_nombre(user_payload: Optional[Dict[str, Any]], fallback_nombre: Optional[str] = None) -> str:
+    """Resuelve el nombre legible del operador desde el token autenticado o fallback."""
+    if isinstance(user_payload, dict):
+        u_meta = user_payload.get("user_metadata") if isinstance(user_payload.get("user_metadata"), dict) else {}
+        for cand in (
+            user_payload.get("nombre_completo"),
+            u_meta.get("nombre_completo"),
+            u_meta.get("full_name"),
+            user_payload.get("email"),
+        ):
+            if cand and str(cand).strip():
+                return str(cand).strip()
+        sub = user_payload.get("sub")
+        if sub and supabase:
+            try:
+                p_res = supabase.table("usuarios_perfil").select("nombre_completo, email").eq("id", str(sub)).limit(1).execute()
+                if p_res.data:
+                    nom = p_res.data[0].get("nombre_completo") or p_res.data[0].get("email")
+                    if nom:
+                        return str(nom).strip()
+            except Exception:
+                pass
+    return (fallback_nombre or "").strip() or "Óptico"
+
+
+@optica_vortix_router.get("/geclisa/buscar-paciente")
+async def buscar_paciente_geclisa_optica(q: str = Query(..., min_length=2)):
+    """
+    Busca candidatos de paciente para vinculación manual en teléfonos compartidos:
+      - Si `q` es numérico (DNI o N° de ficha), consulta Geclisa en vivo + caché local.
+      - Si `q` es texto (nombre/apellido), consulta tablas locales con ficha Geclisa vinculada.
+    Deduplica por `ficha_geclisa_id` con prioridad `geclisa` > `optica_contactos` > `pacientes`.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    termino = q.strip()
+    if len(termino) < 2:
+        raise HTTPException(status_code=400, detail="Ingresa al menos 2 caracteres para buscar.")
+
+    def _buscar_sync() -> Dict[str, Any]:
+        candidatos_map: Dict[str, Dict[str, Any]] = {}
+        warnings: List[str] = []
+        solo_digitos = re.sub(r"\D", "", termino)
+        es_numerico = bool(solo_digitos) and solo_digitos == re.sub(r"[\s.-]", "", termino)
+
+        def _add_candidato(ficha_raw: Any, nombre: Optional[str], dni: Optional[str], obra_social: Optional[str], telefono: Optional[str], fuente: str):
+            if not es_ficha_geclisa_valida(ficha_raw):
+                return
+            ficha_str = str(int(ficha_raw)) if str(ficha_raw).isdigit() else str(ficha_raw).strip()
+            if ficha_str in candidatos_map:
+                return
+            candidatos_map[ficha_str] = {
+                "ficha_geclisa_id": ficha_str,
+                "nombre": (nombre or "Paciente sin nombre").strip(),
+                "dni": str(dni).strip() if dni else None,
+                "obra_social": (obra_social or "").strip() or None,
+                "telefono": str(telefono).strip() if telefono else None,
+                "fuente": fuente
+            }
+
+        # 1. Consulta en vivo a Geclisa cuando la búsqueda es numérica (DNI o ficha)
+        if es_numerico:
+            try:
+                res_dni = geclisa_client.buscar_candidatos_por_dni(solo_digitos)
+                for cand in (res_dni.get("candidatos") or []):
+                    fid = cand.get("ficha_id")
+                    os_nom = None
+                    if es_ficha_geclisa_valida(fid):
+                        try:
+                            cob = geclisa_client.obtener_cobertura_paciente(int(fid))
+                            if isinstance(cob, dict):
+                                os_nom = cob.get("obra_social") or cob.get("nombre_obra_social")
+                        except Exception:
+                            pass
+                    _add_candidato(fid, cand.get("nombre_completo"), cand.get("dni") or solo_digitos, os_nom, cand.get("celular"), "geclisa")
+            except Exception as e_dni:
+                logger.warning(f"[OpticaVincular] Fallback local tras error buscando DNI en Geclisa: {e_dni}")
+                warnings.append("Geclisa no respondió por DNI; mostrando coincidencias locales.")
+
+            if len(solo_digitos) <= 8:
+                try:
+                    res_ficha = geclisa_client.buscar_paciente_por_ficha(int(solo_digitos))
+                    if isinstance(res_ficha, dict) and res_ficha.get("encontrado", True) and es_ficha_geclisa_valida(res_ficha.get("ficha_id") or res_ficha.get("fichaId")):
+                        _add_candidato(
+                            res_ficha.get("ficha_id") or res_ficha.get("fichaId") or solo_digitos,
+                            res_ficha.get("nombre_completo") or res_ficha.get("nombre"),
+                            res_ficha.get("dni") or res_ficha.get("nro_doc"),
+                            res_ficha.get("obra_social"),
+                            res_ficha.get("celular") or res_ficha.get("telefono"),
+                            "geclisa"
+                        )
+                except Exception:
+                    pass
+
+        # 2. Búsqueda local en optica_contactos (ficha_geclisa_id)
+        try:
+            q_oc = supabase.table("optica_contactos").select("ficha_geclisa_id, nombre, dni, obra_social, telefono").not_.is_("ficha_geclisa_id", "null")
+            if es_numerico:
+                q_oc = q_oc.or_(f"dni.ilike.%{solo_digitos}%,ficha_geclisa_id.eq.{solo_digitos},telefono.ilike.%{solo_digitos}%")
+            else:
+                q_oc = q_oc.ilike("nombre", f"%{termino}%")
+            oc_res = q_oc.limit(15).execute()
+            for r_oc in (oc_res.data or []):
+                _add_candidato(
+                    r_oc.get("ficha_geclisa_id"),
+                    r_oc.get("nombre"),
+                    r_oc.get("dni"),
+                    r_oc.get("obra_social"),
+                    r_oc.get("telefono"),
+                    "optica_contactos"
+                )
+        except Exception as e_oc:
+            logger.warning(f"[OpticaVincular] Error buscando en optica_contactos: {e_oc}")
+
+        # 3. Búsqueda local en public.pacientes (columna real: geclisa_ficha_id INTEGER)
+        try:
+            q_pac = supabase.table("pacientes").select("geclisa_ficha_id, nombre, dni, obra_social, telefono").not_.is_("geclisa_ficha_id", "null")
+            if es_numerico:
+                q_pac = q_pac.or_(f"dni.ilike.%{solo_digitos}%,geclisa_ficha_id.eq.{int(solo_digitos)},telefono.ilike.%{solo_digitos}%")
+            else:
+                q_pac = q_pac.ilike("nombre", f"%{termino}%")
+            pac_res = q_pac.limit(15).execute()
+            for r_pac in (pac_res.data or []):
+                _add_candidato(
+                    r_pac.get("geclisa_ficha_id"),
+                    r_pac.get("nombre"),
+                    r_pac.get("dni"),
+                    r_pac.get("obra_social"),
+                    r_pac.get("telefono"),
+                    "pacientes"
+                )
+        except Exception as e_pac:
+            logger.warning(f"[OpticaVincular] Error buscando en public.pacientes: {e_pac}")
+
+        out: Dict[str, Any] = {
+            "success": True,
+            "candidatos": list(candidatos_map.values())[:20]
+        }
+        if warnings:
+            out["warning"] = " ".join(warnings)
+        return out
+
+    return await asyncio.to_thread(_buscar_sync)
+
+
+@optica_vortix_router.post("/conversaciones/{conv_id}/vincular-paciente")
+async def vincular_paciente_geclisa_conversacion(
+    conv_id: str,
+    payload: VincularPacienteGeclisaPayload,
+    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+):
+    """
+    Vincula manualmente una conversación a otra ficha clínica de Geclisa (override por conversación),
+    preservando intacto `optica_contactos` para futuras campañas masivas.
+    Si cambia la ficha vinculada respecto de una previa, limpia `graduacion_vinculada_json`.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    if not es_ficha_geclisa_valida(payload.ficha_geclisa_id):
+        raise HTTPException(status_code=400, detail="El número de ficha de Geclisa no es válido.")
+
+    nombre_clean = (payload.nombre or "").strip()
+    if not nombre_clean:
+        raise HTTPException(status_code=400, detail="El nombre del paciente es obligatorio para vincular.")
+
+    c_res = supabase.table("optica_conversaciones").select("*, optica_contactos(*)").eq("id", conv_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+    conv = c_res.data[0]
+    now_iso = datetime.now(timezone.utc).isoformat()
+    operador = _resolver_operador_nombre(current_user, payload.operador_nombre)
+    ficha_nueva = str(payload.ficha_geclisa_id).strip()
+    ficha_prev = str(conv.get("paciente_vinculado_ficha_id") or "").strip()
+
+    meta = dict(conv.get("metadata_json") or {}) if isinstance(conv.get("metadata_json"), dict) else {}
+    if conv.get("vinculacion_manual") and ficha_prev and ficha_prev != ficha_nueva:
+        meta.pop("graduacion_vinculada_json", None)
+
+    upd_payload: Dict[str, Any] = {
+        "paciente_vinculado_ficha_id": ficha_nueva,
+        "paciente_vinculado_nombre": nombre_clean,
+        "paciente_vinculado_dni": (payload.dni or "").strip() or None,
+        "paciente_vinculado_obra_social": (payload.obra_social or "").strip() or None,
+        "vinculacion_manual": True,
+        "vinculado_at": now_iso,
+        "vinculado_por": operador,
+        "metadata_json": meta,
+        "updated_at": now_iso
+    }
+
+    supabase.table("optica_conversaciones").update(upd_payload).eq("id", conv_id).execute()
+
+    nota_auditoria = (
+        f"🔗 {operador} vinculó manualmente este chat a {nombre_clean} "
+        f"(Ficha Geclisa {ficha_nueva}"
+        f"{', DNI ' + payload.dni.strip() if payload.dni and payload.dni.strip() else ''}). "
+        f"Las campañas al titular del teléfono no se alteran."
+    )
+    _record_optica_outbound_msg(
+        conversacion_id=conv_id,
+        contacto_id=conv.get("contacto_id"),
+        wamid=None,
+        tipo="nota_interna",
+        contenido=nota_auditoria,
+        enviado_por=operador
+    )
+
+    refreshed = supabase.table("optica_conversaciones").select("*, optica_contactos(*)").eq("id", conv_id).limit(1).execute()
+    conv_out = _enriquecer_conversacion_optica_frontend(refreshed.data[0]) if refreshed.data else None
+    return {"success": True, "conversacion": conv_out}
+
+
+@optica_vortix_router.delete("/conversaciones/{conv_id}/vincular-paciente")
+async def desvincular_paciente_geclisa_conversacion(
+    conv_id: str,
+    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+):
+    """
+    Revierte la vinculación clínica manual de la conversación, limpia `graduacion_vinculada_json`
+    y vuelve al titular original de `optica_contactos`.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    c_res = supabase.table("optica_conversaciones").select("*, optica_contactos(*)").eq("id", conv_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+    conv = c_res.data[0]
+    now_iso = datetime.now(timezone.utc).isoformat()
+    operador = _resolver_operador_nombre(current_user)
+    meta = dict(conv.get("metadata_json") or {}) if isinstance(conv.get("metadata_json"), dict) else {}
+    meta.pop("graduacion_vinculada_json", None)
+
+    prev_nombre = conv.get("paciente_vinculado_nombre") or "Paciente vinculado"
+    supabase.table("optica_conversaciones").update({
+        "vinculacion_manual": False,
+        "paciente_vinculado_ficha_id": None,
+        "paciente_vinculado_nombre": None,
+        "paciente_vinculado_dni": None,
+        "paciente_vinculado_obra_social": None,
+        "vinculado_at": None,
+        "vinculado_por": None,
+        "metadata_json": meta,
+        "updated_at": now_iso
+    }).eq("id", conv_id).execute()
+
+    if conv.get("vinculacion_manual"):
+        _record_optica_outbound_msg(
+            conversacion_id=conv_id,
+            contacto_id=conv.get("contacto_id"),
+            wamid=None,
+            tipo="nota_interna",
+            contenido=f"🔓 {operador} desvinculó manualmente a {prev_nombre} y restauró el titular del teléfono.",
+            enviado_por=operador
+        )
+
+    refreshed = supabase.table("optica_conversaciones").select("*, optica_contactos(*)").eq("id", conv_id).limit(1).execute()
+    conv_out = _enriquecer_conversacion_optica_frontend(refreshed.data[0]) if refreshed.data else None
+    return {"success": True, "conversacion": conv_out}
+
+
 # ============================================================================
 # 3. ENDPOINTS DE INTELIGENCIA ARTIFICIAL (OCR RECETA + COPILOTO ÓPTICO)
 # ============================================================================
@@ -2676,15 +3011,7 @@ async def obtener_ficha_optica_conversacion(conv_id: str):
 async def ocr_receta_endpoint(payload: OcrRecetaPayload):
     """Extrae la graduación (OD, OI, Adición, DNP) desde la foto de una receta médica usando Gemini Vision con rotación opcional."""
     try:
-        res = await extraer_graduacion_desde_imagen_receta(
-            media_url_or_base64=payload.media_url,
-            conversacion_id=payload.conversacion_id,
-            contacto_id=payload.contacto_id,
-            rotacion_grados=int(payload.rotacion_grados or 0)
-        )
-        grad = normalizar_estructura_graduacion(res.get("graduacion"))
-
-        conv_actualizada = None
+        is_vinculado = False
         target_conv_id = payload.conversacion_id
         if not target_conv_id and payload.contacto_id and supabase:
             c_q = supabase.table("optica_conversaciones").select("id").eq("contacto_id", payload.contacto_id).order("updated_at", desc=True).limit(1).execute()
@@ -2692,29 +3019,51 @@ async def ocr_receta_endpoint(payload: OcrRecetaPayload):
                 target_conv_id = c_q.data[0]["id"]
 
         if target_conv_id and supabase:
+            c_chk = supabase.table("optica_conversaciones").select("vinculacion_manual").eq("id", target_conv_id).limit(1).execute()
+            if c_chk.data:
+                is_vinculado = bool(c_chk.data[0].get("vinculacion_manual"))
+
+        res = await extraer_graduacion_desde_imagen_receta(
+            media_url_or_base64=payload.media_url,
+            conversacion_id=target_conv_id or payload.conversacion_id,
+            contacto_id=payload.contacto_id,
+            rotacion_grados=int(payload.rotacion_grados or 0),
+            persistir_en_contacto=not is_vinculado
+        )
+        grad = normalizar_estructura_graduacion(res.get("graduacion"))
+
+        conv_actualizada = None
+        if target_conv_id and supabase:
             c_res = supabase.table("optica_conversaciones").select("*, optica_contactos(*)").eq("id", target_conv_id).limit(1).execute()
             if c_res.data:
                 conv_row = c_res.data[0]
                 target_cid = conv_row.get("contacto_id") or payload.contacto_id
+                row_vinculado = bool(conv_row.get("vinculacion_manual"))
+                now_iso = datetime.now(timezone.utc).isoformat()
 
-                # Persistencia atómica de graduación en optica_contactos
-                if target_cid:
+                # Solo persistir en optica_contactos si NO es un chat vinculado manualmente
+                if target_cid and not row_vinculado:
                     supabase.table("optica_contactos").update({
                         "graduacion_actual_json": grad,
-                        "updated_at": datetime.now(timezone.utc).isoformat()
+                        "updated_at": now_iso
                     }).eq("id", target_cid).execute()
 
-                meta = conv_row.get("metadata_json") if isinstance(conv_row.get("metadata_json"), dict) else {}
-                meta["graduacion_actual_json"] = grad
+                meta = dict(conv_row.get("metadata_json") or {}) if isinstance(conv_row.get("metadata_json"), dict) else {}
+                if row_vinculado:
+                    meta["graduacion_vinculada_json"] = grad
+                else:
+                    meta["graduacion_actual_json"] = grad
 
                 upd_fields: Dict[str, Any] = {
                     "metadata_json": meta,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
+                    "updated_at": now_iso
                 }
 
                 etapa_actual = str(conv_row.get("etapa_comercial") or "").strip().upper()
                 if etapa_actual in ("NUEVA_CONSULTA", "CONSULTA_ARMAZON"):
                     upd_fields["etapa_comercial"] = "PRESUPUESTO_AEREOS"
+                    upd_fields["etapa_updated_at"] = now_iso
+                    upd_fields["clasificacion_origen"] = "auto_ocr"
 
                 supabase.table("optica_conversaciones").update(upd_fields).eq("id", target_conv_id).execute()
 
@@ -2956,8 +3305,10 @@ async def contactar_oportunidad_individual(oport_id: str, payload: Optional[Cont
                     "contacto_id": op.get("contacto_id"),
                     "telefono": tel,
                     "nombre_contacto": op.get("paciente_nombre"),
-                    "estado": "abierta",
+                    "estado": "activa",
                     "etapa_comercial": "LENTES_CONTACTO" if op.get("tipo_oportunidad") == "indicacion_lentes_contacto" else "PRESUPUESTO_AEREOS",
+                    "etapa_updated_at": now_iso,
+                    "clasificacion_origen": "auto_cotizador",
                     "origen_oportunidad": op.get("tipo_oportunidad"),
                     "ultimo_mensaje_texto": f"Oportunidad contactada ({enc_res.get('template_name')})",
                     "ultimo_mensaje_at": now_iso,

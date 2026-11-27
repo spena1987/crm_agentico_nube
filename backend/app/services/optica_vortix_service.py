@@ -44,6 +44,52 @@ geclisa_client = GeclisaClient()
 
 MENDOZA_TZ = timezone(timedelta(hours=-3))
 
+
+def _reparar_mojibake_utf8(texto: Optional[str]) -> str:
+    """Corrige cadenas UTF-8 decodificadas erróneamente como Latin-1/Win-1252 (ej. 'MÃ©dicas' -> 'Médicas')."""
+    if not texto:
+        return ""
+    s = str(texto)
+    if any(seq in s for seq in ("Ã", "Â", "â€", "Ð")):
+        try:
+            repaired = s.encode("latin1").decode("utf-8")
+            return repaired
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    return s
+
+
+def preparar_reset_vinculacion_manual(
+    conv_row: Dict[str, Any],
+    motivo_auditoria: Optional[str] = None
+) -> Tuple[Dict[str, Any], Optional[str]]:
+    """
+    Si la conversación tiene `vinculacion_manual=True`, retorna el dict de actualización
+    para limpiar columnas `paciente_vinculado_*` y `metadata_json.graduacion_vinculada_json`,
+    junto con el texto de auditoría (o None si no había vínculo manual).
+    """
+    if not conv_row or not conv_row.get("vinculacion_manual"):
+        return {}, None
+
+    prev_nombre = conv_row.get("paciente_vinculado_nombre") or "Paciente vinculado"
+    prev_ficha = conv_row.get("paciente_vinculado_ficha_id") or "S/D"
+    meta = dict(conv_row.get("metadata_json") or {}) if isinstance(conv_row.get("metadata_json"), dict) else {}
+    meta.pop("graduacion_vinculada_json", None)
+
+    upd = {
+        "vinculacion_manual": False,
+        "paciente_vinculado_ficha_id": None,
+        "paciente_vinculado_nombre": None,
+        "paciente_vinculado_dni": None,
+        "paciente_vinculado_obra_social": None,
+        "vinculado_at": None,
+        "vinculado_por": None,
+        "metadata_json": meta,
+    }
+    motivo = motivo_auditoria or "Reapertura de conversación tras cierre previo"
+    nota = f"🔄 {motivo}: se desvinculó automáticamente a {prev_nombre} (Ficha {prev_ficha}) para evitar mezcla clínica con el titular del teléfono."
+    return upd, nota
+
 # Caché en memoria para fichas de Geclisa (evita llamadas repetidas en barridos de agenda)
 _FICHA_GECLISA_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 FICHA_CACHE_TTL_SECONDS = 1800.0  # 30 minutos
@@ -2096,7 +2142,7 @@ async def handle_optica_line_inbound_message(
             media_id = m_obj.get("id")
             mime_type = m_obj.get("mime_type")
             caption = str(m_obj.get("caption") or "").strip()
-            filename = str(m_obj.get("filename") or f"optica_{msg_type}_{media_id}").strip()
+            filename = _reparar_mojibake_utf8(str(m_obj.get("filename") or f"optica_{msg_type}_{media_id}").strip())
             text_content = caption or (
                 "📷 [Foto de Receta / Imagen]" if msg_type == "image"
                 else "🎤 [Nota de voz]" if msg_type == "audio"
@@ -2169,13 +2215,30 @@ async def handle_optica_line_inbound_message(
                 "mensajes_no_leidos": unread,
                 "updated_at": now_iso
             }
+            nota_desvinculacion = None
             if era_cerrada:
                 update_conv_payload["modo_atencion"] = modo_restaurado
                 update_conv_payload["cerrado_at"] = None
                 update_conv_payload["cerrado_motivo"] = None
+                reset_upd, nota_desvinculacion = preparar_reset_vinculacion_manual(
+                    conv_row,
+                    motivo_auditoria="Nuevo mensaje entrante tras cierre"
+                )
+                if reset_upd:
+                    update_conv_payload.update(reset_upd)
+                    conv_meta = reset_upd.get("metadata_json") or conv_meta
                 logger.info(f"🔄 [OpticaVortix] Conversación {conv_id} reabierta automáticamente por mensaje del paciente. Modo restaurado: {modo_restaurado}")
 
             supabase.table("optica_conversaciones").update(update_conv_payload).eq("id", conv_id).execute()
+            if nota_desvinculacion:
+                _record_optica_outbound_msg(
+                    conversacion_id=conv_id,
+                    contacto_id=contacto_id,
+                    wamid=None,
+                    tipo="nota_interna",
+                    contenido=nota_desvinculacion,
+                    enviado_por="sistema"
+                )
         else:
             conv_meta = {}
             ins_conv = supabase.table("optica_conversaciones").insert({
@@ -2264,6 +2327,8 @@ async def handle_optica_line_inbound_message(
             }).eq("telefono", tel_norm).eq("estado", "pendiente").execute()
             supabase.table("optica_conversaciones").update({
                 "etapa_comercial": "SIN_INTERES",
+                "etapa_updated_at": now_iso,
+                "clasificacion_origen": "smart_flow",
                 "updated_at": now_iso
             }).eq("id", conv_id).execute()
 
@@ -2348,6 +2413,8 @@ async def handle_optica_line_inbound_message(
             )
             supabase.table("optica_conversaciones").update({
                 "etapa_comercial": "PRESUPUESTO_AEREOS",
+                "etapa_updated_at": now_iso,
+                "clasificacion_origen": "smart_flow",
                 "updated_at": now_iso
             }).eq("id", conv_id).execute()
             r_send = await wa_client.send_free_text(to_phone=tel_norm, text=reply_receta)
@@ -2358,6 +2425,8 @@ async def handle_optica_line_inbound_message(
             promos_txt = str(cfg.get("promos_armazones_texto") or DEFAULT_OPTICA_CONFIG["promos_armazones_texto"])
             supabase.table("optica_conversaciones").update({
                 "etapa_comercial": "CONSULTA_ARMAZON",
+                "etapa_updated_at": now_iso,
+                "clasificacion_origen": "smart_flow",
                 "updated_at": now_iso
             }).eq("id", conv_id).execute()
             r_send = await wa_client.send_free_text(to_phone=tel_norm, text=promos_txt)
@@ -2490,7 +2559,8 @@ async def extraer_graduacion_desde_imagen_receta(
     media_url_or_base64: str,
     conversacion_id: Optional[str] = None,
     contacto_id: Optional[str] = None,
-    rotacion_grados: int = 0
+    rotacion_grados: int = 0,
+    persistir_en_contacto: bool = True
 ) -> Dict[str, Any]:
     """
     Utiliza Google Gemini Vision (`google.genai`) para analizar la foto de una receta médica oftalmológica
@@ -2501,7 +2571,7 @@ async def extraer_graduacion_desde_imagen_receta(
       - DNP (Distancia Nasopupilar / Interpupilar)
       - Tipo de lente sugerido y observaciones.
     Soporta preprocesamiento de rotación con PIL.Image (`rotacion_grados in (90, 180, 270)`).
-    Además actualiza `graduacion_actual_json` en `public.optica_contactos` si se provee `conversacion_id` o `contacto_id`.
+    Además actualiza `graduacion_actual_json` en `public.optica_contactos` solo si `persistir_en_contacto=True`.
     """
     from google import genai
     from google.genai import types
@@ -2618,14 +2688,17 @@ async def extraer_graduacion_desde_imagen_receta(
 
     parsed_grad = normalizar_estructura_graduacion(parsed_grad)
 
-    # Persistir graduación en optica_contactos si se indicó conversacion_id o contacto_id
-    if supabase:
+    # Persistir graduación en optica_contactos si `persistir_en_contacto=True` y la conversación no tiene vínculo manual
+    if supabase and persistir_en_contacto:
         target_cid = contacto_id
-        if not target_cid and conversacion_id:
-            c_res = supabase.table("optica_conversaciones").select("contacto_id").eq("id", conversacion_id).limit(1).execute()
+        is_manual_link = False
+        if conversacion_id:
+            c_res = supabase.table("optica_conversaciones").select("contacto_id, vinculacion_manual").eq("id", conversacion_id).limit(1).execute()
             if c_res.data:
-                target_cid = c_res.data[0].get("contacto_id")
-        if target_cid:
+                if not target_cid:
+                    target_cid = c_res.data[0].get("contacto_id")
+                is_manual_link = bool(c_res.data[0].get("vinculacion_manual"))
+        if target_cid and not is_manual_link:
             supabase.table("optica_contactos").update({
                 "graduacion_actual_json": parsed_grad,
                 "updated_at": datetime.now(timezone.utc).isoformat()
@@ -2668,10 +2741,18 @@ def generar_sugerencia_copiloto_optica(
             if conv_r.data:
                 c_row = conv_r.data[0]
                 contacto = c_row.get("optica_contactos") or {}
-                grad = contacto.get("graduacion_actual_json") or {}
+                meta_c = c_row.get("metadata_json") if isinstance(c_row.get("metadata_json"), dict) else {}
+                if c_row.get("vinculacion_manual"):
+                    pac_nom = c_row.get("paciente_vinculado_nombre") or c_row.get("nombre_contacto") or "Paciente"
+                    pac_os = c_row.get("paciente_vinculado_obra_social") or "Particular"
+                    grad = meta_c.get("graduacion_vinculada_json") or {}
+                else:
+                    pac_nom = contacto.get("nombre") or c_row.get("nombre_contacto")
+                    pac_os = contacto.get("obra_social") or "Particular"
+                    grad = contacto.get("graduacion_actual_json") or {}
                 contexto_str = (
-                    f"Paciente: {contacto.get('nombre') or c_row.get('nombre_contacto')}\n"
-                    f"Obra Social: {contacto.get('obra_social') or 'Particular'}\n"
+                    f"Paciente: {pac_nom}\n"
+                    f"Obra Social: {pac_os}\n"
                     f"Etapa Comercial: {c_row.get('etapa_comercial')}\n"
                     f"Cupón Activo: {contacto.get('codigo_cupon_activo') or 'Sin cupón'}\n"
                     f"Graduación Registrada: {json.dumps(grad, ensure_ascii=False)}\n"
@@ -2939,17 +3020,63 @@ async def procesar_cola_envios_optica(max_batch: int = 10, force_outside_hours: 
                     rendered_text = rendered_text.replace(f"{{{{{p_idx}}}}}", str(p_obj.get("text") or ""))
 
                 # Asegurar conversación en optica_conversaciones y guardar mensaje saliente
-                conv_q = supabase.table("optica_conversaciones").select("id, metadata_json").eq("telefono", to_phone).limit(1).execute()
+                conv_q = (
+                    supabase.table("optica_conversaciones")
+                    .select("id, metadata_json, estado, vinculacion_manual, paciente_vinculado_nombre, paciente_vinculado_ficha_id, contacto_id, modo_atencion, modo_atencion_previo, bot_paused")
+                    .eq("telefono", to_phone)
+                    .limit(1)
+                    .execute()
+                )
                 if conv_q.data:
-                    conv_id = conv_q.data[0]["id"]
-                    c_meta = conv_q.data[0].get("metadata_json") or {}
+                    c_existing = conv_q.data[0]
+                    conv_id = c_existing["id"]
+                    c_meta = c_existing.get("metadata_json") if isinstance(c_existing.get("metadata_json"), dict) else {}
+                    c_upd: Dict[str, Any] = {
+                        "ultimo_mensaje_texto": rendered_text[:300],
+                        "ultimo_mensaje_at": sent_iso,
+                        "ultimo_mensaje_direccion": "outbound",
+                        "updated_at": sent_iso
+                    }
+                    if str(c_existing.get("estado") or "").lower() == "cerrada":
+                        c_upd["estado"] = "activa"
+                        c_upd["archivada"] = False
+                        c_upd["cerrado_at"] = None
+                        c_upd["cerrado_motivo"] = None
+                        c_upd["modo_atencion"] = c_existing.get("modo_atencion_previo") or c_existing.get("modo_atencion") or "autonomo"
+                        reset_upd, nota_desv = preparar_reset_vinculacion_manual(
+                            c_existing,
+                            motivo_auditoria="Despacho de campaña/automatismo tras cierre"
+                        )
+                        if reset_upd:
+                            c_upd.update(reset_upd)
+                            c_meta = reset_upd.get("metadata_json") or c_meta
+                        if nota_desv:
+                            _record_optica_outbound_msg(
+                                conversacion_id=conv_id,
+                                contacto_id=item.get("contacto_id") or c_existing.get("contacto_id"),
+                                wamid=None,
+                                tipo="nota_interna",
+                                contenido=nota_desv,
+                                enviado_por="sistema"
+                            )
+                    supabase.table("optica_conversaciones").update(c_upd).eq("id", conv_id).execute()
                 else:
+                    nombre_conv_nuevo = None
+                    if item.get("contacto_id"):
+                        c_cont = supabase.table("optica_contactos").select("nombre").eq("id", item["contacto_id"]).limit(1).execute()
+                        if c_cont.data and c_cont.data[0].get("nombre") and not str(c_cont.data[0]["nombre"]).startswith("Contacto "):
+                            nombre_conv_nuevo = c_cont.data[0]["nombre"]
+                    if not nombre_conv_nuevo:
+                        nombre_conv_nuevo = params[0].get("text") if params else f"Contacto {to_phone[-4:]}"
+
                     ins_c = supabase.table("optica_conversaciones").insert({
                         "contacto_id": item.get("contacto_id"),
                         "telefono": to_phone,
-                        "nombre_contacto": params[0].get("text") if params else f"Contacto {to_phone[-4:]}",
-                        "estado": "abierta",
+                        "nombre_contacto": nombre_conv_nuevo,
+                        "estado": "activa",
                         "etapa_comercial": "NUEVA_CONSULTA",
+                        "etapa_updated_at": sent_iso,
+                        "clasificacion_origen": "inicial",
                         "origen_oportunidad": item.get("origen"),
                         "ultimo_mensaje_texto": rendered_text[:300],
                         "ultimo_mensaje_at": sent_iso,
@@ -3228,65 +3355,23 @@ _LAST_AUTOCLOSE_RUN_TS: float = 0.0
 
 async def ejecutar_cierre_conversaciones_inactivas_24h() -> int:
     """
-    Cierra automáticamente conversaciones en estado 'activa' o 'abierta'
-    inactivas por más de 24 horas (ventana_24h_expira_at < NOW() o último mensaje hace más de 24h).
-    Preserva el modo de atención actual en 'modo_atencion_previo' y asigna 'cerrada'.
+    Ejecuta de forma atómica el RPC `cerrar_conversaciones_inactivas_24h_optica` en Postgres:
+      - Cierra tras 24h (`inactividad_24h`) etapas no protegidas (`NUEVA_CONSULTA`, `SIN_INTERES`, `VENDIDO`, etc.).
+      - Cierra tras 30 días sin movimiento (`abandono_30d`) las 5 etapas en gestión comercial.
+    Postgres es la única fuente de verdad; si el RPC falla, registra el error y retorna 0.
     """
     if not supabase:
         return 0
     try:
-        # 1. Intentar ejecución atómica mediante RPC optimizado en Postgres
         rpc_res = supabase.rpc("cerrar_conversaciones_inactivas_24h_optica").execute()
         if rpc_res and rpc_res.data is not None:
             cerradas_count = int(rpc_res.data)
             if cerradas_count > 0:
-                logger.info(f"🔒 [OpticaVortix] RPC: Se cerraron {cerradas_count} conversaciones inactivas tras 24h.")
+                logger.info(f"🔒 [OpticaVortix] RPC autocierre: se cerraron {cerradas_count} conversaciones inactivas.")
             return cerradas_count
+        return 0
     except Exception as rpc_err:
-        logger.warning(f"[OpticaVortix] RPC no disponible o falló ({rpc_err}). Usando fallback python...")
-
-    now_utc = datetime.now(timezone.utc)
-    now_iso = now_utc.isoformat()
-    hace_24h_iso = (now_utc - timedelta(hours=24)).isoformat()
-    try:
-        # Fallback Python: buscar vencidas por ventana o por inactividad de mensaje/creación
-        res1 = (
-            supabase.table("optica_conversaciones")
-            .select("id, modo_atencion, bot_paused, estado")
-            .in_("estado", ["activa", "abierta"])
-            .eq("archivada", False)
-            .lt("ventana_24h_expira_at", now_iso)
-            .execute()
-        )
-        res2 = (
-            supabase.table("optica_conversaciones")
-            .select("id, modo_atencion, bot_paused, estado")
-            .in_("estado", ["activa", "abierta"])
-            .eq("archivada", False)
-            .lt("ultimo_mensaje_at", hace_24h_iso)
-            .execute()
-        )
-        vencidas_dict = {}
-        for r in (res1.data or []) + (res2.data or []):
-            vencidas_dict[r["id"]] = r
-
-        cerradas_count = 0
-        for conv_id, conv in vencidas_dict.items():
-            modo_actual = conv.get("modo_atencion") or ("humano" if conv.get("bot_paused") else "autonomo")
-            supabase.table("optica_conversaciones").update({
-                "estado": "cerrada",
-                "modo_atencion_previo": modo_actual,
-                "cerrado_at": now_iso,
-                "cerrado_motivo": "inactividad_24h",
-                "updated_at": now_iso
-            }).eq("id", conv_id).execute()
-            cerradas_count += 1
-
-        if cerradas_count > 0:
-            logger.info(f"🔒 [OpticaVortix] Fallback: Se cerraron {cerradas_count} conversaciones inactivas tras 24h.")
-        return cerradas_count
-    except Exception as e:
-        logger.warning(f"[OpticaVortix] Error en autocierre 24h: {e}")
+        logger.error(f"[OpticaVortix] Error ejecutando RPC cerrar_conversaciones_inactivas_24h_optica: {rpc_err}", exc_info=True)
         return 0
 
 
