@@ -109,16 +109,18 @@ export default function EncuestasAdminPage() {
     setTemplateStatus(json.template_status || null)
   }, [])
 
-  const loadMapeos = useCallback(async () => {
-    const qs = filtroTipoMapeo ? `?tipo_entidad=${encodeURIComponent(filtroTipoMapeo)}` : ''
+  const loadMapeos = useCallback(async (tipo?: string) => {
+    const tipoVal = tipo !== undefined ? tipo : filtroTipoMapeo
+    const qs = tipoVal ? `?tipo_entidad=${encodeURIComponent(tipoVal)}` : ''
     const res = await apiFetch(`/api/encuestas/mapeos${qs}`)
     if (!res.ok) throw new Error('No se pudieron cargar los mapeos de Geclisa.')
     const json = await res.json()
     setMapeos(json.items || [])
   }, [filtroTipoMapeo])
 
-  const loadEnviosYOptOuts = useCallback(async () => {
-    const qs = fechaLote ? `?fecha=${encodeURIComponent(fechaLote)}` : ''
+  const loadEnviosYOptOuts = useCallback(async (fecha?: string) => {
+    const fechaVal = fecha !== undefined ? fecha : fechaLote
+    const qs = fechaVal ? `?fecha=${encodeURIComponent(fechaVal)}` : ''
     const [rEnv, rOpt] = await Promise.all([
       apiFetch(`/api/encuestas/envios${qs}`),
       apiFetch('/api/encuestas/opt-outs'),
@@ -143,11 +145,20 @@ export default function EncuestasAdminPage() {
     } finally {
       setLoading(false)
     }
-  }, [loadConfigAndHealth, loadMapeos, loadEnviosYOptOuts])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadConfigAndHealth])
 
   useEffect(() => {
     reloadAll()
   }, [reloadAll])
+
+  useEffect(() => {
+    loadMapeos(filtroTipoMapeo).catch(() => {})
+  }, [filtroTipoMapeo, loadMapeos])
+
+  useEffect(() => {
+    loadEnviosYOptOuts(fechaLote).catch(() => {})
+  }, [fechaLote, loadEnviosYOptOuts])
 
   const handleSaveConfig = async (override?: Partial<EncuestasConfig>) => {
     if (!config || !canEdit) return
@@ -245,18 +256,24 @@ export default function EncuestasAdminPage() {
           fecha: fechaLote || null,
           dry_run: dryRun,
           despachar_ahora: despacharAhora,
+          guardar_mapeos: dryRun,
         }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.detail || 'Error ejecutando lote.')
       setDryRunResult(json.resumen)
+      const nuevas = json.resumen?.entidades_nuevas_detectadas?.length ?? 0
       setFeedback({
         type: 'ok',
         text: dryRun
-          ? 'Simulación dry_run completada (solo lectura).'
+          ? `Simulación dry_run completada (${json.resumen?.atendidos ?? 0} atendidos, ${nuevas} entidades nuevas cargadas en Mapeos Geclisa).`
           : `Lote generado (${json.resumen?.envios_creados ?? 0} envíos).`,
       })
-      await reloadAll()
+      await Promise.all([
+        loadMapeos(),
+        loadEnviosYOptOuts(),
+        !dryRun ? loadConfigAndHealth() : Promise.resolve(),
+      ])
     } catch (err: any) {
       setFeedback({ type: 'err', text: err?.message || 'Fallo al ejecutar lote.' })
     } finally {
@@ -733,34 +750,56 @@ export default function EncuestasAdminPage() {
                   type="button"
                   disabled={saving}
                   onClick={() => handleEjecutarLote(true, false)}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-sm font-medium"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-60 disabled:cursor-not-allowed text-slate-800 dark:text-slate-100 text-sm font-medium"
                 >
-                  <Play className="w-4 h-4" />
-                  Simular dry_run
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                  {saving ? 'Consultando Geclisa...' : 'Simular dry_run'}
                 </button>
                 <button
                   type="button"
                   disabled={saving}
                   onClick={() => handleEjecutarLote(false, false)}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 text-white text-sm font-medium"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-medium"
                 >
-                  Encolar lote (recuperación)
+                  {saving ? 'Procesando...' : 'Encolar lote (recuperación)'}
                 </button>
                 <button
                   type="button"
                   disabled={saving}
                   onClick={() => handleEjecutarLote(false, true)}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-medium"
                 >
-                  Encolar y despachar ahora
+                  {saving ? 'Procesando...' : 'Encolar y despachar ahora'}
                 </button>
               </>
             )}
           </div>
 
           {dryRunResult && (
-            <div className="bg-slate-900 text-slate-100 border border-slate-800 rounded-xl p-4 text-xs overflow-x-auto">
-              <pre>{JSON.stringify(dryRunResult, null, 2)}</pre>
+            <div className={`${CARD_CLASS} p-4 space-y-3`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    Resultado del lote ({dryRunResult.fecha_atencion || 'sin fecha'}){dryRunResult.dry_run ? ' · Simulación' : ''}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Agenda total: {dryRunResult.total_agenda ?? 0} · Atendidos: {dryRunResult.atendidos ?? 0} · Válidos: {dryRunResult.validos ?? 0} · Omitidos por mapeo: {dryRunResult.omitidos_mapeo_excluido ?? 0} · Entidades nuevas: {dryRunResult.entidades_nuevas_detectadas?.length ?? 0}
+                  </p>
+                </div>
+                {((dryRunResult.entidades_nuevas_detectadas?.length ?? 0) > 0 || (dryRunResult.omitidos_mapeo_excluido ?? 0) > 0) && (
+                  <button
+                    type="button"
+                    onClick={() => setTab('mapeos')}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
+                  >
+                    <Sliders className="w-3.5 h-3.5" />
+                    Ir a Mapeos Geclisa
+                  </button>
+                )}
+              </div>
+              <div className="bg-slate-950 text-slate-100 border border-slate-800 rounded-lg p-3 text-xs overflow-x-auto">
+                <pre>{JSON.stringify(dryRunResult, null, 2)}</pre>
+              </div>
             </div>
           )}
 

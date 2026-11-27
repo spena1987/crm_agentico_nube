@@ -136,6 +136,7 @@ class EjecutarLotePayload(BaseModel):
     fecha: Optional[date] = None
     dry_run: bool = True
     despachar_ahora: bool = False
+    guardar_mapeos: bool = False
 
 
 class ClickTurnoPayload(BaseModel):
@@ -306,6 +307,7 @@ async def generar_lote_encuestas_para_fecha(
     fecha_objetivo: Optional[date] = None,
     dry_run: bool = False,
     forzar: bool = False,
+    guardar_mapeos: bool = False,
 ) -> Dict[str, Any]:
     """
     Fase 1: Extrae turnos atendidos de Geclisa para `fecha_objetivo`, aplica mapeo manual,
@@ -494,17 +496,19 @@ async def generar_lote_encuestas_para_fecha(
 
     resumen["entidades_nuevas_detectadas"] = list(nuevas_entidades.values())
     resumen["envios_agrupados"] = len(agrupados)
-
-    if dry_run:
-        return resumen
+    resumen["mapeos_guardados"] = 0
 
     # Registrar nuevas entidades detectadas para revisión manual en /encuestas
-    if nuevas_entidades:
+    if nuevas_entidades and (not dry_run or guardar_mapeos):
         db.table("encuestas_mapeo_geclisa").upsert(
             list(nuevas_entidades.values()),
             on_conflict="tipo_entidad,geclisa_id",
             ignore_duplicates=True,
         ).execute()
+        resumen["mapeos_guardados"] = len(nuevas_entidades)
+
+    if dry_run:
+        return resumen
 
     ttl_dias = int(cfg.get("ttl_dias_enlace") or 14)
     expires_at_iso = (datetime.now(timezone.utc) + timedelta(days=ttl_dias)).isoformat()
@@ -1322,6 +1326,7 @@ async def ejecutar_lote_manual(
         fecha_objetivo=payload.fecha,
         dry_run=payload.dry_run,
         forzar=not payload.dry_run,
+        guardar_mapeos=payload.guardar_mapeos,
     )
 
     despacho_iniciado = False
