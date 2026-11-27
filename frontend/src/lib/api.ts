@@ -200,7 +200,7 @@ if (typeof window !== 'undefined' && !(window as any).__MEDCRM_FETCH_INTERCEPTOR
       : (input instanceof URL ? input.href : (input as Request).url || '')
 
     const isApiCall = url.startsWith('/api/') || (BACKEND_URL && url.startsWith(BACKEND_URL))
-    const isPublic = url.includes('/api/consentimiento-publico') || url.includes('/static/')
+    const isPublic = url.includes('/api/consentimiento-publico') || url.includes('/api/encuestas-publico/') || url.includes('/static/')
 
     if (isApiCall && !isPublic) {
       try {

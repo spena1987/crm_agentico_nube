@@ -287,6 +287,77 @@ def verificar_permiso_usuario(
         logger.warning(f"Error verificando permiso ({modulo_codigo}:{accion_codigo}) para {auth_user_id}: {e}")
         return False
 
+def require_module_permission(modulo_codigo: str, accion_codigo: str):
+    """
+    Dependencia FastAPI reutilizable para validar autorización RBAC por módulo y acción.
+    Rechaza tokens anónimos ('anon') o sin 'sub', verifica usuario activo en `usuarios_perfil`,
+    permite acceso directo a roles 'admin' / 'superadmin', y valida `rol_permisos` por módulo/acción.
+    """
+    def _verify_permission(request: Request) -> str:
+        user_state = getattr(request.state, "user", None) or {}
+        uid = (user_state.get("sub") or user_state.get("id") or "").strip()
+        jwt_role = (user_state.get("role") or "").strip().lower()
+        if not uid or jwt_role == "anon":
+            raise HTTPException(
+                status_code=403,
+                detail="Se requiere una sesión de usuario autenticada para acceder a este recurso."
+            )
+
+        from app.db import supabase
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Base de datos no disponible para verificar permisos.")
+
+        try:
+            prof_q = (
+                supabase.table("usuarios_perfil")
+                .select("id, nombre_completo, email, activo, rol_id, roles(codigo, nombre)")
+                .eq("id", str(uid))
+                .limit(1)
+                .execute()
+            )
+            if not prof_q.data:
+                raise HTTPException(status_code=403, detail="Perfil de usuario no encontrado.")
+            prof = prof_q.data[0]
+            if prof.get("activo") is False:
+                raise HTTPException(status_code=403, detail="El usuario se encuentra inactivo.")
+
+            actor_name = prof.get("nombre_completo") or prof.get("email") or str(uid)
+            rol_obj = prof.get("roles") or {}
+            if isinstance(rol_obj, list):
+                rol_obj = rol_obj[0] if rol_obj else {}
+            rol_codigo = (rol_obj.get("codigo") or "").strip().lower()
+            if rol_codigo in ("admin", "superadmin"):
+                return actor_name
+
+            rol_id = prof.get("rol_id")
+            if not rol_id:
+                raise HTTPException(status_code=403, detail="Tu usuario no tiene un rol asignado.")
+
+            perm_q = (
+                supabase.table("rol_permisos")
+                .select("accion, permitido")
+                .eq("rol_id", str(rol_id))
+                .eq("modulo_codigo", modulo_codigo)
+                .eq("accion", accion_codigo)
+                .eq("permitido", True)
+                .limit(1)
+                .execute()
+            )
+            if not perm_q.data:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Tu rol no posee el permiso '{modulo_codigo}:{accion_codigo}'."
+                )
+            return actor_name
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Error validando RBAC ({modulo_codigo}:{accion_codigo}) para {uid}: {e}")
+            raise HTTPException(status_code=500, detail="Error verificando permisos de acceso.")
+
+    return _verify_permission
+
+
 async def verify_webhook_secret(request: Request) -> bool:
     """
     Valida que los eventos entrantes a los webhooks autorizados de WhatsApp provengan
@@ -338,6 +409,7 @@ class AuthSecurityMiddleware(BaseHTTPMiddleware):
             "/static/",
             "/api/consentimiento-publico/",
             "/api/consentimiento/verificar/",
+            "/api/encuestas-publico/",
             "/api/whatsapp/webhook/incoming",
             "/api/whatsapp/cloud/webhook",
             "/webhooks/whatsapp",

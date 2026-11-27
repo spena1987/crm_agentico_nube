@@ -239,6 +239,18 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
       { code: 'ver', label: 'Ver Centro de Ayuda', description: 'Consultar manuales, cómo hacer y preguntas frecuentes' },
     ],
   },
+  {
+    code: 'encuestas',
+    name: 'Encuestas de Satisfacción',
+    description: 'Configuración, mapeos de Geclisa, control de Línea 2 y monitoreo de encuestas post-consulta.',
+    icon: 'ClipboardCheck',
+    order: 16,
+    actions: [
+      { code: 'ver', label: 'Ver Encuestas', description: 'Consultar envíos, bajas y estado de Línea 2' },
+      { code: 'editar', label: 'Configurar Encuestas', description: 'Editar configuración, mapeos de Geclisa y bajas manuales' },
+      { code: 'ejecutar', label: 'Ejecutar Lotes', description: 'Correr simulaciones dry_run y disparos manuales' },
+    ],
+  },
 ]
 
 export interface LandingPageOption {

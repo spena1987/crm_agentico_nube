@@ -295,6 +295,25 @@ async def handle_status_update(status_dict: Dict[str, Any], phone_number_id: Opt
         except Exception as est_sync_err:
             logger.debug(f"[Worker Status Estudios] Error actualizando estudios_oftalmo para wamid={wamid}: {est_sync_err}")
 
+        # 4. Sincronizar estado en public.encuestas_envios (Módulo de Encuestas)
+        try:
+            from app.services.encuestas_satisfaccion_service import sincronizar_estado_envio_encuesta
+            enc_err_code = None
+            enc_err_msg = None
+            if status_name == "failed":
+                errs = status_dict.get("errors") or [{}]
+                first_err = errs[0] if errs else {}
+                enc_err_code = first_err.get("code")
+                enc_err_msg = first_err.get("message") or first_err.get("title")
+            sincronizar_estado_envio_encuesta(
+                wamid=wamid,
+                status_name=status_name,
+                err_code=enc_err_code,
+                err_msg=enc_err_msg,
+            )
+        except Exception as enc_sync_err:
+            logger.debug(f"[Worker Status Encuestas] Error sincronizando encuestas_envios para wamid={wamid}: {enc_sync_err}")
+
 
 _ESTUDIOS_AUTOREPLY_CACHE: Dict[str, float] = {}
 
@@ -339,15 +358,38 @@ async def handle_estudios_line_inbound_message(
             except Exception:
                 pass
 
-        # Extraer texto o botón presionado
+        # Extraer texto, payload de botón y texto libre por separado
         btn_text = ""
+        btn_payload = ""
+        raw_text = ""
         if msg_type == "button":
-            btn_text = (msg_dict.get("button", {}).get("text") or msg_dict.get("button", {}).get("payload") or "").strip()
+            btn_obj = msg_dict.get("button", {}) or {}
+            btn_text = (btn_obj.get("text") or "").strip()
+            btn_payload = (btn_obj.get("payload") or "").strip()
         elif msg_type == "interactive":
-            inter = msg_dict.get("interactive", {})
-            btn_text = (inter.get("button_reply", {}).get("title") or inter.get("button_reply", {}).get("id") or "").strip()
+            inter = msg_dict.get("interactive", {}) or {}
+            btn_reply = inter.get("button_reply", {}) or {}
+            btn_text = (btn_reply.get("title") or "").strip()
+            btn_payload = (btn_reply.get("id") or "").strip()
         elif msg_type == "text":
-            btn_text = (msg_dict.get("text", {}).get("body") or "").strip()
+            raw_text = (msg_dict.get("text", {}).get("body") or "").strip()
+            btn_text = raw_text
+
+        # 0. Interceptor de baja de encuestas (aislado de estudios_oftalmo)
+        from app.services.whatsapp_cloud.normalizer import normalizar_telefono_argentina_movil
+        from app.services.encuestas_satisfaccion_service import procesar_baja_encuesta_estudios_inbound
+        enc_phone, _ = normalizar_telefono_argentina_movil(raw_sender)
+        handled_opt_out = await procesar_baja_encuesta_estudios_inbound(
+            normalized_phone=enc_phone or normalized_phone,
+            msg_type=msg_type,
+            btn_payload=btn_payload,
+            btn_text=btn_text,
+            raw_text=raw_text,
+            wamid=wamid,
+            wa_client=wa_client,
+        )
+        if handled_opt_out:
+            return
 
         # 1. ¿El paciente pulsó el botón de recepción de estudio (Fallback 2 pasos)?
         if btn_text.lower() in ("recibir estudio", "recibir estudio digital", "descargar estudio", "ver estudio"):

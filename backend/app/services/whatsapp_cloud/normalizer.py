@@ -132,6 +132,10 @@ def _remover_15_argentina(numero: str) -> str:
         "221",  # La Plata
         "223",  # Mar del Plata
         "261",  # Mendoza
+        "260",  # San Rafael (Mendoza)
+        "263",  # Zona Este (Mendoza)
+        "2622", # Valle de Uco (Mendoza)
+        "2625", # General Alvear (Mendoza)
         "381",  # Tucumán
         "299",  # Neuquén
         "387",  # Salta
@@ -168,3 +172,77 @@ def _remover_15_argentina(numero: str) -> str:
         return numero[2:]
 
     return numero
+
+
+def normalizar_telefono_argentina_movil(
+    raw_phone: Optional[str],
+    celular_preferido: Optional[str] = None,
+    default_area_code: str = "261",
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    Normaliza números telefónicos argentinos al formato móvil Meta E.164 sin '+' (549<area><num>).
+    Prioriza `celular_preferido`, divide cadenas con múltiples teléfonos, elimina '0' y '15'
+    y descarta líneas fijas (por ejemplo, 7 dígitos locales que inician con 42/43).
+    Retorna (telefono_sin_mas, motivo_error).
+    """
+    candidatos_raw: list[str] = []
+    for fuente in (celular_preferido, raw_phone):
+        if not fuente:
+            continue
+        texto = str(fuente).strip()
+        if not texto:
+            continue
+        partes = re.split(r"[/;,|]|\s+-\s+|\s+o\s+|\s+y\s+", texto, flags=re.IGNORECASE)
+        for p in partes:
+            p_clean = p.strip()
+            if p_clean:
+                candidatos_raw.append(p_clean)
+
+    if not candidatos_raw:
+        return None, "Sin teléfono cargado"
+
+    ultimo_motivo = "Número inválido o fijo"
+    for cand in candidatos_raw:
+        digits = clean_phone_digits(cand)
+        if not digits:
+            continue
+
+        # Descartar línea fija local de 7 dígitos (ej. 4212345 / 4312345) o 10 dígitos sin móvil (26142xxxxx / 26143xxxxx)
+        if len(digits) == 7 and digits.startswith(("42", "43")):
+            ultimo_motivo = "Teléfono fijo local"
+            continue
+        if len(digits) == 10 and digits.startswith(("26142", "26143", "26044", "26344")):
+            ultimo_motivo = "Teléfono fijo regional"
+            continue
+
+        # Caso 7 dígitos locales móviles (sin área ni 15): inyectar área por defecto
+        if len(digits) == 7:
+            return f"549{default_area_code}{digits}", None
+
+        # Caso 9 dígitos con 15 local (ej. 154123456 -> 5492614123456)
+        if len(digits) == 9 and digits.startswith("15"):
+            return f"549{default_area_code}{digits[2:]}", None
+
+        # Caso <area>15<numero> sin 0 inicial (ej. "261 15 4123456" -> 12 dígitos)
+        digits_cand = clean_phone_digits(cand)
+        if not digits_cand.startswith(("54", "0")) and len(digits_cand) in (11, 12):
+            sin_15 = _remover_15_argentina(digits_cand)
+            if sin_15 != digits_cand and len(sin_15) == 10:
+                cand = sin_15
+
+        # Caso 10 dígitos con 0 + 15 local? Ej 0261154123456 es 13 dígitos -> pasa por normalize_to_meta_e164
+        normalizado = normalize_to_meta_e164(cand, default_area_code=default_area_code)
+        if not normalizado:
+            continue
+
+        # Verificar fijo camuflado tras normalización (ej. 54926142xxxxx)
+        if len(normalizado) == 13 and normalizado.startswith("549261") and normalizado[6:8] in ("42", "43"):
+            ultimo_motivo = "Teléfono fijo (26142/26143)"
+            continue
+
+        if len(normalizado) >= 12 and len(normalizado) <= 15:
+            return normalizado, None
+
+        ultimo_motivo = "Longitud telefónica inválida"
+
+    return None, ultimo_motivo

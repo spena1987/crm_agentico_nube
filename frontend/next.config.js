@@ -29,6 +29,18 @@ const nextConfig = {
       ],
     }
   },
+  async headers() {
+    return [
+      {
+        source: '/e/:path*',
+        headers: [
+          { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+          { key: 'Referrer-Policy', value: 'no-referrer' },
+          { key: 'Cache-Control', value: 'no-store, private' },
+        ],
+      },
+    ]
+  },
   // Permitimos imágenes de Supabase Storage u otros servidores si fuera necesario
   images: {
     remotePatterns: [

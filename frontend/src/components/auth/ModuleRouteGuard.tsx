@@ -25,6 +25,7 @@ const ROUTE_TO_MODULE: Record<string, string> = {
   '/logs': 'logs',
   '/ajustes': 'ajustes',
   '/ayuda': 'ayuda',
+  '/encuestas': 'encuestas',
 }
 
 function resolveModuleCode(pathname: string): string | null {

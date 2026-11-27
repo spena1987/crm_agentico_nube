@@ -932,7 +932,7 @@ class GeclisaClient:
             logger.debug(f"Error consultando detalle de turno #{turno_id}: {e}")
             return {}
 
-    def obtener_agenda_prestador(self, pre_id: int, fecha_iso: str) -> list:
+    def obtener_agenda_prestador(self, pre_id: int, fecha_iso: str, raise_on_error: bool = False) -> list:
         """
         Obtiene la agenda de turnos asignados a un prestador específico para una fecha determinada,
         enriqueciendo concurrentemente cada turno con su estado real de sala de espera y atención médica.
@@ -1043,7 +1043,15 @@ class GeclisaClient:
                 ).strip()
 
                 ubic_id = det.get("ubicId")
+                ubic_id_raw = ubic_id
                 ubic_nombre = (det.get("ubicNombre") or "").strip()
+                ubicacion_raw = ubic_nombre or None
+                consultorio_raw = (
+                    det.get("consNombre")
+                    or t.get("nombreConsultorio")
+                    or t.get("consultorio")
+                    or ""
+                ).strip() or None
                 if not ubic_nombre:
                     if "Mitre 540" in raw_cons or "MENDOZA" in raw_cons.upper():
                         ubic_id = ubic_id or 3
@@ -1064,11 +1072,14 @@ class GeclisaClient:
                 consultorio_str = raw_cons
                 ubicacion_str = ubic_nombre
                 serv_id = det.get("servId")
-                serv_nombre = (det.get("servNombre") or t.get("servicioNombre") or t.get("servicio") or "CONSULTAS").strip().upper()
+                servicio_raw = (det.get("servNombre") or t.get("servicioNombre") or t.get("servicio") or "").strip() or None
+                serv_nombre = (servicio_raw or "CONSULTAS").upper()
 
                 # Datos del paciente combinados
                 dni_val = str(det.get("pacNroDoc") or t.get("nroDoc") or "").strip() or None
-                tel_val = det.get("pacTelefono") or det.get("pacCelular") or t.get("telefono") or t.get("celular")
+                celular_raw = det.get("pacCelular") or t.get("celular") or None
+                tel_val = det.get("pacTelefono") or celular_raw or t.get("telefono")
+                fecha_atendido_val = det.get("turFechaAtendido") or det.get("turHoraAtendido") or None
                 email_val = det.get("pacEmail") or t.get("email")
                 os_plan_val = t.get("osPlan") or (f"{det.get('osNombre', '')} {det.get('planNombre', '')}".strip() if det.get('osNombre') else "Particular")
                 obs_val = (det.get("turObs") or t.get("observaciones") or "").strip()
@@ -1081,18 +1092,24 @@ class GeclisaClient:
                     "ficha_id": t.get("fichaId") or det.get("pacFichaId"),
                     "dni": dni_val,
                     "telefono": tel_val,
+                    "celular_raw": celular_raw,
                     "email": email_val,
                     "obra_social": os_plan_val or "Particular",
                     "servicio": serv_nombre,
                     "servicio_id": serv_id,
                     "servicio_nombre": serv_nombre,
+                    "servicio_raw": servicio_raw,
                     "practica": practica_str,
                     "consultorio": consultorio_str,
                     "consultorio_id": det.get("consId"),
                     "consultorio_nombre": consultorio_str,
+                    "consultorio_raw": consultorio_raw,
                     "ubicacion": ubicacion_str,
                     "ubicacion_id": ubic_id,
+                    "ubicacion_id_raw": ubic_id_raw,
                     "ubicacion_nombre": ubicacion_str,
+                    "ubicacion_raw": ubicacion_raw,
+                    "fecha_atendido": fecha_atendido_val,
                     "sala_id": det.get("salaId"),
                     "sala_nombre": det.get("salaNombre"),
                     "prestador_id": t.get("preId") or det.get("preId") or pre_id,
@@ -1113,9 +1130,11 @@ class GeclisaClient:
             return turnos_normalizados
         except Exception as e:
             logger.error(f"Error al obtener agenda para prestador #{pre_id} en fecha {fecha_iso}: {e}")
+            if raise_on_error:
+                raise
             return []
 
-    def obtener_agenda_global(self, fecha_iso: str) -> list:
+    def obtener_agenda_global(self, fecha_iso: str, raise_on_error: bool = False) -> list:
         """
         Consulta en paralelo la agenda de los prestadores activos de la clínica
         para consolidar la vista global del día.
@@ -1149,7 +1168,7 @@ class GeclisaClient:
 
         with ThreadPoolExecutor(max_workers=16) as executor:
             future_to_pre = {
-                executor.submit(self.obtener_agenda_prestador, p.get("pre_id"), fecha_iso): p 
+                executor.submit(self.obtener_agenda_prestador, p.get("pre_id"), fecha_iso, raise_on_error): p
                 for p in prestadores_a_consultar if p.get("pre_id")
             }
             for future in as_completed(future_to_pre):
@@ -1159,6 +1178,8 @@ class GeclisaClient:
                         all_turnos.extend(res_turnos)
                 except Exception as e:
                     logger.warning(f"Error consultando turnos para prestador en agenda global: {e}")
+                    if raise_on_error:
+                        raise
                     
         # Eliminar duplicados por turno_id y ordenar cronológicamente
         seen_ids = set()

@@ -464,6 +464,11 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(cron_automatismos_optica_vortix())
     except Exception as e:
         logger.warning(f"Aviso al iniciar cron de óptica: {e}")
+    try:
+        from app.services.encuestas_satisfaccion_service import cron_encuestas_satisfaccion
+        asyncio.create_task(cron_encuestas_satisfaccion())
+    except Exception as e:
+        logger.warning(f"Aviso al iniciar cron de encuestas de satisfacción: {e}")
     yield
     logger.info("Deteniendo aplicación CRM Médico...")
 
@@ -525,6 +530,13 @@ try:
     app.include_router(optica_vortix_router)
 except Exception as e:
     logger.warning(f"Aviso al cargar router de óptica: {e}")
+
+# Módulo de Encuestas de Satisfacción Automatizadas (WhatsApp Línea 2 + SurveyMonkey)
+try:
+    from app.services.encuestas_satisfaccion_service import encuestas_satisfaccion_router
+    app.include_router(encuestas_satisfaccion_router)
+except Exception as e:
+    logger.warning(f"Aviso al cargar router de encuestas de satisfacción: {e}")
 
 # ====================================================================
 # SERVIDOR INTELIGENTE DE ESTÁTICOS Y PDFs ON-DEMAND (CON AUTO-REGENERACIÓN)

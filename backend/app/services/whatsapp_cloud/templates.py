@@ -298,14 +298,21 @@ async def sync_templates_from_meta():
                     tpl_record["grupo_crm"] = "Óptica Vortix"
                     tpl_record["visible_en_chat"] = False
                     tpl_record["visible_en_hce"] = False
+                elif (tpl_name or "").lower().startswith("encuesta_"):
+                    tpl_record["grupo_crm"] = "Encuestas de Satisfacción"
+                    tpl_record["visible_en_chat"] = False
+                    tpl_record["visible_en_hce"] = False
                 # Se actualizan únicamente datos técnicos de Meta, preservando la gobernanza local intacta
                 supabase.table("whatsapp_templates").update(tpl_record).eq("name", tpl_name).execute()
             else:
                 grupo_inicial = "Atención General"
                 lower_name = tpl_name.lower()
                 is_optica_tpl = lower_name.startswith(("vortix_", "optica_"))
+                is_encuesta_tpl = lower_name.startswith("encuesta_")
                 if is_optica_tpl:
                     grupo_inicial = "Óptica Vortix"
+                elif is_encuesta_tpl:
+                    grupo_inicial = "Encuestas de Satisfacción"
                 elif "seguimiento" in lower_name or "cirugia" in lower_name or "analisis" in lower_name:
                     grupo_inicial = "Seguimiento Quirúrgico"
                 elif "estudio" in lower_name:
@@ -318,8 +325,8 @@ async def sync_templates_from_meta():
                 tpl_record["created_at"] = datetime.now(timezone.utc).isoformat()
                 tpl_record["variable_mappings"] = DEFAULT_MAPPINGS.get(tpl_name, {})
                 tpl_record["activo"] = True
-                tpl_record["visible_en_chat"] = False if is_optica_tpl else True
-                tpl_record["visible_en_hce"] = False if is_optica_tpl else True
+                tpl_record["visible_en_chat"] = False if (is_optica_tpl or is_encuesta_tpl) else True
+                tpl_record["visible_en_hce"] = False if (is_optica_tpl or is_encuesta_tpl) else True
                 tpl_record["grupo_crm"] = grupo_inicial
                 tpl_record["titulo_amigable"] = tpl_name.replace("_", " ").title()
                 tpl_record["orden"] = 0
@@ -564,9 +571,13 @@ async def create_template(req: TemplateCreateRequest):
         "buttons": [b.model_dump() for b in req.buttons] if req.buttons else [],
         "variable_mappings": req.variable_mappings or {},
         "activo": True,
-        "visible_en_chat": False if safe_name.startswith(("vortix_", "optica_")) else True,
-        "visible_en_hce": False if safe_name.startswith(("vortix_", "optica_")) else True,
-        "grupo_crm": "Óptica Vortix" if safe_name.startswith(("vortix_", "optica_")) else "Atención General",
+        "visible_en_chat": False if safe_name.startswith(("vortix_", "optica_", "encuesta_")) else True,
+        "visible_en_hce": False if safe_name.startswith(("vortix_", "optica_", "encuesta_")) else True,
+        "grupo_crm": (
+            "Óptica Vortix"
+            if safe_name.startswith(("vortix_", "optica_"))
+            else ("Encuestas de Satisfacción" if safe_name.startswith("encuesta_") else "Atención General")
+        ),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()
     }

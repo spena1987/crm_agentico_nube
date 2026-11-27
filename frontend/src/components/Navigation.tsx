@@ -37,7 +37,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
-  MessageSquareText
+  MessageSquareText,
+  ClipboardCheck
 } from 'lucide-react'
 
 import { apiFetch, BACKEND_URL } from '@/lib/api'
@@ -102,6 +103,7 @@ const allNavItems: NavItem[] = [
     ]
   },
   { code: 'logs', label: 'Logs & Auditoría', href: '/logs', icon: ScrollText },
+  { code: 'encuestas', label: 'Encuestas', href: '/encuestas', icon: ClipboardCheck },
   { code: 'ajustes', label: 'Ajustes', href: '/ajustes', icon: Settings },
   { code: 'ayuda', label: 'Centro de Ayuda', href: '/ayuda', icon: HelpCircle },
 ]

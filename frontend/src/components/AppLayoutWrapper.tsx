@@ -24,12 +24,13 @@ export default function AppLayoutWrapper({
   const isLoginPage = pathname === '/login'
   const isAuthEmergencyPage = pathname?.startsWith('/auth/acceso-urgencia')
   const isPublicConsentPage = pathname?.startsWith('/consentimiento')
+  const isPublicSurveyPage = pathname?.startsWith('/e/')
   const isLegalPage = 
     pathname === '/politica-privacidad' || 
     pathname === '/privacy-policy' || 
     pathname === '/terminos-condiciones' || 
     pathname === '/eliminacion-datos'
-  const isPublicOpenPage = isLoginPage || isAuthEmergencyPage || isPublicConsentPage || isLegalPage
+  const isPublicOpenPage = isLoginPage || isAuthEmergencyPage || isPublicConsentPage || isPublicSurveyPage || isLegalPage
 
   useEffect(() => {
     if (!loading && !user && !isPublicOpenPage) {
