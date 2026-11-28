@@ -31,6 +31,8 @@ interface EncuestasConfig {
   hora_fin_envio_art: string
   ttl_dias_enlace: number
   surveymonkey_url: string
+  surveymonkey_url_estudios: string
+  surveymonkey_url_cirugias: string
   jitter_min_seg: number
   jitter_max_seg: number
   batch_size: number
@@ -61,7 +63,7 @@ interface MapeoItem {
   tipo_entidad: 'servicio' | 'prestador' | 'sede'
   geclisa_id: string
   geclisa_nombre_raw: string
-  unidad_negocio: 'consultas' | 'estudios' | 'excluido'
+  unidad_negocio: 'consultas' | 'estudios' | 'cirugias' | 'excluido'
   nombre_canonico: string
   incluir_en_envio: boolean
 }
@@ -526,7 +528,7 @@ export default function EncuestasAdminPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <label className="space-y-1">
-              <span className="font-medium text-slate-700 dark:text-slate-300">URL Web Link SurveyMonkey</span>
+              <span className="font-medium text-slate-700 dark:text-slate-300">URL SurveyMonkey — Consultas</span>
               <input
                 type="url"
                 disabled={!canEdit}
@@ -535,6 +537,31 @@ export default function EncuestasAdminPage() {
                 placeholder="https://es.surveymonkey.com/r/..."
                 className={INPUT_CLASS}
               />
+            </label>
+            <label className="space-y-1">
+              <span className="font-medium text-slate-700 dark:text-slate-300">URL SurveyMonkey — Estudios</span>
+              <input
+                type="url"
+                disabled={!canEdit}
+                value={config.surveymonkey_url_estudios || ''}
+                onChange={(e) => setConfig({ ...config, surveymonkey_url_estudios: e.target.value })}
+                placeholder="https://es.surveymonkey.com/r/... (dejar vacío para no enviar)"
+                className={INPUT_CLASS}
+              />
+            </label>
+            <label className="space-y-1 md:col-span-2">
+              <span className="font-medium text-slate-700 dark:text-slate-300">URL SurveyMonkey — Cirugías</span>
+              <input
+                type="url"
+                disabled={!canEdit}
+                value={config.surveymonkey_url_cirugias || ''}
+                onChange={(e) => setConfig({ ...config, surveymonkey_url_cirugias: e.target.value })}
+                placeholder="https://es.surveymonkey.com/r/... (puede ser el mismo link de Estudios u otro distinto)"
+                className={INPUT_CLASS}
+              />
+              <span className="block text-xs text-slate-500 dark:text-slate-400">
+                Cada unidad de negocio envía su propio enlace. Si una unidad no tiene URL cargada, sus turnos se omiten de forma segura.
+              </span>
             </label>
             <label className="space-y-1">
               <span className="font-medium text-slate-700 dark:text-slate-300">Plantilla Meta</span>
@@ -656,8 +683,13 @@ export default function EncuestasAdminPage() {
 
       {tab === 'mapeos' && (
         <div className={`${CARD_CLASS} p-5 space-y-4`}>
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="font-semibold text-slate-900 dark:text-slate-100">Mapeo manual y exclusiones de Geclisa</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-slate-900 dark:text-slate-100">Mapeo manual y exclusiones de Geclisa</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                La <strong>Unidad</strong> asignada a cada <strong>servicio</strong> determina qué URL de SurveyMonkey recibe el paciente.
+              </p>
+            </div>
             <select
               value={filtroTipoMapeo}
               onChange={(e) => setFiltroTipoMapeo(e.target.value)}
@@ -699,6 +731,7 @@ export default function EncuestasAdminPage() {
                       >
                         <option value="consultas">consultas</option>
                         <option value="estudios">estudios</option>
+                        <option value="cirugias">cirugias</option>
                         <option value="excluido">excluido</option>
                       </select>
                     </td>
@@ -783,7 +816,7 @@ export default function EncuestasAdminPage() {
                     Resultado del lote ({dryRunResult.fecha_atencion || 'sin fecha'}){dryRunResult.dry_run ? ' · Simulación' : ''}
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Agenda total: {dryRunResult.total_agenda ?? 0} · Atendidos: {dryRunResult.atendidos ?? 0} · Válidos: {dryRunResult.validos ?? 0} · Omitidos por mapeo: {dryRunResult.omitidos_mapeo_excluido ?? 0} · Entidades nuevas: {dryRunResult.entidades_nuevas_detectadas?.length ?? 0}
+                    Agenda total: {dryRunResult.total_agenda ?? 0} · Atendidos: {dryRunResult.atendidos ?? 0} · Válidos: {dryRunResult.validos ?? 0} · Omitidos por mapeo: {dryRunResult.omitidos_mapeo_excluido ?? 0} · Sin URL unidad: {dryRunResult.omitidos_sin_url_unidad ?? 0} · Entidades nuevas: {dryRunResult.entidades_nuevas_detectadas?.length ?? 0}
                   </p>
                 </div>
                 {((dryRunResult.entidades_nuevas_detectadas?.length ?? 0) > 0 || (dryRunResult.omitidos_mapeo_excluido ?? 0) > 0) && (

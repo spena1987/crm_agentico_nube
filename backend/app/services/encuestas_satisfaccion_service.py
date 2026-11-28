@@ -51,6 +51,8 @@ DEFAULT_ENCUESTAS_CONFIG: Dict[str, Any] = {
     "hora_fin_envio_art": "20:00",
     "ttl_dias_enlace": 14,
     "surveymonkey_url": "",
+    "surveymonkey_url_estudios": "",
+    "surveymonkey_url_cirugias": "",
     "jitter_min_seg": 1.5,
     "jitter_max_seg": 4.0,
     "batch_size": 25,
@@ -94,6 +96,8 @@ class EncuestasConfigPayload(BaseModel):
     hora_fin_envio_art: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     ttl_dias_enlace: int = Field(ge=1, le=90)
     surveymonkey_url: str = ""
+    surveymonkey_url_estudios: str = ""
+    surveymonkey_url_cirugias: str = ""
     jitter_min_seg: float = Field(ge=0.0, le=30.0)
     jitter_max_seg: float = Field(ge=0.0, le=60.0)
     batch_size: int = Field(ge=1, le=200)
@@ -106,10 +110,11 @@ class EncuestasConfigPayload(BaseModel):
             raise ValueError("jitter_min_seg debe ser menor o igual a jitter_max_seg.")
         if self.hora_envio_art >= self.hora_fin_envio_art:
             raise ValueError("hora_envio_art debe ser menor que hora_fin_envio_art.")
-        url_clean = (self.surveymonkey_url or "").strip()
-        if url_clean and not url_clean.startswith(("http://", "https://")):
-            raise ValueError("surveymonkey_url debe comenzar con http:// o https://.")
-        self.surveymonkey_url = url_clean
+        for field_name in ("surveymonkey_url", "surveymonkey_url_estudios", "surveymonkey_url_cirugias"):
+            url_clean = (getattr(self, field_name) or "").strip()
+            if url_clean and not url_clean.startswith(("http://", "https://")):
+                raise ValueError(f"{field_name} debe comenzar con http:// o https://.")
+            setattr(self, field_name, url_clean)
         return self
 
 
@@ -117,13 +122,13 @@ class MapeoGeclisaCreatePayload(BaseModel):
     tipo_entidad: str = Field(pattern=r"^(servicio|prestador|sede)$")
     geclisa_id: str = Field(min_length=1, max_length=120)
     geclisa_nombre_raw: str = Field(min_length=1, max_length=255)
-    unidad_negocio: str = Field(default="excluido", pattern=r"^(consultas|estudios|excluido)$")
+    unidad_negocio: str = Field(default="excluido", pattern=r"^(consultas|estudios|cirugias|excluido)$")
     nombre_canonico: str = Field(min_length=1, max_length=255)
     incluir_en_envio: bool = False
 
 
 class MapeoGeclisaUpdatePayload(BaseModel):
-    unidad_negocio: Optional[str] = Field(default=None, pattern=r"^(consultas|estudios|excluido)$")
+    unidad_negocio: Optional[str] = Field(default=None, pattern=r"^(consultas|estudios|cirugias|excluido)$")
     nombre_canonico: Optional[str] = Field(default=None, min_length=1, max_length=255)
     incluir_en_envio: Optional[bool] = None
 
@@ -231,6 +236,18 @@ def calcular_fecha_objetivo_encuestas(now_art: Optional[datetime] = None) -> Opt
     if wd == 0:
         return (ref - timedelta(days=2)).date()
     return (ref - timedelta(days=1)).date()
+
+
+def _resolver_url_por_unidad(cfg: Dict[str, Any], unidad_negocio: Optional[str]) -> str:
+    """Devuelve la URL base de SurveyMonkey configurada para la unidad de negocio del turno."""
+    unidad = str(unidad_negocio or "consultas").strip().lower()
+    if unidad == "consultas":
+        return str(cfg.get("surveymonkey_url") or "").strip()
+    if unidad == "estudios":
+        return str(cfg.get("surveymonkey_url_estudios") or "").strip()
+    if unidad == "cirugias":
+        return str(cfg.get("surveymonkey_url_cirugias") or "").strip()
+    return ""
 
 
 def build_surveymonkey_url(base_url: str, turno: Dict[str, Any]) -> str:
@@ -375,6 +392,7 @@ async def generar_lote_encuestas_para_fecha(
         "omitidos_sin_servicio": 0,
         "omitidos_sin_sede": 0,
         "omitidos_mapeo_excluido": 0,
+        "omitidos_sin_url_unidad": 0,
         "omitidos_telefono_invalido": 0,
         "omitidos_opt_out": 0,
         "validos": 0,
@@ -441,9 +459,13 @@ async def generar_lote_encuestas_para_fecha(
             resumen["omitidos_mapeo_excluido"] += 1
             continue
 
-        unidad = resolved["servicio"].get("unidad_negocio")
-        if unidad != "consultas":
+        unidad = str(resolved["servicio"].get("unidad_negocio") or "").strip().lower()
+        if unidad not in ("consultas", "estudios", "cirugias"):
             resumen["omitidos_mapeo_excluido"] += 1
+            continue
+
+        if not _resolver_url_por_unidad(cfg, unidad):
+            resumen["omitidos_sin_url_unidad"] += 1
             continue
 
         # Normalización telefónica con fallback a obtener_ficha_completa ante falta o fijo
@@ -925,24 +947,20 @@ def obtener_encuesta_publica(token: str):
         )
 
     cfg = load_encuestas_config()
-    base_url = str(cfg.get("surveymonkey_url") or "").strip()
-    if not base_url:
-        raise HTTPException(
-            status_code=503,
-            detail="URL de SurveyMonkey no configurada.",
-            headers=PUBLIC_SECURITY_HEADERS,
-        )
-
     turnos_res = (
         db.table("encuestas_envios_turnos")
-        .select("turno_id, profesional_canonico, sede_canonica, servicio_nombre, fecha_turno, horario_turno, click_count")
+        .select("turno_id, unidad_negocio, profesional_canonico, sede_canonica, servicio_nombre, fecha_turno, horario_turno, click_count")
         .eq("envio_id", envio["id"])
         .order("horario_turno")
         .execute()
     )
 
+    turnos_rows = turnos_res.data or []
     turnos_out = []
-    for t in turnos_res.data or []:
+    for t in turnos_rows:
+        base_url = _resolver_url_por_unidad(cfg, t.get("unidad_negocio"))
+        if not base_url:
+            continue
         turnos_out.append(
             {
                 "turno_id": t["turno_id"],
@@ -954,6 +972,13 @@ def obtener_encuesta_publica(token: str):
                 "ya_abierto": int(t.get("click_count") or 0) > 0,
                 "surveymonkey_url": build_surveymonkey_url(base_url, t),
             }
+        )
+
+    if turnos_rows and not turnos_out:
+        raise HTTPException(
+            status_code=503,
+            detail="URL de SurveyMonkey no configurada.",
+            headers=PUBLIC_SECURITY_HEADERS,
         )
 
     return JSONResponse(
