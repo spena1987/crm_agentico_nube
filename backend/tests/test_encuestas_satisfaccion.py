@@ -534,6 +534,7 @@ def test_endpoints_publicos_y_rbac():
     fake_db.tables["configuracion_sistema"][0]["valor"]["surveymonkey_url"] = "https://es.surveymonkey.com/r/CLINICA?source=wa"
     fake_db.tables["configuracion_sistema"][0]["valor"]["surveymonkey_url_estudios"] = "https://es.surveymonkey.com/r/ESTUDIOS"
     fake_db.tables["configuracion_sistema"][0]["valor"]["surveymonkey_url_cirugias"] = "https://es.surveymonkey.com/r/CIRUGIAS"
+    fake_db.tables["configuracion_sistema"][0]["valor"]["surveymonkey_url_asesoramiento"] = "https://es.surveymonkey.com/r/ASESORAMIENTO"
     fake_db.tables["encuestas_envios"] = [
         {"id": "e1", "token": "tok-valido", "fecha_atencion": "2026-11-26", "telefono_e164": "5492615550000", "estado_cola": "enviado", "expires_at": "2099-01-01T00:00:00+00:00"},
         {"id": "e2", "token": "tok-exp", "fecha_atencion": "2026-11-01", "telefono_e164": "5492615550001", "estado_cola": "enviado", "expires_at": "2020-01-01T00:00:00+00:00"},
@@ -542,6 +543,7 @@ def test_endpoints_publicos_y_rbac():
         {"id": 1, "envio_id": "e1", "turno_id": 777, "ficha_id": 999, "unidad_negocio": "consultas", "servicio_id": 10, "servicio_nombre": "Consultas", "sede_canonica": "Mitre 540", "profesional_canonico": "Dr. Bonanno", "fecha_turno": "2026-11-26", "horario_turno": "09:30", "click_count": 0},
         {"id": 2, "envio_id": "e1", "turno_id": 778, "ficha_id": 999, "unidad_negocio": "estudios", "servicio_id": 124, "servicio_nombre": "Estudios Varios", "sede_canonica": "Mitre 540", "profesional_canonico": "Técnico", "fecha_turno": "2026-11-26", "horario_turno": "10:15", "click_count": 0},
         {"id": 3, "envio_id": "e1", "turno_id": 779, "ficha_id": 999, "unidad_negocio": "cirugias", "servicio_id": 125, "servicio_nombre": "Cirugía", "sede_canonica": "Mitre 540", "profesional_canonico": "Dr. Gras", "fecha_turno": "2026-11-26", "horario_turno": "11:00", "click_count": 0},
+        {"id": 4, "envio_id": "e1", "turno_id": 780, "ficha_id": 999, "unidad_negocio": "asesoramiento", "servicio_id": 130, "servicio_nombre": "Asesoramiento", "sede_canonica": "Mitre 540", "profesional_canonico": "ASESORAMIENTO", "fecha_turno": "2026-11-26", "horario_turno": "11:30", "click_count": 0},
     ]
     fake_db.tables["usuarios_perfil"] = [
         {"id": "user-sin-permiso", "nombre_completo": "Recep", "email": "r@test.com", "activo": True, "rol_id": "rol-recep", "roles": {"codigo": "recepcion", "nombre": "Recepción"}},
@@ -564,6 +566,7 @@ def test_endpoints_publicos_y_rbac():
         assert "source=wa" in t_out["surveymonkey_url"]
         assert body["turnos"][1]["surveymonkey_url"].startswith("https://es.surveymonkey.com/r/ESTUDIOS?")
         assert body["turnos"][2]["surveymonkey_url"].startswith("https://es.surveymonkey.com/r/CIRUGIAS?")
+        assert body["turnos"][3]["surveymonkey_url"].startswith("https://es.surveymonkey.com/r/ASESORAMIENTO?")
 
         r_click = client.post("/api/encuestas-publico/tok-valido/click", json={"turno_id": 777})
         assert r_click.status_code == 200 and r_click.json()["click_count"] == 1

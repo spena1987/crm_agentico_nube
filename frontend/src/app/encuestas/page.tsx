@@ -33,6 +33,7 @@ interface EncuestasConfig {
   surveymonkey_url: string
   surveymonkey_url_estudios: string
   surveymonkey_url_cirugias: string
+  surveymonkey_url_asesoramiento: string
   jitter_min_seg: number
   jitter_max_seg: number
   batch_size: number
@@ -63,7 +64,7 @@ interface MapeoItem {
   tipo_entidad: 'servicio' | 'prestador' | 'sede'
   geclisa_id: string
   geclisa_nombre_raw: string
-  unidad_negocio: 'consultas' | 'estudios' | 'cirugias' | 'excluido'
+  unidad_negocio: 'consultas' | 'estudios' | 'cirugias' | 'asesoramiento' | 'excluido'
   nombre_canonico: string
   incluir_en_envio: boolean
 }
@@ -549,20 +550,31 @@ export default function EncuestasAdminPage() {
                 className={INPUT_CLASS}
               />
             </label>
-            <label className="space-y-1 md:col-span-2">
+            <label className="space-y-1">
               <span className="font-medium text-slate-700 dark:text-slate-300">URL SurveyMonkey — Cirugías</span>
               <input
                 type="url"
                 disabled={!canEdit}
                 value={config.surveymonkey_url_cirugias || ''}
                 onChange={(e) => setConfig({ ...config, surveymonkey_url_cirugias: e.target.value })}
-                placeholder="https://es.surveymonkey.com/r/... (puede ser el mismo link de Estudios u otro distinto)"
+                placeholder="https://es.surveymonkey.com/r/... (dejar vacío para no enviar)"
                 className={INPUT_CLASS}
               />
-              <span className="block text-xs text-slate-500 dark:text-slate-400">
-                Cada unidad de negocio envía su propio enlace. Si una unidad no tiene URL cargada, sus turnos se omiten de forma segura.
-              </span>
             </label>
+            <label className="space-y-1">
+              <span className="font-medium text-slate-700 dark:text-slate-300">URL SurveyMonkey — Asesoramiento</span>
+              <input
+                type="url"
+                disabled={!canEdit}
+                value={config.surveymonkey_url_asesoramiento || ''}
+                onChange={(e) => setConfig({ ...config, surveymonkey_url_asesoramiento: e.target.value })}
+                placeholder="https://es.surveymonkey.com/r/... (dejar vacío para no enviar)"
+                className={INPUT_CLASS}
+              />
+            </label>
+            <p className="text-xs text-slate-500 dark:text-slate-400 md:col-span-2">
+              Cada unidad de negocio envía su propio enlace. Si una unidad no tiene URL cargada, sus turnos se omiten de forma segura.
+            </p>
             <label className="space-y-1">
               <span className="font-medium text-slate-700 dark:text-slate-300">Plantilla Meta</span>
               <input
@@ -732,6 +744,7 @@ export default function EncuestasAdminPage() {
                         <option value="consultas">consultas</option>
                         <option value="estudios">estudios</option>
                         <option value="cirugias">cirugias</option>
+                        <option value="asesoramiento">asesoramiento</option>
                         <option value="excluido">excluido</option>
                       </select>
                     </td>

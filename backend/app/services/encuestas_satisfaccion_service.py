@@ -53,6 +53,7 @@ DEFAULT_ENCUESTAS_CONFIG: Dict[str, Any] = {
     "surveymonkey_url": "",
     "surveymonkey_url_estudios": "",
     "surveymonkey_url_cirugias": "",
+    "surveymonkey_url_asesoramiento": "",
     "jitter_min_seg": 1.5,
     "jitter_max_seg": 4.0,
     "batch_size": 25,
@@ -98,6 +99,7 @@ class EncuestasConfigPayload(BaseModel):
     surveymonkey_url: str = ""
     surveymonkey_url_estudios: str = ""
     surveymonkey_url_cirugias: str = ""
+    surveymonkey_url_asesoramiento: str = ""
     jitter_min_seg: float = Field(ge=0.0, le=30.0)
     jitter_max_seg: float = Field(ge=0.0, le=60.0)
     batch_size: int = Field(ge=1, le=200)
@@ -110,7 +112,12 @@ class EncuestasConfigPayload(BaseModel):
             raise ValueError("jitter_min_seg debe ser menor o igual a jitter_max_seg.")
         if self.hora_envio_art >= self.hora_fin_envio_art:
             raise ValueError("hora_envio_art debe ser menor que hora_fin_envio_art.")
-        for field_name in ("surveymonkey_url", "surveymonkey_url_estudios", "surveymonkey_url_cirugias"):
+        for field_name in (
+            "surveymonkey_url",
+            "surveymonkey_url_estudios",
+            "surveymonkey_url_cirugias",
+            "surveymonkey_url_asesoramiento",
+        ):
             url_clean = (getattr(self, field_name) or "").strip()
             if url_clean and not url_clean.startswith(("http://", "https://")):
                 raise ValueError(f"{field_name} debe comenzar con http:// o https://.")
@@ -122,13 +129,13 @@ class MapeoGeclisaCreatePayload(BaseModel):
     tipo_entidad: str = Field(pattern=r"^(servicio|prestador|sede)$")
     geclisa_id: str = Field(min_length=1, max_length=120)
     geclisa_nombre_raw: str = Field(min_length=1, max_length=255)
-    unidad_negocio: str = Field(default="excluido", pattern=r"^(consultas|estudios|cirugias|excluido)$")
+    unidad_negocio: str = Field(default="excluido", pattern=r"^(consultas|estudios|cirugias|asesoramiento|excluido)$")
     nombre_canonico: str = Field(min_length=1, max_length=255)
     incluir_en_envio: bool = False
 
 
 class MapeoGeclisaUpdatePayload(BaseModel):
-    unidad_negocio: Optional[str] = Field(default=None, pattern=r"^(consultas|estudios|cirugias|excluido)$")
+    unidad_negocio: Optional[str] = Field(default=None, pattern=r"^(consultas|estudios|cirugias|asesoramiento|excluido)$")
     nombre_canonico: Optional[str] = Field(default=None, min_length=1, max_length=255)
     incluir_en_envio: Optional[bool] = None
 
@@ -247,6 +254,8 @@ def _resolver_url_por_unidad(cfg: Dict[str, Any], unidad_negocio: Optional[str])
         return str(cfg.get("surveymonkey_url_estudios") or "").strip()
     if unidad == "cirugias":
         return str(cfg.get("surveymonkey_url_cirugias") or "").strip()
+    if unidad == "asesoramiento":
+        return str(cfg.get("surveymonkey_url_asesoramiento") or "").strip()
     return ""
 
 
@@ -460,7 +469,7 @@ async def generar_lote_encuestas_para_fecha(
             continue
 
         unidad = str(resolved["servicio"].get("unidad_negocio") or "").strip().lower()
-        if unidad not in ("consultas", "estudios", "cirugias"):
+        if unidad not in ("consultas", "estudios", "cirugias", "asesoramiento"):
             resumen["omitidos_mapeo_excluido"] += 1
             continue
 
